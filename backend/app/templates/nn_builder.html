@@ -94,13 +94,16 @@
             <button class="btn btn-primary btn-sm" onclick="openWizardModal()" style="background: linear-gradient(135deg, #2563eb, #7c3aed); border: none; font-weight: 700; box-shadow: 0 0 10px rgba(124, 58, 237, 0.5);">
                 🪄 Model Sihirbazı (AE / U-Net / CNN)
             </button>
-            <button class="btn btn-secondary btn-sm" onclick="nnEditorInstance.graph.clear()">Clear Canvas</button>
+            <button class="btn btn-secondary btn-sm" onclick="toggleExpandCanvas()" title="Kenar panellerini gizle/göster">⛶ Geniş Tuval (Expand Canvas)</button>
+            <button class="btn btn-secondary btn-sm" onclick="nnEditorInstance.autoLayout()" title="Düğümleri otomatik hizala">✨ Otomatik Hizalama (Auto-Layout)</button>
             <button class="btn btn-secondary btn-sm" onclick="exportGraphJSON()" title="Mevcut mimariyi Graph JSON olarak indir">Export JSON</button>
             <button class="btn btn-secondary btn-sm" onclick="triggerImportGraphFile()" title="Mimari veya Keras modelini (.json, .keras, .h5) yükle" style="background: rgba(56, 189, 248, 0.15); border-color: rgba(56, 189, 248, 0.4); color: #38bdf8; font-weight: 600;">📥 Import (JSON / Model)</button>
             <input type="file" id="import-graph-input" accept=".json,.keras,.h5" style="display:none;" onchange="handleImportFileInput(event)">
             <select id="load-saved-model-select" class="form-control" style="width: auto; padding: 4px 8px; font-size: 12px; height: 32px;" onchange="handleLoadSavedModel(this.value)">
                 <option value="">📂 Kayıtlı Model Yükle...</option>
             </select>
+            <button class="btn btn-secondary btn-sm" id="update-saved-model-btn" onclick="handleUpdateSavedModel()" title="Mevcut loaded model üzerindeki değişiklikleri kaydet" style="display: none; background: rgba(59, 130, 246, 0.2); border-color: rgba(59, 130, 246, 0.5); color: #60a5fa; font-weight: 600;">💾 Güncelle</button>
+            <button class="btn btn-secondary btn-sm" id="delete-saved-model-btn" onclick="handleDeleteSavedModel()" title="Seçili kayıtlı modeli sil" style="display: none; background: rgba(239, 68, 68, 0.15); border-color: rgba(239, 68, 68, 0.4); color: #f87171; font-weight: 600;">🗑️ Modeli Sil</button>
             <span style="font-size: 11px; color: var(--text-muted); display: inline-flex; align-items: center; gap: 4px; margin-left: 6px;">
                 💡 <em>Dosyayı tuvale sürükleyip bırakabilirsiniz</em>
             </span>
@@ -464,7 +467,16 @@
     }
 
     async function handleLoadSavedModel(modelId) {
-        if (!modelId) return;
+        const updateBtn = document.getElementById("update-saved-model-btn");
+        const deleteBtn = document.getElementById("delete-saved-model-btn");
+        if (!modelId) {
+            if (updateBtn) updateBtn.style.display = "none";
+            if (deleteBtn) deleteBtn.style.display = "none";
+            return;
+        }
+        if (updateBtn) updateBtn.style.display = "inline-block";
+        if (deleteBtn) deleteBtn.style.display = "inline-block";
+
         try {
             const res = await fetch(`/api/models/${modelId}`);
             if (res.ok) {
@@ -483,7 +495,88 @@
         }
     }
 
-    document.addEventListener("DOMContentLoaded", () => {
+    async function handleUpdateSavedModel() {
+        const sel = document.getElementById("load-saved-model-select");
+        const modelId = sel ? sel.value : null;
+        if (!modelId) {
+            SignalML.toast("Güncellenecek kayıtlı bir model seçilmedi!", "warning");
+            return;
+        }
+
+        const nameInput = document.getElementById("save-model-name");
+        const modelName = nameInput ? nameInput.value.trim() : "SignalML Model";
+        const taskInput = document.getElementById("save-model-task");
+        const taskType = taskInput ? taskInput.value : "classification";
+
+        const graphData = nnEditorInstance.serializeGraph();
+
+        SignalML.toast("Kayıtlı model güncelleniyor ve yeniden derleniyor...", "info");
+
+        try {
+            const res = await fetch(`/api/models/${modelId}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    name: modelName,
+                    task_type: taskType,
+                    graph: graphData
+                })
+            });
+
+            if (!res.ok) {
+                const err = await SignalML.safeJson(res);
+                throw new Error(err.detail || "Model güncelleme başarısız");
+            }
+
+            const data = await SignalML.safeJson(res);
+            SignalML.toast(`'${data.name}' modeli başarıyla güncellendi!`, "success");
+            populateSavedModelsDropdown();
+            if (sel) sel.value = modelId;
+        } catch (e) {
+            SignalML.toast(`Model güncelleme hatası: ${e.message}`, "error");
+        }
+    }
+
+    async function handleDeleteSavedModel() {
+        const sel = document.getElementById("load-saved-model-select");
+        const modelId = sel ? sel.value : null;
+        if (!modelId) {
+            SignalML.toast("Silinecek bir model seçilmedi!", "warning");
+            return;
+        }
+
+        if (!confirm("Bu kayıtlı modeli silmek istediğinize emin misiniz?")) return;
+
+        try {
+            const res = await fetch(`/api/models/${modelId}`, {
+                method: "DELETE"
+            });
+
+            if (!res.ok) {
+                const err = await SignalML.safeJson(res);
+                throw new Error(err.detail || "Model silme başarısız");
+            }
+
+            SignalML.toast("Kayıtlı model başarıyla silindi!", "success");
+            if (sel) sel.value = "";
+            const updateBtn = document.getElementById("update-saved-model-btn");
+            const deleteBtn = document.getElementById("delete-saved-model-btn");
+            if (updateBtn) updateBtn.style.display = "none";
+            if (deleteBtn) deleteBtn.style.display = "none";
+
+            populateSavedModelsDropdown();
+        } catch (e) {
+            SignalML.toast(`Model silme hatası: ${e.message}`, "error");
+        }
+    }
+
+    function toggleExpandCanvas() {
+        const layout = document.querySelector(".editor-layout");
+        if (layout) {
+            layout.classList.toggle("expanded-canvas");
+            window.dispatchEvent(new Event("resize"));
+        }
+    }
         populateSavedModelsDropdown();
     });
 
@@ -587,9 +680,16 @@
         nnEditorInstance.buildAndSave(name, task);
     }
 
+    function toggleExpandCanvas() {
+        const layout = document.querySelector(".editor-layout");
+        if (layout) {
+            layout.classList.toggle("expanded-canvas");
+            window.dispatchEvent(new Event("resize"));
+        }
+    }
+
     document.addEventListener("DOMContentLoaded", () => {
         nnEditorInstance = new NNEditor("nn-canvas");
-        window.nnEditorInstance = nnEditorInstance;
 
         // Auto update wizard summary on parameter input
         ["wiz-seq-len", "wiz-base-filters", "wiz-latent-dim"].forEach(id => {
