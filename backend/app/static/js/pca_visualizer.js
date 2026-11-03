@@ -94,6 +94,7 @@ class PCAVisualizer {
                 x: pt.x,
                 y: pt.y,
                 sample_id: pt.sample_id,
+                input_id: pt.input_id,
                 ground_truth: pt.ground_truth
             });
         }
@@ -109,6 +110,7 @@ class PCAVisualizer {
                     x: p.x,
                     y: p.y,
                     sample_id: p.sample_id,
+                    input_id: p.input_id,
                     ground_truth: p.ground_truth
                 }))
             };
@@ -147,7 +149,8 @@ class PCAVisualizer {
                 borderColor: "#334155",
                 style: { color: "#fff" },
                 formatter: function() {
-                    let s = `<b>Sample #${this.point.sample_id}</b><br/>`;
+                    const idLabel = this.point.input_id ? `ID: ${this.point.input_id} (#${this.point.sample_id})` : `Sample #${this.point.sample_id}`;
+                    let s = `<b>${idLabel}</b><br/>`;
                     s += `Cluster: ${this.series.userOptions.clusterId}<br/>`;
                     s += `PC1: ${this.x.toFixed(3)}, PC2: ${this.y.toFixed(3)}<br/>`;
                     if (this.point.ground_truth !== undefined) {
@@ -303,8 +306,9 @@ class PCAVisualizer {
             tooltip.style.display = "block";
             tooltip.style.left = `${mx + 15}px`;
             tooltip.style.top = `${my + 10}px`;
+            const idLabel = hit.pt.input_id ? `ID: ${hit.pt.input_id} (#${hit.pt.sample_id})` : `Sample #${hit.pt.sample_id}`;
             tooltip.innerHTML = `
-                <strong>Sample #${hit.pt.sample_id}</strong><br/>
+                <strong>${idLabel}</strong><br/>
                 Cluster: ${hit.pt.cluster === -1 ? 'Noise' : hit.pt.cluster}<br/>
                 PC1: ${hit.pt.x.toFixed(2)}, PC2: ${hit.pt.y.toFixed(2)}, PC3: ${hit.pt.z.toFixed(2)}
                 ${hit.pt.ground_truth !== undefined ? `<br/>Truth: ${hit.pt.ground_truth}` : ''}
