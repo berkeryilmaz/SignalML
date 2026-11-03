@@ -16,6 +16,8 @@ class TrainingConfig(BaseModel):
     early_stopping: bool = Field(default=True)
     patience: int = Field(default=5, ge=1)
     seed: Optional[int] = Field(default=42)
+    resume: bool = Field(default=False)
+    frozen_layers: Optional[List[str]] = None
 
 
 class TrainingJobStatus(BaseModel):

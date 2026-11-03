@@ -9,6 +9,7 @@ from app.core.config import FEATURES_DIR, MODELS_DIR, resolve_storage_path
 from app.core.database import get_db_connection
 from app.core.responses import sanitize_for_json
 from app.services.data_manager import DataManager
+from app.services.training_service import TrainingService
 from datetime import datetime, timezone
 
 
@@ -103,25 +104,24 @@ class FeatureExtractor:
         except Exception as e:
             raise FeatureExtractionError(f"Failed to create submodel for layer '{layer_name}': {str(e)}")
 
-        # Load dataset
-        data, labels, _ = DataManager.load_dataset_arrays(dataset_id)
+        # Load dataset prepared for full_model (supports single and multi-input)
+        data, labels, dataset_record = TrainingService.prepare_model_inputs(full_model, dataset_id)
         if sample_limit is not None and sample_limit > 0:
-            data = data[:sample_limit]
+            if isinstance(data, list):
+                data = [arr[:sample_limit] for arr in data]
+            else:
+                data = data[:sample_limit]
             if labels is not None:
                 labels = labels[:sample_limit]
 
-        # Reshape data if needed for multi-dimensional inputs (e.g. (N, L, 1))
-        input_shape = full_model.input_shape
-        if isinstance(input_shape, tuple):
-            if len(input_shape) == 3 and data.ndim == 2:
-                # Add channel dimension: (N, L) -> (N, L, 1)
-                data = np.expand_dims(data, axis=-1)
-
         # Run batch prediction
-        num_samples = len(data)
+        num_samples = len(data[0]) if isinstance(data, list) else len(data)
         features_list = []
         for i in range(0, num_samples, batch_size):
-            batch = data[i : i + batch_size]
+            if isinstance(data, list):
+                batch = [arr[i : i + batch_size] for arr in data]
+            else:
+                batch = data[i : i + batch_size]
             batch_output = extractor_model.predict_on_batch(batch)
             if hasattr(batch_output, "numpy"):
                 batch_output = batch_output.numpy()
