@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Query
 from app.core.config import DATA_DIR, STORAGE_DIR, MAX_UPLOAD_SIZE, ALLOWED_DATA_EXTENSIONS, resolve_storage_path
 from app.core.database import get_db_connection
 from app.services.data_manager import DataManager
-from app.schemas.data import DatasetCreateConfig, DatasetPreview, DataFolderItem, RawPreviewRequest
+from app.schemas.data import DatasetCreateConfig, DatasetPreview, DataFolderItem, RawPreviewRequest, DatasetUpdateConfig
 
 router = APIRouter(prefix="/api/data", tags=["Data Manager"])
 
@@ -110,11 +110,12 @@ def register_dataset(
     encoding: str = Form(default="utf-8"),
     label_col: Optional[str] = Form(default=None),
     exclude_cols: Optional[str] = Form(default=None),
-    transpose: bool = Form(default=False)
+    transpose: bool = Form(default=False),
+    schema_config: Optional[str] = Form(default=None)
 ):
     """
     Registers a raw data file (CSV, TXT, TSV, JSON, NPY, NPZ) into the project as a persistent dataset.
-    Supports excluding columns (e.g. ID, timestamp) and specifying label columns.
+    Supports excluding columns (e.g. ID, timestamp), specifying label columns, and multi-modal schema config.
     """
     src = resolve_storage_path(file_path) or Path(file_path)
     if not src.exists():
@@ -135,11 +136,54 @@ def register_dataset(
             encoding=encoding,
             label_col=label_col if label_col and label_col.strip() else None,
             exclude_cols=exclude_cols if exclude_cols and exclude_cols.strip() else None,
-            transpose=transpose
+            transpose=transpose,
+            schema_config=schema_config if schema_config and schema_config.strip() else None
         )
         return res
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error registering dataset: {str(e)}")
+
+
+@router.put("/{dataset_id}")
+def update_dataset(
+    dataset_id: str,
+    payload: DatasetUpdateConfig
+):
+    """Renames dataset or updates its schema_config / metadata_json."""
+    try:
+        return DataManager.update_dataset(
+            dataset_id=dataset_id,
+            name=payload.name,
+            metadata=payload.metadata,
+            schema_config=payload.schema_config
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/{dataset_id}")
+def delete_dataset(dataset_id: str):
+    """Deletes dataset from project and removes .npz file from disk."""
+    try:
+        return DataManager.delete_dataset(dataset_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/{dataset_id}/sample_ids", response_model=List[str])
+def get_dataset_sample_ids(dataset_id: str):
+    """Returns sample IDs list for input traceability."""
+    try:
+        return DataManager.load_sample_ids(dataset_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 
 
 @router.get("/preview/{dataset_id}", response_model=Dict[str, Any])

@@ -97,12 +97,76 @@
             <span id="preview-shape-badge" class="shape-badge">0 rows × 0 cols</span>
         </div>
         <div style="display: flex; gap: 6px; align-items: center;">
-            <button class="btn btn-secondary btn-sm" id="btn-toggle-columns-pane" onclick="toggleColumnPanel()">Toggle Column Filter</button>
+            <button class="btn btn-secondary btn-sm" id="btn-toggle-schema-pane" onclick="toggleSchemaPanel()" style="color: var(--accent-cyan); font-weight: 600;">🧠 Schema Inspector</button>
+            <button class="btn btn-secondary btn-sm" id="btn-toggle-columns-pane" onclick="toggleColumnPanel()">Filter Columns</button>
         </div>
     </div>
 
     <!-- Summary Stats Bar -->
     <div id="stats-summary" style="display: flex; flex-wrap: wrap; gap: 1.25rem; margin-bottom: 1rem; padding: 10px 14px; background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); border-radius: 6px; font-size: 12px;"></div>
+
+    <!-- JsBrain-style Schema Inspector & 1D-CNN Sequence Grouping Panel -->
+    <div id="schema-inspector-panel" style="background: rgba(15, 23, 42, 0.75); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 8px; padding: 16px; margin-bottom: 1rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <span style="font-size: 15px; font-weight: 700; color: #fff;">🧠 JsBrain-style Schema Inspector</span>
+                <span id="output-task-badge" class="status-badge" style="background: rgba(56, 189, 248, 0.15); border: 1px solid var(--accent-cyan); color: var(--accent-cyan); font-size: 11px;">Task: Auto-Detecting...</span>
+            </div>
+            <div style="display: flex; gap: 8px; align-items: center;">
+                <span id="seq-tensor-badge" style="display: none; background: rgba(34, 197, 94, 0.15); border: 1px solid var(--accent-green); color: var(--accent-green); font-size: 11px; padding: 3px 8px; border-radius: 4px; font-weight: 600; font-family: var(--font-mono);">1D-Sequence Tensor: (N, Seq_Len, 1)</span>
+            </div>
+        </div>
+
+        <!-- 1D-Sequence Column Grouping Bar -->
+        <div style="background: rgba(0, 0, 0, 0.25); border: 1px solid var(--border-color); border-radius: 6px; padding: 12px; margin-bottom: 12px;">
+            <div style="font-size: 12px; font-weight: 600; color: #fff; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center;">
+                <span>⚡ 1D-Sequence Column Grouping & Normalization (1D-CNN Sequence Builder)</span>
+                <span style="font-size: 11px; color: var(--text-muted);">Grouping continuous signals into 3D tensors: (batch, seq_len, 1)</span>
+            </div>
+            <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center;">
+                <div style="flex: 1; min-width: 220px;">
+                    <input type="text" id="seq-pattern-input" class="form-control" placeholder="Pattern e.g. s* or s1-s100 or 0-511" style="font-size: 12px; font-family: var(--font-mono);">
+                </div>
+                <div style="width: 240px;">
+                    <select id="seq-norm-select" class="form-control" style="font-size: 12px;">
+                        <option value="row_zscore" selected>Row-wise Z-Score ((x - μ) / σ)</option>
+                        <option value="global_standard">Global StandardScaler</option>
+                        <option value="global_minmax">Global MinMaxScaler ([0, 1])</option>
+                        <option value="row_minmax">Row-wise MinMax ([0, 1])</option>
+                        <option value="none">None (Raw Amplitudes)</option>
+                    </select>
+                </div>
+                <button type="button" class="btn btn-primary btn-sm" id="btn-group-seq" onclick="applySequenceGrouping()" style="font-weight: 600;">
+                    ⚡ 1D-Sequence Grubu Oluştur (Group for 1D-CNN)
+                </button>
+            </div>
+            <!-- Auto-detected Sequence Group Suggestions -->
+            <div id="seq-suggestions-row" style="margin-top: 8px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;"></div>
+        </div>
+
+        <!-- Per-Column Schema Inspector Table -->
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 8px;">
+            <div style="font-size: 12px; color: var(--text-muted);">Configure types, roles, scalers, and encoders per column:</div>
+            <input type="text" id="schema-col-search" class="form-control" placeholder="Filter schema columns..." style="max-width: 220px; font-size: 11px; padding: 3px 8px;" oninput="filterSchemaTable(this.value)">
+        </div>
+        <div class="table-responsive" style="max-height: 280px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 6px;">
+            <table class="data-table" id="schema-table" style="font-size: 12px;">
+                <thead>
+                    <tr>
+                        <th style="width: 180px;">Column Name</th>
+                        <th style="width: 140px;">Rol</th>
+                        <th style="width: 160px;">Veri Tipi</th>
+                        <th style="width: 180px;">Ön İşleme / Scaler / Encoder</th>
+                        <th style="width: 100px;">Unique</th>
+                        <th>Sample Values</th>
+                    </tr>
+                </thead>
+                <tbody id="schema-tbody">
+                    <tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 12px;">Load preview to inspect columns...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
 
     <!-- Column Exclusion & Management Panel -->
     <div id="column-mgmt-panel" style="background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px 14px; margin-bottom: 1rem;">
@@ -313,12 +377,262 @@
         previewRows: [],
         sampleWaveforms: [],
         selectedRowIdx: 0,
-        chartInstance: null
+        chartInstance: null,
+        columnSchema: [],
+        suggestedSequenceGroups: [],
+        sequenceGroups: []
     };
+
+    function toggleSchemaPanel() {
+        const p = document.getElementById("schema-inspector-panel");
+        if (p) p.style.display = p.style.display === "none" ? "block" : "none";
+    }
 
     function toggleColumnPanel() {
         const p = document.getElementById("column-mgmt-panel");
         p.style.display = p.style.display === "none" ? "block" : "none";
+    }
+
+    function renderSchemaInspector(filterText = "") {
+        const tbody = document.getElementById("schema-tbody");
+        if (!tbody) return;
+
+        const ft = filterText.toLowerCase().trim();
+        const cols = (previewState.columnSchema || []).filter(c => !ft || String(c.name).toLowerCase().includes(ft));
+
+        if (cols.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 12px;">No matching columns found.</td></tr>`;
+            return;
+        }
+
+        tbody.innerHTML = cols.map(c => {
+            const role = c.inferred_role || "input";
+            const type = c.inferred_type || "numeric";
+            const scaler = c.scaler || "standard";
+            const encoder = c.encoder || "onehot";
+
+            let prepHtml = "";
+            if (role === "id") {
+                prepHtml = `<span class="badge" style="background: rgba(251,191,36,0.15); border: 1px solid var(--accent-amber); color: #fbbf24; font-size: 11px; padding: 2px 6px; border-radius: 4px;">ID Key (Excluded)</span>`;
+            } else if (role === "ignore") {
+                prepHtml = `<span class="badge" style="background: rgba(244,63,94,0.15); border: 1px solid var(--accent-rose); color: var(--accent-rose); font-size: 11px; padding: 2px 6px; border-radius: 4px;">Excluded from Training</span>`;
+            } else if (type === "sequence") {
+                prepHtml = `<span class="badge" style="background: rgba(56,189,248,0.15); border: 1px solid var(--accent-cyan); color: var(--accent-cyan); font-size: 11px; padding: 2px 6px; border-radius: 4px;">1D-Signal (Sequence)</span>`;
+            } else if (type === "numeric") {
+                prepHtml = `
+                    <select class="form-control form-control-sm" style="font-size: 11px; padding: 2px 4px;" onchange="updateColumnScaler('${c.name.replace(/'/g, "\\'")}', this.value)">
+                        <option value="standard" ${scaler === "standard" ? "selected" : ""}>StandardScaler</option>
+                        <option value="minmax" ${scaler === "minmax" ? "selected" : ""}>MinMaxScaler</option>
+                        <option value="none" ${scaler === "none" ? "selected" : ""}>None (Raw)</option>
+                    </select>
+                `;
+            } else if (type === "categorical") {
+                prepHtml = `
+                    <select class="form-control form-control-sm" style="font-size: 11px; padding: 2px 4px;" onchange="updateColumnEncoder('${c.name.replace(/'/g, "\\'")}', this.value)">
+                        <option value="onehot" ${encoder === "onehot" ? "selected" : ""}>One-Hot</option>
+                        <option value="label" ${encoder === "label" ? "selected" : ""}>Label Encoding</option>
+                    </select>
+                `;
+            }
+
+            const sampleStr = (c.sample_values || []).map(v => typeof v === 'number' ? v.toFixed(3) : String(v)).slice(0, 4).join(", ") || "—";
+
+            return `
+                <tr>
+                    <td style="font-family: var(--font-mono); font-weight: 600; color: #fff;">${c.name}</td>
+                    <td>
+                        <select class="form-control form-control-sm" style="font-size: 11px; padding: 2px 4px;" onchange="updateColumnRole('${c.name.replace(/'/g, "\\'")}', this.value)">
+                            <option value="input" ${role === "input" ? "selected" : ""}>Input</option>
+                            <option value="output" ${role === "output" ? "selected" : ""}>Output (Target)</option>
+                            <option value="id" ${role === "id" ? "selected" : ""}>ID (Sample ID)</option>
+                            <option value="ignore" ${role === "ignore" ? "selected" : ""}>Ignore</option>
+                        </select>
+                    </td>
+                    <td>
+                        <select class="form-control form-control-sm" style="font-size: 11px; padding: 2px 4px;" onchange="updateColumnType('${c.name.replace(/'/g, "\\'")}', this.value)">
+                            <option value="numeric" ${type === "numeric" ? "selected" : ""}>Numeric</option>
+                            <option value="categorical" ${type === "categorical" ? "selected" : ""}>Categorical</option>
+                            <option value="sequence" ${type === "sequence" ? "selected" : ""}>Sequential/1D-Signal</option>
+                        </select>
+                    </td>
+                    <td>${prepHtml}</td>
+                    <td style="font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);">${c.unique_count || 0}</td>
+                    <td style="font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${sampleStr}</td>
+                </tr>
+            `;
+        }).join("");
+    }
+
+    function filterSchemaTable(val) {
+        renderSchemaInspector(val);
+    }
+
+    function updateColumnRole(colName, newRole) {
+        const item = (previewState.columnSchema || []).find(c => c.name === colName);
+        if (item) {
+            item.inferred_role = newRole;
+            if (newRole === "ignore") {
+                previewState.excludedColumns.add(colName);
+            } else {
+                previewState.excludedColumns.delete(colName);
+            }
+        }
+        updateOutputTaskBadge();
+        renderSchemaInspector(document.getElementById("schema-col-search") ? document.getElementById("schema-col-search").value : "");
+        renderColumnChips();
+    }
+
+    function updateColumnType(colName, newType) {
+        const item = (previewState.columnSchema || []).find(c => c.name === colName);
+        if (item) {
+            item.inferred_type = newType;
+        }
+        updateOutputTaskBadge();
+        renderSchemaInspector(document.getElementById("schema-col-search") ? document.getElementById("schema-col-search").value : "");
+    }
+
+    function updateColumnScaler(colName, newScaler) {
+        const item = (previewState.columnSchema || []).find(c => c.name === colName);
+        if (item) item.scaler = newScaler;
+    }
+
+    function updateColumnEncoder(colName, newEncoder) {
+        const item = (previewState.columnSchema || []).find(c => c.name === colName);
+        if (item) item.encoder = newEncoder;
+    }
+
+    function updateOutputTaskBadge() {
+        const outBadge = document.getElementById("output-task-badge");
+        const seqBadge = document.getElementById("seq-tensor-badge");
+        if (!outBadge) return;
+
+        const outItem = (previewState.columnSchema || []).find(c => c.inferred_role === "output");
+        if (outItem) {
+            if (outItem.inferred_type === "categorical") {
+                outBadge.textContent = `🎯 Classification: Softmax / sparse_categorical_crossentropy (Target: ${outItem.name})`;
+                outBadge.style.color = "var(--accent-green)";
+                outBadge.style.borderColor = "var(--accent-green)";
+                outBadge.style.background = "rgba(34, 197, 94, 0.15)";
+            } else {
+                outBadge.textContent = `📈 Regression: Linear / MSE (Target: ${outItem.name})`;
+                outBadge.style.color = "var(--accent-amber)";
+                outBadge.style.borderColor = "var(--accent-amber)";
+                outBadge.style.background = "rgba(251, 191, 36, 0.15)";
+            }
+        } else {
+            outBadge.textContent = `⚡ Unsupervised / Feature Extraction Pipeline`;
+            outBadge.style.color = "var(--accent-cyan)";
+            outBadge.style.borderColor = "var(--accent-cyan)";
+            outBadge.style.background = "rgba(56, 189, 248, 0.15)";
+        }
+
+        const seqCols = (previewState.columnSchema || []).filter(c => c.inferred_type === "sequence" && c.inferred_role === "input");
+        if (seqBadge) {
+            if (seqCols.length > 0) {
+                seqBadge.style.display = "inline-block";
+                seqBadge.textContent = `1D-Sequence Tensor: (${previewState.totalRows || 'N'}, ${seqCols.length}, 1)`;
+            } else {
+                seqBadge.style.display = "none";
+            }
+        }
+    }
+
+    function renderSequenceSuggestions() {
+        const container = document.getElementById("seq-suggestions-row");
+        if (!container) return;
+        const suggestions = previewState.suggestedSequenceGroups || [];
+        if (suggestions.length === 0) {
+            container.innerHTML = `<span style="font-size: 11px; color: var(--text-muted);">No sequential patterns detected automatically. Type a pattern like 's*' or 's1-s100'.</span>`;
+            return;
+        }
+
+        container.innerHTML = `<span style="font-size: 11px; color: var(--text-muted); font-weight: 600;">Suggested Groups:</span>` +
+            suggestions.map(sg => `
+                <button type="button" class="btn btn-secondary btn-sm" style="font-size: 11px; padding: 2px 8px; border-radius: 4px; font-family: var(--font-mono); color: var(--accent-cyan);" onclick="useSequenceSuggestion('${sg.pattern}', '${sg.name}')">
+                    💡 ${sg.pattern} (${sg.count} cols)
+                </button>
+            `).join("");
+    }
+
+    function useSequenceSuggestion(pattern, name) {
+        const input = document.getElementById("seq-pattern-input");
+        if (input) input.value = pattern;
+        applySequenceGrouping(pattern);
+    }
+
+    function applySequenceGrouping(customPattern = null) {
+        const input = document.getElementById("seq-pattern-input");
+        const pattern = (customPattern || (input ? input.value : "")).trim();
+        if (!pattern) {
+            SignalML.toast("Please specify a pattern (e.g. s* or s1-s100)", "error");
+            return;
+        }
+
+        const normSelect = document.getElementById("seq-norm-select");
+        const normMethod = normSelect ? normSelect.value : "row_zscore";
+
+        let matched = [];
+        const allCols = previewState.allColumns || [];
+
+        // Check range: e.g. s1-s100 or sample_0-sample_511 or 0-511
+        const rangeMatch = pattern.match(/^([a-zA-Z_]*?)(\d+)\s*-\s*([a-zA-Z_]*?)(\d+)$/);
+        if (rangeMatch) {
+            const pfx = rangeMatch[1];
+            const startNum = parseInt(rangeMatch[2]);
+            const endNum = parseInt(rangeMatch[4]);
+            const [minN, maxN] = startNum <= endNum ? [startNum, endNum] : [endNum, startNum];
+            if (!pfx) {
+                if (0 <= minN && maxN < allCols.length) {
+                    matched = allCols.slice(minN, maxN + 1);
+                } else {
+                    matched = allCols.filter(c => {
+                        const n = parseInt(c);
+                        return !isNaN(n) && n >= minN && n <= maxN;
+                    });
+                }
+            } else {
+                matched = allCols.filter(c => {
+                    const m = c.match(new RegExp(`^${pfx}(\\d+)$`));
+                    if (m) {
+                        const n = parseInt(m[1]);
+                        return n >= minN && n <= maxN;
+                    }
+                    return false;
+                });
+            }
+        } else if (pattern.includes("*")) {
+            const prefix = pattern.replace("*", "");
+            matched = allCols.filter(c => c.startsWith(prefix));
+        } else if (pattern.includes(",")) {
+            const parts = pattern.split(",").map(p => p.trim());
+            matched = allCols.filter(c => parts.includes(c));
+        } else {
+            matched = allCols.filter(c => c === pattern);
+        }
+
+        if (matched.length === 0) {
+            SignalML.toast(`No columns matched pattern '${pattern}'`, "error");
+            return;
+        }
+
+        const matchedSet = new Set(matched);
+        (previewState.columnSchema || []).forEach(col => {
+            if (matchedSet.has(col.name)) {
+                col.inferred_type = "sequence";
+                col.inferred_role = "input";
+            }
+        });
+
+        previewState.sequenceGroups = [{
+            name: "sequence_group_1",
+            pattern: pattern,
+            columns: matched,
+            normalization: normMethod
+        }];
+
+        updateOutputTaskBadge();
+        renderSchemaInspector(document.getElementById("schema-col-search") ? document.getElementById("schema-col-search").value : "");
+        SignalML.toast(`⚡ Grouped ${matched.length} columns into 1D-Sequence Tensor!`, "success");
     }
 
     function showRegisterForm(name, path, analysis = null) {
@@ -455,6 +769,25 @@
         `;
 
         document.getElementById("reg-exclude-count").textContent = previewState.excludedColumns.size;
+
+        if (data.column_schema && data.column_schema.length > 0) {
+            previewState.columnSchema = data.column_schema;
+        } else if (previewState.allColumns && previewState.allColumns.length > 0) {
+            previewState.columnSchema = previewState.allColumns.map(c => ({
+                name: String(c),
+                inferred_type: "numeric",
+                inferred_role: previewState.excludedColumns.has(String(c)) ? "ignore" : "input",
+                unique_count: 0,
+                sample_values: []
+            }));
+        }
+        if (data.suggested_sequence_groups) {
+            previewState.suggestedSequenceGroups = data.suggested_sequence_groups;
+        }
+
+        renderSchemaInspector();
+        renderSequenceSuggestions();
+        updateOutputTaskBadge();
 
         renderColumnChips();
         updatePaginationUI();
@@ -764,11 +1097,31 @@
             fd.append("exclude_cols", JSON.stringify(Array.from(previewState.excludedColumns)));
         }
 
+        // Send multi-modal schema_config
+        if (previewState.columnSchema && previewState.columnSchema.length > 0) {
+            const schemaConfig = {
+                columns: {},
+                sequence_groups: previewState.sequenceGroups || [],
+                sequence_normalization: document.getElementById("seq-norm-select") ? document.getElementById("seq-norm-select").value : "row_zscore",
+                default_numeric_scaler: "standard",
+                default_categorical_encoder: "onehot"
+            };
+            previewState.columnSchema.forEach(col => {
+                schemaConfig.columns[col.name] = {
+                    role: col.inferred_role,
+                    type: col.inferred_type,
+                    scaler: col.scaler || "standard",
+                    encoder: col.encoder || "onehot"
+                };
+            });
+            fd.append("schema_config", JSON.stringify(schemaConfig));
+        }
+
         try {
             const res = await fetch("/api/data/register", { method: "POST", body: fd });
             const data = await SignalML.safeJson(res);
             if (res.ok) {
-                SignalML.toast(`Dataset '${name}' registered with ${previewState.excludedColumns.size} excluded columns!`, "success");
+                SignalML.toast(`Dataset '${name}' registered with schema config & Input ID tracking!`, "success");
                 loadPreview(data.id);
                 loadProjectDatasets();
             } else {
@@ -778,6 +1131,47 @@
             SignalML.toast(`Error: ${e.message}`, "error");
         }
     };
+
+    async function renameDataset(datasetId, currentName) {
+        const newName = prompt("Enter new name for dataset:", currentName);
+        if (!newName || newName.trim() === "" || newName.trim() === currentName) return;
+        try {
+            const res = await fetch(`/api/data/${datasetId}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name: newName.trim() })
+            });
+            if (res.ok) {
+                SignalML.toast(`Dataset renamed to "${newName.trim()}"`, "success");
+                loadProjectDatasets();
+            } else {
+                const err = await SignalML.safeJson(res);
+                SignalML.toast(`Rename failed: ${err.detail || res.statusText}`, "error");
+            }
+        } catch (e) {
+            SignalML.toast(`Error: ${e.message}`, "error");
+        }
+    }
+
+    async function deleteDataset(datasetId, name) {
+        if (!confirm(`Are you sure you want to permanently delete dataset "${name}"? This action cannot be undone.`)) return;
+        try {
+            const res = await fetch(`/api/data/${datasetId}`, { method: "DELETE" });
+            if (res.ok) {
+                SignalML.toast(`Dataset "${name}" deleted`, "info");
+                const previewCard = document.getElementById("preview-card");
+                if (previewState.datasetId === datasetId && previewCard) {
+                    previewCard.style.display = "none";
+                }
+                loadProjectDatasets();
+            } else {
+                const err = await SignalML.safeJson(res);
+                SignalML.toast(`Delete failed: ${err.detail || res.statusText}`, "error");
+            }
+        } catch (e) {
+            SignalML.toast(`Error: ${e.message}`, "error");
+        }
+    }
 
     async function loadProjectDatasets() {
         try {
@@ -798,8 +1192,12 @@
                         <td>${d.col_count}</td>
                         <td><span class="shape-badge">${d.file_format.toUpperCase()}</span></td>
                         <td>
-                            <button class="btn btn-secondary btn-sm" onclick="loadPreview('${d.id}')">Inspect</button>
-                            <a href="/signal-tagger?dataset_id=${d.id}" class="btn btn-primary btn-sm">Waveform</a>
+                            <div style="display: flex; gap: 4px; align-items: center;">
+                                <button class="btn btn-secondary btn-sm" onclick="loadPreview('${d.id}')">Inspect</button>
+                                <a href="/signal-tagger?dataset_id=${d.id}" class="btn btn-primary btn-sm">Waveform</a>
+                                <button class="btn btn-secondary btn-sm" onclick="renameDataset('${d.id}', '${d.name.replace(/'/g, "\\'")}')" title="Rename dataset">✏️</button>
+                                <button class="btn btn-secondary btn-sm" onclick="deleteDataset('${d.id}', '${d.name.replace(/'/g, "\\'")}')" title="Delete dataset" style="color: var(--accent-rose);">🗑️</button>
+                            </div>
                         </td>
                     </tr>
                 `).join("");

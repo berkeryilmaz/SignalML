@@ -1,4 +1,4 @@
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 from pydantic import BaseModel, Field
 
 
@@ -10,9 +10,32 @@ class DatasetCreateConfig(BaseModel):
     label_col: Optional[str] = None  # None, or column name/index
     numeric_cols: Optional[List[str]] = None
     exclude_cols: Optional[List[str]] = None
+    schema_config: Optional[Union[str, Dict[str, Any]]] = None
+
+
+class ColumnSchemaItem(BaseModel):
+    name: str
+    inferred_type: str = "numeric"  # numeric | categorical | sequence
+    inferred_role: str = "input"    # id | input | output | ignore
+    unique_count: int = 0
+    sample_values: List[Any] = []
+
+
+class SequenceGroupSuggestion(BaseModel):
+    name: str
+    pattern: str
+    columns: List[str]
+    count: int
+
+
+class DatasetUpdateConfig(BaseModel):
+    name: Optional[str] = None
+    schema_config: Optional[Union[str, Dict[str, Any]]] = None
+    metadata: Optional[Dict[str, Any]] = None
 
 
 class DatasetPreview(BaseModel):
+
     dataset_id: str
     name: str
     row_count: int
