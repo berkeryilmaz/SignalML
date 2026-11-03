@@ -1,0 +1,238 @@
+{% extends "base.html" %}
+
+{% block title %}Signal Processing — SignalML{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-title">Signal Processing & Preprocessing Pipelines</h1>
+        <p class="page-desc">Chain transformations (alignment, truncation, padding, peak windowing, normalization) and export exact-length signals</p>
+    </div>
+    <div style="display: flex; gap: 8px;">
+        <button class="btn btn-secondary" id="preview-pipeline-btn">Preview Pipeline</button>
+        <button class="btn btn-primary" id="apply-pipeline-btn">Apply & Save Dataset</button>
+    </div>
+</div>
+
+<div style="display: grid; grid-template-columns: 360px 1fr; gap: 1.5rem; margin-bottom: 1.5rem;">
+    <!-- Pipeline Configuration Panel -->
+    <div class="card">
+        <div class="card-title">Preprocessing Pipeline</div>
+        <div class="form-group">
+            <label class="form-label">Input Dataset</label>
+            <select id="proc-dataset-select" class="form-control"></select>
+        </div>
+
+        <div style="margin-bottom: 1rem;">
+            <label class="form-label">Add Transformation Step</label>
+            <div style="display: flex; gap: 6px;">
+                <select id="add-step-select" class="form-control">
+                    <option value="to_fixed_length">To Fixed Length N (Pad/Truncate)</option>
+                    <option value="first_n">Select First N Samples</option>
+                    <option value="last_n">Select Last N Samples</option>
+                    <option value="align_starts">Align Signal Onsets</option>
+                    <option value="align_ends">Align Signal Offsets</option>
+                    <option value="peak_asymmetric_window">Peak Window [Peak - M : Peak + K]</option>
+                    <option value="peak_window">Peak Symmetric Window</option>
+                    <option value="slice">Slice (Start, Stop, Stride)</option>
+                    <option value="normalize_zscore">Z-Score Normalization</option>
+                    <option value="normalize_minmax">Min-Max Scaling</option>
+                    <option value="handle_missing">Missing Value Handler</option>
+                </select>
+                <button class="btn btn-secondary btn-sm" id="add-step-btn">+ Add</button>
+            </div>
+        </div>
+
+        <div id="pipeline-steps-list" style="display: flex; flex-direction: column; gap: 8px; max-height: 380px; overflow-y: auto;">
+            <!-- Rendered pipeline steps -->
+        </div>
+
+        <hr style="border: none; border-top: 1px solid var(--border-color); margin: 1rem 0;">
+
+        <!-- Export Box -->
+        <div style="font-weight: 600; font-size: 13px; margin-bottom: 0.5rem;">Exact-Length Signal Export</div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 0.5rem;">
+            <input type="number" id="export-target-len" class="form-control" placeholder="Exact N length..." value="512">
+            <select id="export-format" class="form-control">
+                <option value="csv">CSV Format</option>
+                <option value="txt">TXT / TSV Format</option>
+                <option value="npy">NPY NumPy Binary</option>
+                <option value="npz">NPZ Archive</option>
+            </select>
+        </div>
+        <button class="btn btn-secondary btn-sm" style="width: 100%; justify-content: center;" id="direct-export-btn">Download Exact N Signals</button>
+    </div>
+
+    <!-- Comparison Viewer -->
+    <div class="card">
+        <div class="card-title">Before vs. After Transformation Comparison</div>
+        <div id="comparison-chart" style="width: 100%; height: 500px;"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let pipelineSteps = [
+        { name: "to_fixed_length", params: { target_length: 512, pad_mode: "constant", pad_value: 0.0, truncate_pos: "end" } },
+        { name: "normalize_zscore", params: { per_signal: true } }
+    ];
+
+    let comparisonChart = null;
+
+    function initChart() {
+        comparisonChart = Highcharts.chart("comparison-chart", {
+            chart: { type: "line", backgroundColor: "transparent" },
+            title: { text: null },
+            credits: { enabled: false },
+            xAxis: { title: { text: "Time Points", style: { color: "#94a3b8" } }, labels: { style: { color: "#94a3b8" } }, gridLineColor: "#1e293b" },
+            yAxis: { title: { text: "Normalized / Processed Amplitude", style: { color: "#94a3b8" } }, labels: { style: { color: "#94a3b8" } }, gridLineColor: "#1e293b" },
+            legend: { itemStyle: { color: "#f1f5f9" } },
+            series: []
+        });
+    }
+
+    function renderPipelineList() {
+        const container = document.getElementById("pipeline-steps-list");
+        container.innerHTML = pipelineSteps.map((step, idx) => `
+            <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); border-radius: 6px; padding: 8px 10px; font-size: 12px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                    <strong>${idx + 1}. ${step.name.toUpperCase()}</strong>
+                    <button onclick="removeStep(${idx})" style="background: none; border: none; color: var(--accent-rose); cursor: pointer;">&times;</button>
+                </div>
+                <div style="font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);">${JSON.stringify(step.params)}</div>
+            </div>
+        `).join("");
+    }
+
+    function removeStep(idx) {
+        pipelineSteps.splice(idx, 1);
+        renderPipelineList();
+    }
+
+    document.getElementById("add-step-btn").onclick = () => {
+        const type = document.getElementById("add-step-select").value;
+        let defaultParams = {};
+        if (type === "to_fixed_length") defaultParams = { target_length: 512, pad_mode: "constant", pad_value: 0.0, truncate_pos: "end" };
+        else if (type === "first_n" || type === "last_n") defaultParams = { n: 256 };
+        else if (type === "peak_asymmetric_window") defaultParams = { left_m: 100, right_k: 200, mode: "max_abs" };
+        else if (type === "peak_window") defaultParams = { window_size: 256, mode: "max_abs" };
+        else if (type === "slice") defaultParams = { start: 0, stop: null, stride: 1 };
+        else if (type === "normalize_zscore") defaultParams = { per_signal: true };
+        else if (type === "normalize_minmax") defaultParams = { min: 0.0, max: 1.0, per_signal: true };
+        else if (type === "handle_missing") defaultParams = { strategy: "interpolate", fill_value: 0.0 };
+        else if (type === "align_starts" || type === "align_ends") defaultParams = { threshold_ratio: 0.1 };
+
+        pipelineSteps.push({ name: type, params: defaultParams });
+        renderPipelineList();
+    };
+
+    async function previewPipeline() {
+        const datasetId = document.getElementById("proc-dataset-select").value;
+        if (!datasetId) return;
+
+        try {
+            const res = await fetch("/api/signals/process_preview", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ dataset_id: datasetId, pipeline: pipelineSteps })
+            });
+
+            const data = await SignalML.safeJson(res);
+            if (!res.ok) {
+                SignalML.toast(`Pipeline error: ${data.detail || data.error || res.statusText}`, "error");
+                return;
+            }
+
+            while (comparisonChart.series.length > 0) comparisonChart.series[0].remove(false);
+
+            if (data.results && data.results.length > 0) {
+                const r = data.results[0];
+                comparisonChart.addSeries({ name: `Original (len ${r.original.length})`, data: r.original.y, color: "#94a3b8", dashStyle: "ShortDash" }, false);
+                comparisonChart.addSeries({ name: `Processed (len ${r.processed.length})`, data: r.processed.y, color: "#38bdf8", lineWidth: 2 }, false);
+                comparisonChart.redraw();
+            }
+            SignalML.toast("Pipeline preview updated!", "success");
+        } catch (e) {
+            SignalML.toast(`Error: ${e.message}`, "error");
+        }
+    }
+
+    document.getElementById("preview-pipeline-btn").onclick = previewPipeline;
+
+    document.getElementById("apply-pipeline-btn").onclick = async () => {
+        const datasetId = document.getElementById("proc-dataset-select").value;
+        if (!datasetId) return;
+
+        try {
+            const res = await fetch("/api/signals/apply_and_save", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ dataset_id: datasetId, pipeline: pipelineSteps })
+            });
+            const d = await SignalML.safeJson(res);
+            if (res.ok) {
+                SignalML.toast(`Saved new preprocessed dataset '${d.name}' (${d.row_count} x ${d.col_count})`, "success");
+            } else {
+                SignalML.toast(`Failed to save: ${d.detail || d.error || res.statusText}`, "error");
+            }
+        } catch (e) {
+            SignalML.toast(`Error: ${e.message}`, "error");
+        }
+    };
+
+    document.getElementById("direct-export-btn").onclick = async () => {
+        const datasetId = document.getElementById("proc-dataset-select").value;
+        const targetLen = Number(document.getElementById("export-target-len").value);
+        const fmt = document.getElementById("export-format").value;
+
+        try {
+            const res = await fetch("/api/signals/export", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    dataset_id: datasetId,
+                    target_length: targetLen,
+                    output_format: fmt,
+                    pipeline: pipelineSteps
+                })
+            });
+
+            if (res.ok) {
+                const blob = await res.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `signalml_export_${targetLen}_samples.${fmt}`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                SignalML.toast("Exact N signal export downloaded!", "success");
+            }
+        } catch (e) {
+            SignalML.toast(`Export error: ${e.message}`, "error");
+        }
+    };
+
+    async function loadDatasets() {
+        const sel = document.getElementById("proc-dataset-select");
+        try {
+            const res = await fetch(`/api/data/list/${SignalML.currentProjectId}`);
+            if (res.ok) {
+                const datasets = await SignalML.safeJson(res);
+                const dList = Array.isArray(datasets) ? datasets : [];
+                sel.innerHTML = dList.map(d => `<option value="${d.id}">${d.name} (${d.row_count} x ${d.col_count})</option>`).join("");
+                if (dList.length > 0) previewPipeline();
+            }
+        } catch (e) {
+            console.error(e);
+        }
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+        initChart();
+        renderPipelineList();
+        loadDatasets();
+    });
+</script>
+{% endblock %}

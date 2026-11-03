@@ -1,0 +1,458 @@
+import json
+import uuid
+from pathlib import Path
+from typing import Dict, Any, List, Optional
+from fastapi import APIRouter, HTTPException, Body, UploadFile, File, Form
+from fastapi.responses import JSONResponse, Response
+from datetime import datetime, timezone
+import numpy as np
+import keras
+
+from app.core.config import MODELS_DIR, resolve_storage_path
+from app.core.database import get_db_connection
+from app.services.keras_model_builder import KerasModelBuilder, KerasGraphError
+
+router = APIRouter(prefix="/api/models", tags=["Neural Network Builder"])
+
+
+@router.post("/validate")
+def validate_keras_graph(payload: Dict[str, Any] = Body(...)):
+    """
+    Validates neural network node graph structure, infers tensor shapes for all intermediate layers,
+    and returns parameter counts and architecture summary.
+    """
+    graph_data = payload.get("graph", payload)
+    try:
+        model, summary = KerasModelBuilder.build_model(graph_data)
+        return {
+            "valid": True,
+            "summary": summary
+        }
+    except KerasGraphError as e:
+        return {
+            "valid": False,
+            "error": str(e)
+        }
+    except Exception as e:
+        return {
+            "valid": False,
+            "error": f"Unexpected validation error: {str(e)}"
+        }
+
+
+@router.post("/build")
+def build_and_save_model(payload: Dict[str, Any] = Body(...)):
+    """
+    Builds a genuine Keras Functional API model from graph JSON,
+    compiles it, saves to disk (.keras format), and registers in database.
+    """
+    project_id = payload.get("project_id")
+    name = payload.get("name", "SignalML Model")
+    graph_data = payload.get("graph", {})
+    task_type = payload.get("task_type", "classification")
+    optimizer = payload.get("optimizer", "adam")
+    learning_rate = float(payload.get("learning_rate", 0.001))
+    loss = payload.get("loss")
+
+    if not project_id:
+        raise HTTPException(status_code=400, detail="project_id is required")
+
+    try:
+        model, summary = KerasModelBuilder.build_model(graph_data)
+        compiled_model = KerasModelBuilder.compile_model(
+            model=model,
+            optimizer=optimizer,
+            learning_rate=learning_rate,
+            loss=loss
+        )
+    except KerasGraphError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to build Keras model: {str(e)}")
+
+    model_id = str(uuid.uuid4())
+    dest_dir = MODELS_DIR / project_id
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    weights_path = dest_dir / f"{model_id}.keras"
+
+    try:
+        compiled_model.save(str(weights_path))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save model on disk: {str(e)}")
+
+    now = datetime.now(timezone.utc).isoformat()
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO models (
+                id, project_id, name, task_type, graph_json, summary_json,
+                weights_path, trainable_params, non_trainable_params, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                model_id, project_id, name, task_type, json.dumps(graph_data),
+                json.dumps(summary), str(weights_path), summary["trainable_params"],
+                summary["non_trainable_params"], now, now
+            )
+        )
+        conn.execute(
+            "UPDATE projects SET active_model_id = ?, updated_at = ? WHERE id = ?",
+            (model_id, now, project_id)
+        )
+        conn.commit()
+
+    return {
+        "model_id": model_id,
+        "name": name,
+        "task_type": task_type,
+        "weights_path": str(weights_path),
+        "summary": summary
+    }
+
+
+@router.get("/{model_id}")
+def get_model(model_id: str):
+    """Retrieves model record and architecture details."""
+    with get_db_connection() as conn:
+        row = conn.execute("SELECT * FROM models WHERE id = ?", (model_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Model not found")
+
+        m = dict(row)
+        m["graph"] = json.loads(m.get("graph_json", "{}"))
+        m["summary"] = json.loads(m.get("summary_json", "{}"))
+        return m
+
+
+@router.get("/list/{project_id}")
+def list_project_models(project_id: str):
+    """Lists all trained or configured models for a project."""
+    with get_db_connection() as conn:
+        rows = conn.execute("SELECT id, name, task_type, trainable_params, non_trainable_params, created_at FROM models WHERE project_id = ? ORDER BY created_at DESC", (project_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+
+LAYER_TYPE_MAP = {
+    "inputlayer": "input",
+    "batchnormalization": "batchnorm",
+    "layernormalization": "layernorm",
+    "unitnormalization": "unitnorm",
+    "maxpooling1d": "maxpooling1d",
+    "averagepooling1d": "averagepooling1d",
+    "globalmaxpooling1d": "global_maxpooling1d",
+    "globalaveragepooling1d": "global_averagepooling1d",
+    "conv1dtranspose": "conv1dtranspose",
+    "upsampling1d": "upsampling1d",
+    "multiheadattention": "multihead_attention",
+    "positionalencoding": "positional_encoding",
+}
+
+
+def keras_model_to_litegraph(model: keras.Model) -> Dict[str, Any]:
+    nodes = []
+    links = []
+    link_id = 1
+    layer_name_to_id = {}
+
+    for idx, l in enumerate(model.layers):
+        node_id = idx + 1
+        layer_name_to_id[l.name] = node_id
+        cname = l.__class__.__name__.lower()
+        mapped_type = LAYER_TYPE_MAP.get(cname, cname)
+        ntype = f"keras/{mapped_type}"
+        props: Dict[str, Any] = {}
+        if hasattr(l, "filters"): props["filters"] = int(l.filters)
+        if hasattr(l, "kernel_size"): props["kernel_size"] = int(l.kernel_size[0]) if isinstance(l.kernel_size, (list, tuple)) else int(l.kernel_size)
+        if hasattr(l, "strides"): props["strides"] = int(l.strides[0]) if isinstance(l.strides, (list, tuple)) else int(l.strides)
+        if hasattr(l, "padding"): props["padding"] = str(l.padding)
+        if hasattr(l, "units"): props["units"] = int(l.units)
+        if hasattr(l, "activation") and l.activation:
+            props["activation"] = getattr(l.activation, "__name__", "linear")
+        if hasattr(l, "pool_size"): props["pool_size"] = int(l.pool_size[0]) if isinstance(l.pool_size, (list, tuple)) else int(l.pool_size)
+        if hasattr(l, "size"): props["size"] = int(l.size[0]) if isinstance(l.size, (list, tuple)) else int(l.size)
+        if hasattr(l, "rate"): props["rate"] = float(l.rate)
+        if hasattr(l, "return_sequences"): props["return_sequences"] = bool(l.return_sequences)
+        if cname == "inputlayer":
+            batch_shape = getattr(l, "batch_shape", None)
+            if not batch_shape and hasattr(l, "input_shape"):
+                batch_shape = l.input_shape
+            if batch_shape and len(batch_shape) > 1:
+                props["shape"] = ", ".join(str(s) for s in batch_shape[1:] if s is not None)
+
+        col = idx % 4
+        row = idx // 4
+        pos = [120 + col * 260, 100 + row * 180]
+
+        node = {
+            "id": node_id,
+            "type": ntype,
+            "title": l.name,
+            "pos": pos,
+            "size": [200, 90],
+            "properties": props,
+            "inputs": [{"name": "in", "type": "Tensor"}] if idx > 0 else [],
+            "outputs": [{"name": "out", "type": "Tensor"}] if idx < len(model.layers) - 1 else []
+        }
+        nodes.append(node)
+
+    # Reconstruct links from inbound_nodes
+    try:
+        cfg = model.get_config()
+        layers_cfg = cfg.get("layers", [])
+        has_history_links = False
+
+        def find_histories(obj, found):
+            if isinstance(obj, dict):
+                if "keras_history" in obj:
+                    found.append(obj["keras_history"])
+                for v in obj.values():
+                    find_histories(v, found)
+            elif isinstance(obj, (list, tuple)):
+                for item in obj:
+                    find_histories(item, found)
+
+        for l_cfg in layers_cfg:
+            target_name = l_cfg.get("name")
+            target_id = layer_name_to_id.get(target_name)
+            if not target_id:
+                continue
+            inbounds = l_cfg.get("inbound_nodes", [])
+            histories = []
+            find_histories(inbounds, histories)
+            for slot_idx, hist in enumerate(histories):
+                if isinstance(hist, (list, tuple)) and len(hist) >= 1:
+                    origin_name = hist[0]
+                    origin_id = layer_name_to_id.get(origin_name)
+                    if origin_id:
+                        links.append([link_id, origin_id, 0, target_id, slot_idx, "Tensor"])
+                        link_id += 1
+                        has_history_links = True
+
+        if not has_history_links:
+            for i in range(1, len(nodes)):
+                links.append([i, i, 0, i + 1, 0, "Tensor"])
+    except Exception:
+        for i in range(1, len(nodes)):
+            links.append([i, i, 0, i + 1, 0, "Tensor"])
+
+    return {
+        "last_node_id": len(nodes),
+        "last_link_id": len(links),
+        "nodes": nodes,
+        "links": links
+    }
+
+
+@router.post("/import")
+async def import_model(
+    file: UploadFile = File(...),
+    project_id: str = Form(...),
+    name: Optional[str] = Form(None),
+    task_type: Optional[str] = Form(None)
+):
+    """
+    Imports an exported Keras model (.keras / .h5) or graph architecture (.json).
+    Validates model structure, infers shapes/parameters, saves to project models,
+    and registers in the database.
+    """
+    if not project_id:
+        raise HTTPException(status_code=400, detail="project_id is required")
+
+    filename = file.filename or "imported_model"
+    suffix = Path(filename).suffix.lower()
+    if suffix not in (".keras", ".h5", ".json"):
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported model format. Only .keras, .h5, or .json files can be imported."
+        )
+
+    model_name = name.strip() if name and name.strip() else Path(filename).stem
+    model_id = str(uuid.uuid4())
+    dest_dir = MODELS_DIR / project_id
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest_weights_path = dest_dir / f"{model_id}.keras"
+
+    content = await file.read()
+    if len(content) == 0:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    detected_task_type = task_type or "classification"
+    graph_data: Dict[str, Any] = {}
+    summary: Dict[str, Any] = {}
+
+    if suffix in (".keras", ".h5"):
+        with open(dest_weights_path, "wb") as f:
+            f.write(content)
+
+        try:
+            model = keras.models.load_model(str(dest_weights_path))
+        except Exception as e:
+            if dest_weights_path.exists():
+                dest_weights_path.unlink()
+            raise HTTPException(status_code=400, detail=f"Failed to load Keras model: {str(e)}")
+
+        trainable = int(np.sum([np.prod(v.shape) for v in model.trainable_weights]))
+        non_trainable = int(np.sum([np.prod(v.shape) for v in model.non_trainable_weights]))
+        total_params = trainable + non_trainable
+
+        layers_info = []
+        for idx, l in enumerate(model.layers):
+            out_shape = getattr(l, "output_shape", None)
+            if out_shape is None and hasattr(l, "output"):
+                try:
+                    out_shape = tuple(l.output.shape)
+                except Exception:
+                    out_shape = None
+            layers_info.append({
+                "node_id": str(idx + 1),
+                "layer_type": l.__class__.__name__,
+                "output_shape": list(out_shape) if isinstance(out_shape, tuple) else out_shape,
+                "params": l.count_params()
+            })
+
+        summary = {
+            "total_params": total_params,
+            "trainable_params": trainable,
+            "non_trainable_params": non_trainable,
+            "layers": layers_info,
+            "input_shapes": [list(model.input_shape)] if getattr(model, "input_shape", None) else [],
+            "output_shapes": [list(model.output_shape)] if getattr(model, "output_shape", None) else []
+        }
+
+        # Auto-detect task type
+        if not task_type:
+            if getattr(model, "output_shape", None) == getattr(model, "input_shape", None):
+                detected_task_type = "reconstruction"
+            elif getattr(model, "output_shape", None) and len(model.output_shape) > 1 and model.output_shape[-1] == 1:
+                detected_task_type = "regression"
+            else:
+                detected_task_type = "classification"
+
+        # Generate visual LiteGraph nodes for the canvas using helper
+        graph_data = keras_model_to_litegraph(model)
+
+        # Compile model if needed
+        if not getattr(model, "optimizer", None):
+            loss = "mse" if detected_task_type in ("regression", "reconstruction") else "sparse_categorical_crossentropy"
+            metrics = ["mae"] if detected_task_type in ("regression", "reconstruction") else ["accuracy"]
+            model.compile(optimizer="adam", loss=loss, metrics=metrics)
+            model.save(str(dest_weights_path))
+
+    elif suffix == ".json":
+        try:
+            parsed = json.loads(content.decode("utf-8"))
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid JSON file: {str(e)}")
+
+        if isinstance(parsed, dict) and ("nodes" in parsed or "last_node_id" in parsed):
+            graph_data = parsed
+            try:
+                model, summary = KerasModelBuilder.build_model(graph_data)
+                compiled_model = KerasModelBuilder.compile_model(
+                    model=model,
+                    optimizer="adam",
+                    learning_rate=0.001,
+                    loss=None
+                )
+                compiled_model.save(str(dest_weights_path))
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Failed to build model from graph JSON: {str(e)}")
+        elif isinstance(parsed, dict) and "graph" in parsed and isinstance(parsed["graph"], dict) and ("nodes" in parsed["graph"] or "last_node_id" in parsed["graph"]):
+            graph_data = parsed["graph"]
+            try:
+                model, summary = KerasModelBuilder.build_model(graph_data)
+                compiled_model = KerasModelBuilder.compile_model(
+                    model=model,
+                    optimizer="adam",
+                    learning_rate=0.001,
+                    loss=None
+                )
+                compiled_model.save(str(dest_weights_path))
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Failed to build model from graph JSON: {str(e)}")
+        else:
+            try:
+                json_str = json.dumps(parsed) if isinstance(parsed, dict) else str(parsed)
+                model = keras.models.model_from_json(json_str)
+                loss = "mse" if detected_task_type in ("regression", "reconstruction") else "sparse_categorical_crossentropy"
+                model.compile(optimizer="adam", loss=loss)
+                model.save(str(dest_weights_path))
+
+                trainable = int(np.sum([np.prod(v.shape) for v in model.trainable_weights]))
+                non_trainable = int(np.sum([np.prod(v.shape) for v in model.non_trainable_weights]))
+                layers_info = []
+                for idx, l in enumerate(model.layers):
+                    out_shape = getattr(l, "output_shape", None)
+                    if out_shape is None and hasattr(l, "output"):
+                        try:
+                            out_shape = tuple(l.output.shape)
+                        except Exception:
+                            out_shape = None
+                    layers_info.append({
+                        "node_id": str(idx + 1),
+                        "layer_type": l.__class__.__name__,
+                        "output_shape": list(out_shape) if isinstance(out_shape, tuple) else out_shape,
+                        "params": l.count_params()
+                    })
+                summary = {
+                    "total_params": trainable + non_trainable,
+                    "trainable_params": trainable,
+                    "non_trainable_params": non_trainable,
+                    "layers": layers_info,
+                    "input_shapes": [list(model.input_shape)] if model.input_shape else [],
+                    "output_shapes": [list(model.output_shape)] if model.output_shape else []
+                }
+                graph_data = keras_model_to_litegraph(model)
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Failed to parse Keras architecture JSON: {str(e)}")
+
+    now = datetime.now(timezone.utc).isoformat()
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO models (
+                id, project_id, name, task_type, graph_json, summary_json,
+                weights_path, trainable_params, non_trainable_params, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                model_id, project_id, model_name, detected_task_type,
+                json.dumps(graph_data), json.dumps(summary), str(dest_weights_path),
+                summary.get("trainable_params", 0), summary.get("non_trainable_params", 0),
+                now, now
+            )
+        )
+        conn.execute(
+            "UPDATE projects SET active_model_id = ?, updated_at = ? WHERE id = ?",
+            (model_id, now, project_id)
+        )
+        conn.commit()
+
+    return {
+        "model_id": model_id,
+        "name": model_name,
+        "task_type": detected_task_type,
+        "trainable_params": summary.get("trainable_params", 0),
+        "total_params": summary.get("total_params", 0),
+        "weights_path": str(dest_weights_path),
+        "summary": summary,
+        "graph": graph_data
+    }
+
+
+@router.get("/{model_id}/export_json")
+def export_model_json(model_id: str):
+    """Exports model graph architecture as JSON file download."""
+    with get_db_connection() as conn:
+        row = conn.execute("SELECT name, graph_json FROM models WHERE id = ?", (model_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Model not found")
+
+        graph = json.loads(row["graph_json"] or "{}")
+        content = json.dumps(graph, indent=2)
+        filename = f"{row['name'].replace(' ', '_')}_{model_id[:8]}_graph.json"
+        return Response(
+            content=content,
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        )

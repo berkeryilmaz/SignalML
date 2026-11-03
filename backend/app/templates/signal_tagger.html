@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+
+{% block title %}Signal Tagger & Waveforms — SignalML{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-title">Signal Tagger & Waveform Inspector</h1>
+        <p class="page-desc">High-resolution analog and discrete time-series visualization, navigation, and multi-signal comparison</p>
+    </div>
+    <div style="display: flex; gap: 8px; align-items: center;">
+        <input type="file" id="tagger-file-input" accept=".csv,.txt,.tsv,.npy,.npz" style="display: none;">
+        <button class="btn btn-primary btn-sm" id="btn-quick-upload" onclick="document.getElementById('tagger-file-input').click()">📁 Load CSV</button>
+        <select id="dataset-selector" class="form-control" style="width: 250px;">
+            <option value="">Select a Dataset...</option>
+        </select>
+        <button class="btn btn-secondary btn-sm" id="prev-sample-btn">&larr; Prev</button>
+        <span id="sample-counter" style="font-family: var(--font-mono); font-size: 13px; font-weight: 600; padding: 0 8px;">0 / 0</span>
+        <button class="btn btn-secondary btn-sm" id="next-sample-btn">Next &rarr;</button>
+    </div>
+</div>
+
+<div class="grid-cards" style="margin-bottom: 1rem;">
+    <div class="card">
+        <div class="card-title">Sample Index</div>
+        <div class="stat-val" id="stat-sample-idx">#0</div>
+        <div class="stat-desc">Active Time-Series Sequence</div>
+    </div>
+    <div class="card">
+        <div class="card-title">Signal Length</div>
+        <div class="stat-val" id="stat-signal-len">0 points</div>
+        <div class="stat-desc">Total discrete time samples</div>
+    </div>
+    <div class="card">
+        <div class="card-title">Amplitude Bounds</div>
+        <div class="stat-val" id="stat-min-max">[0, 0]</div>
+        <div class="stat-desc">Range: [Min, Max]</div>
+    </div>
+    <div class="card">
+        <div class="card-title">Distribution & Label</div>
+        <div class="stat-val" style="color: var(--accent-green);" id="stat-label">None</div>
+        <div class="stat-desc" id="stat-mean-std">μ: 0.00, σ: 0.00</div>
+    </div>
+</div>
+
+<!-- Waveform Canvas -->
+<div class="card" style="margin-bottom: 1.5rem;">
+    <div class="card-title" style="display: flex; justify-content: space-between;">
+        <span>Interactive Waveform (Pan: Shift + Drag, Zoom: Box Drag)</span>
+        <div style="display: flex; gap: 8px;">
+            <button class="btn btn-secondary btn-sm" id="group-overlay-btn" title="View all waveforms in dataset faded with their prominent average">👥 Group Overlay (Faded + Average)</button>
+            <button class="btn btn-secondary btn-sm" id="overlay-toggle-btn">Toggle Multi-Signal Overlay</button>
+        </div>
+    </div>
+    <div id="waveform-chart" style="width: 100%; height: 480px;"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/signal_viewer.js"></script>
+<script>
+    let viewer = null;
+
+    async function reloadDatasetSelector(selectedId = null) {
+        const sel = document.getElementById("dataset-selector");
+        try {
+            const res = await fetch(`/api/data/list/${SignalML.currentProjectId}`);
+            if (res.ok) {
+                const data = await SignalML.safeJson(res);
+                const datasets = Array.isArray(data) ? data : [];
+                sel.innerHTML = `<option value="">Select a Dataset...</option>` +
+                    datasets.map(d => `<option value="${d.id}" ${d.id === selectedId ? 'selected' : ''}>${d.name} (${d.row_count} signals)</option>`).join("");
+
+                if (selectedId) {
+                    sel.value = selectedId;
+                    viewer = new SignalViewer("waveform-chart", selectedId);
+                } else if (datasets.length > 0 && !sel.value) {
+                    sel.value = datasets[0].id;
+                    viewer = new SignalViewer("waveform-chart", datasets[0].id);
+                }
+            }
+        } catch (e) {
+            console.error("Failed to reload datasets:", e);
+        }
+    }
+
+    async function handleTaggerFileUpload(file) {
+        SignalML.toast(`Uploading ${file.name}...`, "info");
+        const fd = new FormData();
+        fd.append("project_id", SignalML.currentProjectId);
+        fd.append("file", file);
+
+        try {
+            const res = await fetch("/api/data/upload", { method: "POST", body: fd });
+            const data = await SignalML.safeJson(res);
+            if (!res.ok) {
+                SignalML.toast(`Upload failed: ${data.detail || data.error || res.statusText}`, "error");
+                return;
+            }
+
+            const analysis = data.analysis || {};
+            const delim = analysis.detected_delimiter || ",";
+            const hasHeader = analysis.detected_has_header ?? false;
+            const is1D = analysis.is_1d_continuous ?? false;
+            const dsName = file.name.replace(/\.[^/.]+$/, "");
+
+            const regFd = new FormData();
+            regFd.append("project_id", SignalML.currentProjectId);
+            regFd.append("name", dsName);
+            regFd.append("file_path", data.temp_path);
+            regFd.append("delimiter", delim);
+            regFd.append("has_header", String(hasHeader));
+            regFd.append("transpose", String(is1D));
+
+            const regRes = await fetch("/api/data/register", { method: "POST", body: regFd });
+            const regData = await SignalML.safeJson(regRes);
+            if (!regRes.ok) {
+                SignalML.toast(`Registration failed: ${regData.detail || regData.error || regRes.statusText}`, "error");
+                return;
+            }
+
+            SignalML.toast(`Loaded ${dsName} (${regData.row_count} signals, ${regData.col_count} pts)`, "success");
+            await reloadDatasetSelector(regData.id);
+        } catch (e) {
+            SignalML.toast(`Error: ${e.message}`, "error");
+        }
+    }
+
+    async function initSignalTagger() {
+        const urlParams = new URLSearchParams(window.location.search);
+        let selectedDatasetId = urlParams.get("dataset_id");
+
+        await reloadDatasetSelector(selectedDatasetId);
+
+        const sel = document.getElementById("dataset-selector");
+        sel.onchange = (e) => {
+            if (e.target.value) {
+                viewer = new SignalViewer("waveform-chart", e.target.value);
+            }
+        };
+
+        const taggerFileInput = document.getElementById("tagger-file-input");
+        if (taggerFileInput) {
+            taggerFileInput.onchange = (e) => {
+                if (e.target.files.length > 0) handleTaggerFileUpload(e.target.files[0]);
+            };
+        }
+
+        // Drag & drop on waveform card
+        const chartCard = document.getElementById("waveform-chart").parentElement;
+        if (chartCard) {
+            chartCard.ondragover = (e) => { e.preventDefault(); chartCard.style.borderColor = "var(--accent-blue)"; };
+            chartCard.ondragleave = () => { chartCard.style.borderColor = "var(--border-color)"; };
+            chartCard.ondrop = (e) => {
+                e.preventDefault();
+                chartCard.style.borderColor = "var(--border-color)";
+                if (e.dataTransfer.files.length > 0) handleTaggerFileUpload(e.dataTransfer.files[0]);
+            };
+        }
+
+        document.getElementById("prev-sample-btn").onclick = () => { if (viewer) viewer.prevSample(); };
+        document.getElementById("next-sample-btn").onclick = () => { if (viewer) viewer.nextSample(); };
+        document.getElementById("overlay-toggle-btn").onclick = () => {
+            if (viewer) {
+                viewer.toggleOverlay((viewer.currentIndex + 1) % viewer.totalSamples);
+            }
+        };
+        document.getElementById("group-overlay-btn").onclick = () => {
+            if (viewer) {
+                viewer.loadGroupAnalysis();
+            }
+        };
+    }
+
+    document.addEventListener("DOMContentLoaded", initSignalTagger);
+</script>
+{% endblock %}

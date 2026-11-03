@@ -1,0 +1,19 @@
+# Python cache & test artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Reference folders excluded from repo
+JsBrain-main/
+SignalTagger-main/
+
+# Environment & logs
+.env
+*.log
+
+# Runtime storage (keep directory structure with .gitkeep)
+storage/*
+!storage/.gitkeep

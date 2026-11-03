@@ -1,0 +1,817 @@
+{% extends "base.html" %}
+
+{% block title %}Data Manager — SignalML{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-title">Data Manager</h1>
+        <p class="page-desc">Upload ZIP archives, inspect mounted /data directory, preview time series, and register datasets</p>
+    </div>
+</div>
+
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem;">
+    <!-- Upload Box -->
+    <div class="card">
+        <div class="card-title">Upload Data File or ZIP Archive</div>
+        <div id="drop-zone" style="border: 2px dashed var(--border-color); border-radius: 8px; padding: 2.5rem; text-align: center; cursor: pointer; background: rgba(255,255,255,0.01); transition: all 0.15s ease;">
+            <div style="font-size: 36px; margin-bottom: 0.5rem;">📁</div>
+            <p style="font-weight: 600; color: #fff;">Click or drag & drop CSV, TXT, TSV, NPY, NPZ, or ZIP here</p>
+            <p style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">ZIP archives are securely extracted with path traversal & zip-bomb protection</p>
+            <input type="file" id="file-input" style="display: none;" accept=".csv,.txt,.tsv,.json,.jsonl,.npy,.npz,.zip">
+        </div>
+        <div id="upload-status" style="margin-top: 0.75rem; font-size: 12px;"></div>
+    </div>
+
+    <!-- Mount Browser (/data) -->
+    <div class="card">
+        <div class="card-title">Mounted Host Directory (/data)</div>
+        <div style="display: flex; gap: 8px; margin-bottom: 0.75rem;">
+            <input type="text" id="mount-subpath" class="form-control" placeholder="Subpath..." style="flex: 1;">
+            <button class="btn btn-secondary btn-sm" id="mount-browse-btn">Browse</button>
+        </div>
+        <div id="mount-files-list" style="height: 180px; overflow-y: auto; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 6px; padding: 6px;">
+            <div style="color: var(--text-muted); padding: 8px; font-size: 12px;">Click Browse to scan /data...</div>
+        </div>
+    </div>
+</div>
+
+<!-- Register Form & Preview -->
+<div class="card" id="register-card" style="margin-bottom: 1.5rem; display: none;">
+    <div class="card-title" style="display: flex; justify-content: space-between; align-items: center;">
+        <span>Configure & Register Dataset</span>
+        <button class="btn btn-secondary btn-sm" id="btn-refresh-raw-preview" onclick="triggerRawPreview()">🔄 Update Preview</button>
+    </div>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 1rem; margin-bottom: 1rem;">
+        <div class="form-group">
+            <label class="form-label">Dataset Display Name</label>
+            <input type="text" id="reg-name" class="form-control" placeholder="My Signal Dataset">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Delimiter</label>
+            <select id="reg-delim" class="form-control" onchange="triggerRawPreview()">
+                <option value="," selected>, (Comma - Standard)</option>
+                <option value=";">; (Semicolon - Turkish/Excel)</option>
+                <option value="\t">\t (Tab-separated)</option>
+                <option value="|">| (Pipe)</option>
+                <option value="auto">Auto-detect</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Header Row</label>
+            <select id="reg-header" class="form-control" onchange="triggerRawPreview()">
+                <option value="false">No Header (pure signal data)</option>
+                <option value="true">First row is column names</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Signal Orientation</label>
+            <select id="reg-transpose" class="form-control" onchange="triggerRawPreview()">
+                <option value="false" selected>Rows as Signals (Each row is a signal)</option>
+                <option value="true">1D Continuous (Single time-series column &rarr; Transpose)</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Label Column (optional)</label>
+            <input type="text" id="reg-label" class="form-control" placeholder="e.g. 'label' or column index" onchange="triggerRawPreview()">
+        </div>
+    </div>
+    <input type="hidden" id="reg-filepath">
+    <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--border-color); padding-top: 1rem;">
+        <div style="font-size: 12px; color: var(--text-muted);" id="reg-exclude-info">
+            Excluded Columns: <span id="reg-exclude-count" style="color: var(--accent-cyan); font-weight: 600;">0</span>
+        </div>
+        <div style="display: flex; gap: 8px;">
+            <button class="btn btn-secondary" onclick="triggerRawPreview()">Preview & Filter Columns</button>
+            <button class="btn btn-primary" id="register-btn">Save to Project Workspace</button>
+        </div>
+    </div>
+</div>
+
+<!-- Enhanced Preview & Data Navigation Card -->
+<div class="card" id="preview-card" style="display: none; margin-bottom: 1.5rem;">
+    <div class="card-title" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+            <span style="font-size: 16px; font-weight: 700;">Data Preview & Waveform Inspector</span>
+            <span id="preview-mode-badge" class="status-badge info" style="font-size: 11px;">Raw Preview</span>
+            <span id="preview-shape-badge" class="shape-badge">0 rows × 0 cols</span>
+        </div>
+        <div style="display: flex; gap: 6px; align-items: center;">
+            <button class="btn btn-secondary btn-sm" id="btn-toggle-columns-pane" onclick="toggleColumnPanel()">Toggle Column Filter</button>
+        </div>
+    </div>
+
+    <!-- Summary Stats Bar -->
+    <div id="stats-summary" style="display: flex; flex-wrap: wrap; gap: 1.25rem; margin-bottom: 1rem; padding: 10px 14px; background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); border-radius: 6px; font-size: 12px;"></div>
+
+    <!-- Column Exclusion & Management Panel -->
+    <div id="column-mgmt-panel" style="background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px 14px; margin-bottom: 1rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 8px;">
+            <div>
+                <strong style="font-size: 13px; color: #fff;">Column Exclusion (Devre Dışı Bırak / Dahil Et)</strong>
+                <p style="font-size: 11px; color: var(--text-muted); margin: 2px 0 0 0;">
+                    Click a column chip to toggle it. Excluded columns (such as ID, index, timestamp) will not be treated as signals.
+                </p>
+            </div>
+            <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                <button class="btn btn-secondary btn-sm" onclick="autoExcludeIdColumns()" style="color: var(--accent-cyan); font-weight: 600;">🚫 Auto-Disable ID Columns</button>
+                <button class="btn btn-secondary btn-sm" onclick="enableAllColumns()">✓ Enable All</button>
+                <button class="btn btn-secondary btn-sm" onclick="invertColumnSelection()">⇄ Invert</button>
+            </div>
+        </div>
+        <!-- Column Chips Search & Container -->
+        <div style="margin-bottom: 8px;">
+            <input type="text" id="col-search-input" class="form-control" placeholder="Search columns..." style="max-width: 250px; font-size: 12px; padding: 4px 8px;" oninput="filterColumnChips(this.value)">
+        </div>
+        <div id="column-chips-container" style="display: flex; flex-wrap: wrap; gap: 6px; max-height: 120px; overflow-y: auto; padding: 4px 0;"></div>
+    </div>
+
+    <!-- Data Browsing & Pagination Bar -->
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 1rem; padding: 8px 12px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 6px;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+            <button class="btn btn-secondary btn-sm" id="btn-page-first" onclick="goToPage(0)">⏮ First</button>
+            <button class="btn btn-secondary btn-sm" id="btn-page-prev" onclick="prevPage()">◀ Prev</button>
+            <span style="font-size: 12px; color: var(--text-secondary); padding: 0 4px;">
+                Page <strong id="preview-current-page" style="color: #fff;">1</strong> of <strong id="preview-total-pages" style="color: #fff;">1</strong>
+                (<span id="preview-row-range" style="font-family: var(--font-mono);">0 - 0</span> / <span id="preview-total-rows">0</span> rows)
+            </span>
+            <button class="btn btn-secondary btn-sm" id="btn-page-next" onclick="nextPage()">Next ▶</button>
+            <button class="btn btn-secondary btn-sm" id="btn-page-last" onclick="goToLastPage()">⏭ Last</button>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 10px;">
+            <div style="display: flex; align-items: center; gap: 6px; font-size: 12px;">
+                <label style="color: var(--text-muted);">Jump to Row:</label>
+                <input type="number" id="row-jump-input" class="form-control" style="width: 75px; padding: 2px 6px; font-size: 12px;" min="0" placeholder="Row #">
+                <button class="btn btn-secondary btn-sm" onclick="jumpToRow()">Go</button>
+            </div>
+            <div style="display: flex; align-items: center; gap: 6px; font-size: 12px;">
+                <label style="color: var(--text-muted);">Rows / Page:</label>
+                <select id="preview-page-size" class="form-control" style="width: 75px; padding: 2px 6px; font-size: 12px;" onchange="changePageSize(this.value)">
+                    <option value="10" selected>10</option>
+                    <option value="25">25</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <!-- Split Preview Layout: Table on Left / Waveform on Right -->
+    <div style="display: grid; grid-template-columns: 1fr 420px; gap: 1rem; align-items: start;">
+        <!-- Left: Table -->
+        <div>
+            <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 6px; display: flex; justify-content: space-between;">
+                <span>Click any row to display its live waveform on the right:</span>
+                <span id="active-cols-count-badge" style="color: var(--accent-cyan); font-weight: 600;">Active: 0 cols</span>
+            </div>
+            <div class="table-responsive" style="max-height: 440px; overflow: auto; border: 1px solid var(--border-color); border-radius: 6px;">
+                <table class="data-table" id="preview-table"></table>
+            </div>
+        </div>
+
+        <!-- Right: Row Waveform Inspector -->
+        <div style="background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <div>
+                    <strong style="font-size: 13px; color: #fff;">Waveform Quick-View</strong>
+                    <div style="font-size: 11px; color: var(--text-muted);" id="row-wf-info">Row #0</div>
+                </div>
+                <div style="display: flex; gap: 4px;">
+                    <button class="btn btn-secondary btn-sm" onclick="selectPrevRow()" title="Previous Row">&larr; Prev</button>
+                    <button class="btn btn-secondary btn-sm" onclick="selectNextRow()" title="Next Row">Next &rarr;</button>
+                </div>
+            </div>
+            <div id="row-waveform-chart" style="width: 100%; height: 260px;"></div>
+            <div id="row-wf-stats" style="margin-top: 8px; font-size: 11px; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; color: var(--text-secondary); background: rgba(0,0,0,0.2); padding: 6px 8px; border-radius: 4px;">
+                <div>Min: <strong id="wf-stat-min">—</strong></div>
+                <div>Max: <strong id="wf-stat-max">—</strong></div>
+                <div>Mean: <strong id="wf-stat-mean">—</strong></div>
+                <div>Std: <strong id="wf-stat-std">—</strong></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Project Datasets List -->
+<div class="card">
+    <div class="card-title">Registered Datasets in this Project</div>
+    <div class="table-responsive">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Dataset Name</th>
+                    <th>ID</th>
+                    <th>Rows</th>
+                    <th>Columns (Seq Length)</th>
+                    <th>Format</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="project-datasets-tbody">
+                <tr><td colspan="6" style="text-align: center; color: var(--text-muted);">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const dropZone = document.getElementById("drop-zone");
+    const fileInput = document.getElementById("file-input");
+
+    dropZone.onclick = () => fileInput.click();
+    dropZone.ondragover = (e) => { e.preventDefault(); dropZone.style.borderColor = "var(--accent-blue)"; };
+    dropZone.ondragleave = () => { dropZone.style.borderColor = "var(--border-color)"; };
+    dropZone.ondrop = (e) => {
+        e.preventDefault();
+        dropZone.style.borderColor = "var(--border-color)";
+        if (e.dataTransfer.files.length > 0) handleFileUpload(e.dataTransfer.files[0]);
+    };
+    fileInput.onchange = (e) => {
+        if (e.target.files.length > 0) handleFileUpload(e.target.files[0]);
+    };
+
+    async function handleFileUpload(file) {
+        const statusEl = document.getElementById("upload-status");
+        statusEl.innerHTML = `<span style="color: var(--accent-cyan);">Uploading ${file.name}...</span>`;
+
+        const fd = new FormData();
+        fd.append("project_id", SignalML.currentProjectId);
+        fd.append("file", file);
+
+        try {
+            const res = await fetch("/api/data/upload", { method: "POST", body: fd });
+            const data = await SignalML.safeJson(res);
+            if (res.ok) {
+                SignalML.toast(`Uploaded ${file.name}`, "success");
+                if (data.type === "zip") {
+                    statusEl.innerHTML = `<span style="color: var(--accent-green);">Safely extracted ${data.extracted_count} files from ZIP. Select a file below to register:</span>`;
+                    renderExtractedFiles(data.files || []);
+                } else {
+                    statusEl.innerHTML = `<span style="color: var(--accent-green);">File uploaded successfully. Initializing preview...</span>`;
+                    showRegisterForm(file.name, data.temp_path, data.analysis);
+                }
+            } else {
+                statusEl.innerHTML = `<span style="color: var(--accent-rose);">${data.detail || "Upload failed"}</span>`;
+            }
+        } catch (e) {
+            statusEl.innerHTML = `<span style="color: var(--accent-rose);">${e.message}</span>`;
+        }
+    }
+
+    function renderExtractedFiles(files) {
+        const container = document.getElementById("mount-files-list");
+        container.innerHTML = (files || []).map(f => `
+            <div style="padding: 6px 10px; cursor: pointer; font-size: 12px; border-bottom: 1px solid rgba(255,255,255,0.05);" onclick="showRegisterForm('${f.name}', '${f.abs_path}')">
+                📄 <strong>${f.name}</strong> <span style="color: var(--text-muted); font-size: 11px;">(${(f.size_bytes / 1024).toFixed(1)} KB)</span>
+            </div>
+        `).join("");
+    }
+
+    async function scanMount() {
+        const subpath = document.getElementById("mount-subpath").value;
+        try {
+            const res = await fetch(`/api/data/mount?subpath=${encodeURIComponent(subpath)}`);
+            const items = await SignalML.safeJson(res);
+            const container = document.getElementById("mount-files-list");
+            const itemList = Array.isArray(items) ? items : [];
+            if (itemList.length === 0) {
+                container.innerHTML = `<div style="padding: 8px; color: var(--text-muted);">No files found in /data.</div>`;
+                return;
+            }
+            container.innerHTML = itemList.map(item => `
+                <div style="padding: 6px 10px; cursor: pointer; font-size: 12px; display: flex; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.05);" onclick="${item.is_dir ? `browseFolder('${item.rel_path}')` : `showRegisterForm('${item.name}', '${item.rel_path}')`}">
+                    <span>${item.is_dir ? "📁" : "📄"} <strong>${item.name}</strong></span>
+                    <span style="color: var(--text-muted); font-size: 11px;">${item.is_dir ? "DIR" : `${(item.size_bytes/1024).toFixed(1)} KB`}</span>
+                </div>
+            `).join("");
+        } catch (e) {
+            SignalML.toast(`Mount browse error: ${e.message}`, "error");
+        }
+    }
+
+    function browseFolder(path) {
+        document.getElementById("mount-subpath").value = path;
+        scanMount();
+    }
+
+    document.getElementById("mount-browse-btn").onclick = scanMount;
+
+    let previewState = {
+        mode: "raw", // "raw" or "dataset"
+        datasetId: null,
+        filePath: null,
+        allColumns: [],
+        excludedColumns: new Set(),
+        activeColumns: [],
+        suggestedIdCols: [],
+        totalRows: 0,
+        offset: 0,
+        pageSize: 10,
+        previewRows: [],
+        sampleWaveforms: [],
+        selectedRowIdx: 0,
+        chartInstance: null
+    };
+
+    function toggleColumnPanel() {
+        const p = document.getElementById("column-mgmt-panel");
+        p.style.display = p.style.display === "none" ? "block" : "none";
+    }
+
+    function showRegisterForm(name, path, analysis = null) {
+        const regCard = document.getElementById("register-card");
+        regCard.style.display = "block";
+        document.getElementById("reg-name").value = name.replace(/\.[^/.]+$/, "");
+        document.getElementById("reg-filepath").value = path;
+
+        if (analysis) {
+            if (analysis.detected_delimiter) {
+                document.getElementById("reg-delim").value = analysis.detected_delimiter;
+            }
+            if (analysis.detected_has_header !== undefined) {
+                document.getElementById("reg-header").value = String(analysis.detected_has_header);
+            }
+            if (analysis.is_1d_continuous) {
+                document.getElementById("reg-transpose").value = "true";
+            } else {
+                document.getElementById("reg-transpose").value = "false";
+            }
+        }
+
+        previewState.mode = "raw";
+        previewState.filePath = path;
+        previewState.offset = 0;
+        previewState.excludedColumns.clear();
+        triggerRawPreview();
+    }
+
+    async function triggerRawPreview() {
+        const filePath = document.getElementById("reg-filepath").value;
+        if (!filePath) return;
+
+        const delim = document.getElementById("reg-delim").value;
+        const hasHeader = document.getElementById("reg-header").value === "true";
+        const transpose = document.getElementById("reg-transpose").value === "true";
+        const labelCol = document.getElementById("reg-label").value.trim();
+
+        previewState.mode = "raw";
+        previewState.filePath = filePath;
+
+        const payload = {
+            file_path: filePath,
+            delimiter: delim,
+            has_header: hasHeader,
+            transpose: transpose,
+            offset: previewState.offset,
+            max_rows: previewState.pageSize,
+            exclude_cols: Array.from(previewState.excludedColumns),
+            label_col: labelCol || null
+        };
+
+        try {
+            const res = await fetch("/api/data/preview_raw", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+
+            const data = await SignalML.safeJson(res);
+            if (!res.ok) {
+                SignalML.toast(`Preview failed: ${data.detail || data.error || res.statusText}`, "error");
+                return;
+            }
+
+            previewState.allColumns = data.all_columns || data.columns || [];
+            previewState.activeColumns = data.active_columns || data.columns || [];
+            previewState.suggestedIdCols = data.suggested_id_cols || [];
+            previewState.totalRows = data.total_rows || 0;
+            previewState.previewRows = data.preview_rows || [];
+            previewState.sampleWaveforms = data.sample_waveforms || [];
+            previewState.offset = data.offset || 0;
+
+            renderPreviewUI(data, "Raw File Preview");
+
+            // Smooth scroll into preview
+            const previewCard = document.getElementById("preview-card");
+            if (previewCard) {
+                previewCard.scrollIntoView({ behavior: "smooth", block: "start" });
+            }
+        } catch (e) {
+            SignalML.toast(`Preview Error: ${e.message}`, "error");
+        }
+    }
+
+    async function loadPreview(datasetId, offset = 0) {
+        previewState.mode = "dataset";
+        previewState.datasetId = datasetId;
+        previewState.offset = offset;
+
+        try {
+            const res = await fetch(`/api/data/preview/${datasetId}?offset=${offset}&max_rows=${previewState.pageSize}`);
+            const data = await SignalML.safeJson(res);
+            if (!res.ok) {
+                SignalML.toast(`Inspect failed: ${data.detail || data.error || res.statusText}`, "error");
+                return;
+            }
+
+            previewState.allColumns = data.columns || [];
+            previewState.activeColumns = data.columns || [];
+            previewState.totalRows = data.row_count || 0;
+            previewState.previewRows = data.preview_rows || [];
+            previewState.sampleWaveforms = data.sample_waveforms || [];
+            previewState.offset = data.offset || 0;
+
+            if (data.excluded_columns && data.excluded_columns.length > 0) {
+                previewState.excludedColumns = new Set(data.excluded_columns);
+            }
+
+            renderPreviewUI(data, `Registered Dataset: ${data.name}`);
+            // Scroll preview card into view
+            document.getElementById("preview-card").scrollIntoView({ behavior: "smooth" });
+        } catch (e) {
+            SignalML.toast(`Inspect Error: ${e.message}`, "error");
+        }
+    }
+
+    function renderPreviewUI(data, modeTitle) {
+        const previewCard = document.getElementById("preview-card");
+        previewCard.style.display = "block";
+
+        document.getElementById("preview-mode-badge").textContent = modeTitle;
+        document.getElementById("preview-shape-badge").textContent = `${data.total_rows || data.row_count} rows × ${data.total_cols || data.col_count} cols`;
+
+        // Update stats
+        const stats = data.summary_stats || {};
+        document.getElementById("stats-summary").innerHTML = `
+            <div><strong>Min Amplitude:</strong> ${stats.min !== undefined ? Number(stats.min).toFixed(3) : '—'}</div>
+            <div><strong>Max Amplitude:</strong> ${stats.max !== undefined ? Number(stats.max).toFixed(3) : '—'}</div>
+            <div><strong>Mean:</strong> ${stats.mean !== undefined ? Number(stats.mean).toFixed(3) : '—'}</div>
+            <div><strong>Std Dev:</strong> ${stats.std !== undefined ? Number(stats.std).toFixed(3) : '—'}</div>
+            <div><strong>Missing Values:</strong> ${data.missing_count || 0}</div>
+            <div><strong>Excluded Cols:</strong> <span style="color: var(--accent-rose); font-weight: 600;">${previewState.excludedColumns.size}</span></div>
+        `;
+
+        document.getElementById("reg-exclude-count").textContent = previewState.excludedColumns.size;
+
+        renderColumnChips();
+        updatePaginationUI();
+        renderTable();
+
+        if (previewState.sampleWaveforms.length > 0) {
+            selectPreviewRow(0);
+        }
+    }
+
+    function renderColumnChips(filterText = "") {
+        const container = document.getElementById("column-chips-container");
+        if (!container) return;
+
+        const ft = filterText.toLowerCase().trim();
+        const colsToRender = previewState.allColumns.filter(c => !ft || String(c).toLowerCase().includes(ft));
+
+        if (colsToRender.length === 0) {
+            container.innerHTML = `<span style="color: var(--text-muted); font-size: 11px;">No matching columns found.</span>`;
+            return;
+        }
+
+        container.innerHTML = colsToRender.map(c => {
+            const isEx = previewState.excludedColumns.has(String(c));
+            const isSuggestedId = previewState.suggestedIdCols.includes(String(c));
+            return `
+                <button type="button" class="btn btn-sm" onclick="toggleColumn('${String(c).replace(/'/g, "\\'")}')" 
+                    style="font-size: 11px; padding: 3px 8px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; ${
+                        isEx 
+                        ? 'background: rgba(244, 63, 94, 0.15); border: 1px solid var(--accent-rose); color: var(--accent-rose); text-decoration: line-through;' 
+                        : isSuggestedId
+                        ? 'background: rgba(251, 191, 36, 0.15); border: 1px solid var(--accent-amber); color: #fbbf24;'
+                        : 'background: rgba(56, 189, 248, 0.1); border: 1px solid var(--accent-cyan); color: #fff;'
+                    }">
+                    <span>${isEx ? '✕' : '✓'}</span>
+                    <strong>${c}</strong>
+                    ${isSuggestedId ? '<span style="font-size: 9px; opacity: 0.8;">[ID]</span>' : ''}
+                </button>
+            `;
+        }).join("");
+    }
+
+    function filterColumnChips(text) {
+        renderColumnChips(text);
+    }
+
+    function toggleColumn(colName) {
+        const cStr = String(colName);
+        if (previewState.excludedColumns.has(cStr)) {
+            previewState.excludedColumns.delete(cStr);
+        } else {
+            previewState.excludedColumns.add(cStr);
+        }
+        document.getElementById("reg-exclude-count").textContent = previewState.excludedColumns.size;
+        renderColumnChips(document.getElementById("col-search-input").value);
+
+        if (previewState.mode === "raw") {
+            triggerRawPreview();
+        } else {
+            renderTable();
+        }
+    }
+
+    function autoExcludeIdColumns() {
+        let count = 0;
+        for (let c of previewState.allColumns) {
+            const low = String(c).toLowerCase().trim();
+            if (low === "id" || low === "_id" || low === "index" || low === "idx" || low === "uid" || low.includes("id_") || low.includes("_id") || low.includes("timestamp")) {
+                previewState.excludedColumns.add(String(c));
+                count++;
+            }
+        }
+        SignalML.toast(`Auto-disabled ${count} ID/index column(s)`, "info");
+        document.getElementById("reg-exclude-count").textContent = previewState.excludedColumns.size;
+        renderColumnChips();
+        if (previewState.mode === "raw") triggerRawPreview(); else renderTable();
+    }
+
+    function enableAllColumns() {
+        previewState.excludedColumns.clear();
+        document.getElementById("reg-exclude-count").textContent = 0;
+        renderColumnChips();
+        if (previewState.mode === "raw") triggerRawPreview(); else renderTable();
+    }
+
+    function invertColumnSelection() {
+        for (let c of previewState.allColumns) {
+            const cStr = String(c);
+            if (previewState.excludedColumns.has(cStr)) {
+                previewState.excludedColumns.delete(cStr);
+            } else {
+                previewState.excludedColumns.add(cStr);
+            }
+        }
+        document.getElementById("reg-exclude-count").textContent = previewState.excludedColumns.size;
+        renderColumnChips();
+        if (previewState.mode === "raw") triggerRawPreview(); else renderTable();
+    }
+
+    function updatePaginationUI() {
+        const total = previewState.totalRows;
+        const totalPages = Math.max(1, Math.ceil(total / previewState.pageSize));
+        const curPage = Math.floor(previewState.offset / previewState.pageSize) + 1;
+
+        document.getElementById("preview-current-page").textContent = curPage;
+        document.getElementById("preview-total-pages").textContent = totalPages;
+        document.getElementById("preview-total-rows").textContent = total;
+
+        const start = total > 0 ? previewState.offset + 1 : 0;
+        const end = Math.min(total, previewState.offset + previewState.pageSize);
+        document.getElementById("preview-row-range").textContent = `${start} - ${end}`;
+
+        document.getElementById("btn-page-first").disabled = previewState.offset === 0;
+        document.getElementById("btn-page-prev").disabled = previewState.offset === 0;
+        document.getElementById("btn-page-next").disabled = end >= total;
+        document.getElementById("btn-page-last").disabled = end >= total;
+    }
+
+    function prevPage() {
+        if (previewState.offset > 0) {
+            previewState.offset = Math.max(0, previewState.offset - previewState.pageSize);
+            refreshCurrentPreview();
+        }
+    }
+
+    function nextPage() {
+        if (previewState.offset + previewState.pageSize < previewState.totalRows) {
+            previewState.offset += previewState.pageSize;
+            refreshCurrentPreview();
+        }
+    }
+
+    function goToPage(p) {
+        previewState.offset = Math.max(0, p * previewState.pageSize);
+        refreshCurrentPreview();
+    }
+
+    function goToLastPage() {
+        const totalPages = Math.ceil(previewState.totalRows / previewState.pageSize);
+        goToPage(Math.max(0, totalPages - 1));
+    }
+
+    function jumpToRow() {
+        const val = parseInt(document.getElementById("row-jump-input").value);
+        if (!isNaN(val) && val >= 0 && val < previewState.totalRows) {
+            previewState.offset = Math.floor(val / previewState.pageSize) * previewState.pageSize;
+            refreshCurrentPreview();
+        }
+    }
+
+    function changePageSize(sz) {
+        previewState.pageSize = parseInt(sz);
+        previewState.offset = 0;
+        refreshCurrentPreview();
+    }
+
+    function refreshCurrentPreview() {
+        if (previewState.mode === "raw") {
+            triggerRawPreview();
+        } else {
+            loadPreview(previewState.datasetId, previewState.offset);
+        }
+    }
+
+    function renderTable() {
+        const table = document.getElementById("preview-table");
+        const cols = previewState.mode === "raw" ? previewState.activeColumns : previewState.allColumns;
+        const displayCols = cols.slice(0, 30); // show up to 30 visible cols in preview table
+
+        document.getElementById("active-cols-count-badge").textContent = `Active: ${cols.length} cols (${previewState.excludedColumns.size} excluded)`;
+
+        let html = `<thead><tr><th style="width: 50px;">#</th><th style="width: 70px;">View</th>`;
+        displayCols.forEach(c => {
+            const isEx = previewState.excludedColumns.has(String(c));
+            html += `<th style="${isEx ? 'opacity: 0.35; text-decoration: line-through;' : ''}">${c}</th>`;
+        });
+        if (cols.length > 30) html += `<th>... +${cols.length - 30} more</th>`;
+        html += `</tr></thead><tbody>`;
+
+        previewState.previewRows.forEach((row, i) => {
+            const absRowIdx = previewState.offset + i;
+            const isSel = i === previewState.selectedRowIdx;
+            html += `
+                <tr id="prev-row-${i}" style="cursor: pointer; ${isSel ? 'background: rgba(56, 189, 248, 0.15);' : ''}" onclick="selectPreviewRow(${i})">
+                    <td style="font-family: var(--font-mono); font-weight: 600; color: var(--accent-cyan);">${absRowIdx}</td>
+                    <td><button class="btn btn-secondary btn-sm" style="padding: 1px 6px; font-size: 10px;" onclick="event.stopPropagation(); selectPreviewRow(${i})">📈 Wave</button></td>
+            `;
+            displayCols.forEach((c, cIdx) => {
+                const val = row[cIdx];
+                const isEx = previewState.excludedColumns.has(String(c));
+                html += `<td style="font-family: var(--font-mono); font-size: 11px; ${isEx ? 'opacity: 0.35;' : ''}">${typeof val === 'number' ? val.toFixed(3) : (val !== null ? val : '—')}</td>`;
+            });
+            if (cols.length > 30) html += `<td style="color: var(--text-muted); font-size: 11px;">...</td>`;
+            html += `</tr>`;
+        });
+
+        html += `</tbody>`;
+        table.innerHTML = html;
+    }
+
+    function selectPreviewRow(localIdx) {
+        if (localIdx < 0 || localIdx >= previewState.previewRows.length) return;
+        previewState.selectedRowIdx = localIdx;
+
+        // Update row highlight
+        previewState.previewRows.forEach((_, i) => {
+            const tr = document.getElementById(`prev-row-${i}`);
+            if (tr) tr.style.background = i === localIdx ? "rgba(56, 189, 248, 0.15)" : "";
+        });
+
+        const absRowIdx = previewState.offset + localIdx;
+        document.getElementById("row-wf-info").textContent = `Row #${absRowIdx}`;
+
+        const wf = previewState.sampleWaveforms[localIdx];
+        if (wf) {
+            renderWaveformChart(wf);
+        }
+    }
+
+    function selectPrevRow() {
+        if (previewState.selectedRowIdx > 0) {
+            selectPreviewRow(previewState.selectedRowIdx - 1);
+        } else if (previewState.offset > 0) {
+            prevPage();
+        }
+    }
+
+    function selectNextRow() {
+        if (previewState.selectedRowIdx < previewState.previewRows.length - 1) {
+            selectPreviewRow(previewState.selectedRowIdx + 1);
+        } else if (previewState.offset + previewState.pageSize < previewState.totalRows) {
+            nextPage();
+        }
+    }
+
+    function renderWaveformChart(wf) {
+        document.getElementById("wf-stat-min").textContent = wf.min !== undefined ? wf.min.toFixed(3) : "—";
+        document.getElementById("wf-stat-max").textContent = wf.max !== undefined ? wf.max.toFixed(3) : "—";
+        document.getElementById("wf-stat-mean").textContent = wf.mean !== undefined ? wf.mean.toFixed(3) : "—";
+        document.getElementById("wf-stat-std").textContent = wf.std !== undefined ? wf.std.toFixed(3) : "—";
+
+        const points = wf.x ? wf.x.map((xVal, idx) => [xVal, wf.y[idx]]) : wf.y.map((v, idx) => [idx, v]);
+
+        if (previewState.chartInstance) {
+            previewState.chartInstance.destroy();
+        }
+
+        previewState.chartInstance = Highcharts.chart("row-waveform-chart", {
+            chart: { type: "line", backgroundColor: "transparent", margin: [10, 10, 25, 40] },
+            title: { text: null },
+            credits: { enabled: false },
+            legend: { enabled: false },
+            xAxis: {
+                labels: { style: { color: "#94a3b8", fontSize: "10px" } },
+                gridLineColor: "#1e293b",
+                tickLength: 0
+            },
+            yAxis: {
+                title: { text: null },
+                labels: { style: { color: "#94a3b8", fontSize: "10px" } },
+                gridLineColor: "#1e293b"
+            },
+            tooltip: {
+                backgroundColor: "#191f2e",
+                borderColor: "#334155",
+                style: { color: "#f8fafc", fontSize: "11px" },
+                valueDecimals: 3
+            },
+            plotOptions: {
+                series: {
+                    lineWidth: 1.5,
+                    marker: { enabled: false },
+                    color: "#38bdf8",
+                    animation: false
+                }
+            },
+            series: [{
+                name: `Row #${wf.row_index}`,
+                data: points
+            }]
+        });
+    }
+
+    document.getElementById("register-btn").onclick = async () => {
+        const name = document.getElementById("reg-name").value.trim();
+        const filePath = document.getElementById("reg-filepath").value;
+        const delim = document.getElementById("reg-delim").value;
+        const hasHeader = document.getElementById("reg-header").value === "true";
+        const transpose = document.getElementById("reg-transpose").value === "true";
+        const labelCol = document.getElementById("reg-label").value.trim();
+
+        if (!name) {
+            SignalML.toast("Dataset name is required", "error");
+            return;
+        }
+
+        const fd = new FormData();
+        fd.append("project_id", SignalML.currentProjectId);
+        fd.append("name", name);
+        fd.append("file_path", filePath);
+        fd.append("delimiter", delim);
+        fd.append("has_header", hasHeader);
+        fd.append("transpose", transpose);
+        if (labelCol) fd.append("label_col", labelCol);
+
+        if (previewState.excludedColumns.size > 0) {
+            fd.append("exclude_cols", JSON.stringify(Array.from(previewState.excludedColumns)));
+        }
+
+        try {
+            const res = await fetch("/api/data/register", { method: "POST", body: fd });
+            const data = await SignalML.safeJson(res);
+            if (res.ok) {
+                SignalML.toast(`Dataset '${name}' registered with ${previewState.excludedColumns.size} excluded columns!`, "success");
+                loadPreview(data.id);
+                loadProjectDatasets();
+            } else {
+                SignalML.toast(`Registration failed: ${data.detail || data.error || res.statusText}`, "error");
+            }
+        } catch (e) {
+            SignalML.toast(`Error: ${e.message}`, "error");
+        }
+    };
+
+    async function loadProjectDatasets() {
+        try {
+            const res = await fetch(`/api/data/list/${SignalML.currentProjectId}`);
+            if (res.ok) {
+                const datasets = await SignalML.safeJson(res);
+                const tbody = document.getElementById("project-datasets-tbody");
+                const dList = Array.isArray(datasets) ? datasets : [];
+                if (dList.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-muted);">No datasets registered in this project.</td></tr>`;
+                    return;
+                }
+                tbody.innerHTML = dList.map(d => `
+                    <tr>
+                        <td><strong>${d.name}</strong></td>
+                        <td style="font-family: var(--font-mono); font-size: 11px;">${d.id.slice(0, 8)}...</td>
+                        <td>${d.row_count}</td>
+                        <td>${d.col_count}</td>
+                        <td><span class="shape-badge">${d.file_format.toUpperCase()}</span></td>
+                        <td>
+                            <button class="btn btn-secondary btn-sm" onclick="loadPreview('${d.id}')">Inspect</button>
+                            <a href="/signal-tagger?dataset_id=${d.id}" class="btn btn-primary btn-sm">Waveform</a>
+                        </td>
+                    </tr>
+                `).join("");
+            }
+        } catch (e) {
+            console.error(e);
+        }
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+        loadProjectDatasets();
+        scanMount();
+    });
+</script>
+{% endblock %}

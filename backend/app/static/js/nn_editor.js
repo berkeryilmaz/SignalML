@@ -1,0 +1,860 @@
+// Neural Network Visual Node Editor (LiteGraph integration for Keras Functional API)
+
+class NNEditor {
+    constructor(canvasId) {
+        this.canvasId = canvasId;
+        this.graph = new LGraph();
+        this.canvas = null;
+        this.selectedNode = null;
+        this.init();
+    }
+
+    init() {
+        const canvasElement = document.getElementById(this.canvasId);
+        if (!canvasElement) return;
+
+        // Resize canvas to container
+        canvasElement.width = canvasElement.parentElement.clientWidth;
+        canvasElement.height = canvasElement.parentElement.clientHeight;
+
+        this.canvas = new LGraphCanvas(canvasElement, this.graph);
+        this.canvas.background_color = "#10141d";
+        this.canvas.grid_color = "#1a2233";
+
+        this.registerKerasNodes();
+        this.setupDefaultGraph();
+        this.setupEventHandlers();
+
+        this.graph.start();
+    }
+
+    registerKerasNodes() {
+        const registerLayer = (type, title, inputs, outputs, properties, aliases = []) => {
+            function KerasNode() {
+                for (let inp of inputs) {
+                    this.addInput(inp.name, inp.type || "Tensor");
+                }
+                for (let out of outputs) {
+                    this.addOutput(out.name, out.type || "Tensor");
+                }
+                this.properties = { ...properties };
+                this.title = title;
+                this.size = [180, 50 + Object.keys(properties).length * 20];
+            }
+            KerasNode.title = title;
+            KerasNode.prototype.onPropertyChanged = function() {
+                if (window.nnEditorInstance) {
+                    window.nnEditorInstance.updateInspector(this);
+                }
+            };
+            LiteGraph.registerNodeType(`keras/${type}`, KerasNode);
+            LiteGraph.registerNodeType(type, KerasNode);
+            for (let alias of aliases) {
+                LiteGraph.registerNodeType(`keras/${alias}`, KerasNode);
+                LiteGraph.registerNodeType(alias, KerasNode);
+            }
+        };
+
+        // 1. Input & Output
+        registerLayer("input", "Input", [], [{ name: "tensor", type: "Tensor" }], { shape: "512, 1" }, ["inputlayer"]);
+        registerLayer("output", "Model Output", [{ name: "in", type: "Tensor" }], [], { activation: "linear" }, ["modeloutput"]);
+
+        // 2. Dense
+        registerLayer("dense", "Dense", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { units: 64, activation: "relu" });
+
+        // 3. CNN (1D & Transposed Deconvolution)
+        registerLayer("conv1d", "Conv1D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { filters: 32, kernel_size: 5, strides: 1, padding: "same", activation: "relu" });
+        registerLayer("conv1dtranspose", "Conv1DTranspose", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { filters: 32, kernel_size: 5, strides: 2, padding: "same", activation: "relu" });
+        registerLayer("upsampling1d", "UpSampling1D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { size: 2 });
+        registerLayer("separable_conv1d", "SeparableConv1D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { filters: 32, kernel_size: 5, padding: "same", activation: "relu" });
+        registerLayer("conv2d", "Conv2D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { filters: 32, kernel_size: 3, padding: "same", activation: "relu" });
+        registerLayer("maxpooling1d", "MaxPooling1D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { pool_size: 2, padding: "same" }, ["max_pooling1d", "maxpool1d"]);
+        registerLayer("averagepooling1d", "AveragePooling1D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { pool_size: 2, padding: "same" }, ["avgpooling1d", "avg_pooling1d", "avgpool1d"]);
+        registerLayer("global_maxpooling1d", "GlobalMaxPooling1D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {}, ["globalmaxpooling1d"]);
+        registerLayer("global_averagepooling1d", "GlobalAveragePooling1D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {}, ["globalaveragepooling1d", "globalavgpooling1d"]);
+
+        // 4. Recurrent
+        registerLayer("lstm", "LSTM", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { units: 64, return_sequences: false, dropout: 0.0 });
+        registerLayer("gru", "GRU", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { units: 64, return_sequences: false });
+        registerLayer("simplernn", "SimpleRNN", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { units: 64, return_sequences: false, activation: "tanh" });
+        registerLayer("bidirectional", "Bidirectional", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { units: 64, recurrent_type: "lstm", return_sequences: false });
+
+        // 5. Attention & Transformer
+        registerLayer("multihead_attention", "MultiHeadAttention", [{ name: "query", type: "Tensor" }, { name: "value", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { num_heads: 4, key_dim: 32, dropout: 0.1 }, ["multiheadattention"]);
+        registerLayer("positional_encoding", "PositionalEncoding", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { d_model: 64, max_len: 2048 }, ["positionalencoding"]);
+
+        // 6. Reshape & Regularization
+        registerLayer("flatten", "Flatten", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {});
+        registerLayer("reshape", "Reshape", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { target_shape: "-1, 1" });
+        registerLayer("dropout", "Dropout", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { rate: 0.2 });
+        registerLayer("batchnorm", "BatchNormalization", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {}, ["batchnormalization", "bn"]);
+        registerLayer("layernorm", "LayerNormalization", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {}, ["layernormalization", "ln"]);
+        registerLayer("unitnorm", "UnitNormalization", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {}, ["unitnormalization"]);
+
+        // 7. Merging
+        registerLayer("concatenate", "Concatenate", [{ name: "in1", type: "Tensor" }, { name: "in2", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { axis: -1 });
+        registerLayer("add", "Add", [{ name: "in1", type: "Tensor" }, { name: "in2", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {});
+        registerLayer("multiply", "Multiply", [{ name: "in1", type: "Tensor" }, { name: "in2", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {});
+        registerLayer("activation", "Activation", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { activation: "relu" });
+    }
+
+    setupDefaultGraph() {
+        // Create an example deep learning pipeline: Input -> Conv1D -> LSTM -> Dense
+        const nodeInput = LiteGraph.createNode("keras/input");
+        nodeInput.pos = [100, 180];
+        nodeInput.properties.shape = "512, 1";
+        this.graph.add(nodeInput);
+
+        const nodeConv = LiteGraph.createNode("keras/conv1d");
+        nodeConv.pos = [340, 180];
+        nodeConv.properties.filters = 32;
+        nodeConv.properties.kernel_size = 5;
+        this.graph.add(nodeConv);
+
+        const nodeLSTM = LiteGraph.createNode("keras/lstm");
+        nodeLSTM.pos = [580, 180];
+        nodeLSTM.properties.units = 64;
+        nodeLSTM.properties.return_sequences = false;
+        this.graph.add(nodeLSTM);
+
+        const nodeDense = LiteGraph.createNode("keras/dense");
+        nodeDense.pos = [820, 180];
+        nodeDense.properties.units = 6;
+        nodeDense.properties.activation = "softmax";
+        this.graph.add(nodeDense);
+
+        // Connect
+        nodeInput.connect(0, nodeConv, 0);
+        nodeConv.connect(0, nodeLSTM, 0);
+        nodeLSTM.connect(0, nodeDense, 0);
+    }
+
+    setupEventHandlers() {
+        this.canvas.onNodeSelected = (node) => {
+            this.selectedNode = node;
+            this.updateInspector(node);
+        };
+
+        this.canvas.onNodeDeselected = () => {
+            this.selectedNode = null;
+            this.clearInspector();
+        };
+
+        // Window resize
+        window.addEventListener("resize", () => {
+            const canvasEl = document.getElementById(this.canvasId);
+            if (canvasEl && canvasEl.parentElement) {
+                canvasEl.width = canvasEl.parentElement.clientWidth;
+                canvasEl.height = canvasEl.parentElement.clientHeight;
+                this.canvas.resize();
+            }
+        });
+
+        // Add Model Wizard to Canvas Right-Click Context Menu
+        const origGetMenuOptions = this.canvas.getCanvasMenuOptions;
+        this.canvas.getCanvasMenuOptions = () => {
+            const opts = origGetMenuOptions ? origGetMenuOptions.call(this.canvas) : [];
+            const wizardItem = {
+                content: "🪄 Model Mimarisi Sihirbazı...",
+                callback: () => {
+                    if (typeof window.openWizardModal === "function") {
+                        window.openWizardModal();
+                    }
+                }
+            };
+            return [wizardItem, null, ...(opts || [])];
+        };
+    }
+
+    updateInspector(node) {
+        const body = document.getElementById("nn-inspector-body");
+        if (!body) return;
+
+        let html = `
+            <div style="margin-bottom: 1rem;">
+                <div style="font-size: 16px; font-weight: 700; color: #fff;">${node.title}</div>
+                <div style="font-size: 12px; color: var(--text-muted); font-family: var(--font-mono);">Type: ${node.type} | ID: ${node.id}</div>
+            </div>
+            <hr style="border: none; border-top: 1px solid var(--border-color); margin-bottom: 1rem;">
+        `;
+
+        if (node.properties && Object.keys(node.properties).length > 0) {
+            html += `<div style="font-weight: 600; font-size: 13px; margin-bottom: 0.5rem;">Parameters</div>`;
+            for (let [k, v] of Object.entries(node.properties)) {
+                html += `
+                    <div class="form-group">
+                        <label class="form-label">${k}</label>
+                        <input class="form-control prop-input" data-prop="${k}" type="${typeof v === 'number' ? 'number' : 'text'}" value="${v}">
+                    </div>
+                `;
+            }
+        } else {
+            html += `<div style="color: var(--text-muted); font-size: 13px;">No configurable parameters for this layer.</div>`;
+        }
+
+        body.innerHTML = html;
+
+        // Bind input events
+        body.querySelectorAll(".prop-input").forEach(input => {
+            input.addEventListener("input", (e) => {
+                const prop = e.target.dataset.prop;
+                let val = e.target.value;
+                if (e.target.type === "number") val = Number(val);
+                node.properties[prop] = val;
+            });
+        });
+    }
+
+    clearInspector() {
+        const body = document.getElementById("nn-inspector-body");
+        if (body) {
+            body.innerHTML = `
+                <div class="empty-inspector">
+                    <p>Select any layer node on the canvas to configure units, activation, and hyper-parameters.</p>
+                </div>
+            `;
+        }
+    }
+
+    serializeGraph() {
+        return this.graph.serialize();
+    }
+
+    convertKerasConfigToLiteGraph(kerasConfig) {
+        const layersList = kerasConfig.config?.layers || kerasConfig.layers || [];
+        const nodes = [];
+        const links = [];
+        const nameToNodeId = {};
+
+        layersList.forEach((layer, idx) => {
+            const nodeId = idx + 1;
+            nameToNodeId[layer.name] = nodeId;
+            const cname = (layer.class_name || "").toLowerCase();
+            let mappedType = cname;
+            if (cname === "inputlayer") mappedType = "input";
+            else if (cname === "batchnormalization") mappedType = "batchnorm";
+            else if (cname === "layernormalization") mappedType = "layernorm";
+            else if (cname === "unitnormalization") mappedType = "unitnorm";
+            else if (cname === "maxpooling1d" || cname === "max_pooling1d") mappedType = "maxpooling1d";
+            else if (cname === "averagepooling1d" || cname === "avgpooling1d") mappedType = "averagepooling1d";
+            else if (cname === "globalmaxpooling1d" || cname === "global_maxpooling1d") mappedType = "global_maxpooling1d";
+            else if (cname === "globalaveragepooling1d" || cname === "global_averagepooling1d") mappedType = "global_averagepooling1d";
+            else if (cname === "conv1dtranspose") mappedType = "conv1dtranspose";
+            else if (cname === "upsampling1d") mappedType = "upsampling1d";
+            else if (cname === "multiheadattention") mappedType = "multihead_attention";
+            else if (cname === "positionalencoding") mappedType = "positional_encoding";
+
+            const props = {};
+            const cfg = layer.config || {};
+            if (cfg.filters !== undefined) props.filters = Number(cfg.filters);
+            if (cfg.kernel_size !== undefined) props.kernel_size = Array.isArray(cfg.kernel_size) ? cfg.kernel_size[0] : Number(cfg.kernel_size);
+            if (cfg.strides !== undefined) props.strides = Array.isArray(cfg.strides) ? cfg.strides[0] : Number(cfg.strides);
+            if (cfg.padding !== undefined) props.padding = String(cfg.padding);
+            if (cfg.units !== undefined) props.units = Number(cfg.units);
+            if (cfg.activation !== undefined) props.activation = typeof cfg.activation === "string" ? cfg.activation : (cfg.activation?.name || "relu");
+            if (cfg.pool_size !== undefined) props.pool_size = Array.isArray(cfg.pool_size) ? cfg.pool_size[0] : Number(cfg.pool_size);
+            if (cfg.size !== undefined) props.size = Array.isArray(cfg.size) ? cfg.size[0] : Number(cfg.size);
+            if (cfg.rate !== undefined) props.rate = Number(cfg.rate);
+            if (cfg.return_sequences !== undefined) props.return_sequences = Boolean(cfg.return_sequences);
+            if (mappedType === "input") {
+                const shape = cfg.batch_shape || cfg.input_shape || cfg.shape;
+                if (Array.isArray(shape)) {
+                    const nonBatch = shape[0] === null ? shape.slice(1) : shape;
+                    props.shape = nonBatch.join(", ");
+                }
+            }
+
+            const col = idx % 4;
+            const row = Math.floor(idx / 4);
+            const pos = [120 + col * 260, 100 + row * 180];
+
+            nodes.push({
+                id: nodeId,
+                type: `keras/${mappedType}`,
+                title: layer.name || `Layer ${nodeId}`,
+                pos: pos,
+                size: [200, 90],
+                properties: props,
+                inputs: idx > 0 ? [{ name: "in", type: "Tensor", link: idx }] : [],
+                outputs: idx < layersList.length - 1 ? [{ name: "out", type: "Tensor", links: [idx + 1] }] : []
+            });
+
+            if (idx > 0) {
+                links.push([idx, idx, 0, nodeId, 0, "Tensor"]);
+            }
+        });
+
+        return {
+            last_node_id: nodes.length,
+            last_link_id: links.length,
+            nodes: nodes,
+            links: links
+        };
+    }
+
+    loadGraph(graphData) {
+        if (!graphData) return;
+        if (typeof graphData === "string") {
+            try {
+                graphData = JSON.parse(graphData);
+            } catch (e) {
+                console.error("Failed to parse graphData string", e);
+                SignalML.toast("Geçersiz JSON formatı: " + e.message, "error");
+                return;
+            }
+        }
+
+        // Unwrap wrappers if nested
+        if (graphData.graph && (graphData.graph.nodes || typeof graphData.graph === "object")) {
+            graphData = graphData.graph;
+        } else if (graphData.data && (graphData.data.nodes || graphData.data.graph)) {
+            graphData = graphData.data.graph || graphData.data;
+        }
+
+        // Check if Keras native config JSON
+        if (!graphData.nodes && (graphData.class_name || graphData.config?.layers || graphData.layers)) {
+            graphData = this.convertKerasConfigToLiteGraph(graphData);
+        }
+
+        if (graphData.nodes && Array.isArray(graphData.nodes)) {
+            for (let n of graphData.nodes) {
+                if (!n.type) continue;
+                let t = String(n.type).toLowerCase().trim();
+                if (!t.startsWith("keras/")) {
+                    t = "keras/" + t;
+                }
+                // Handle aliases
+                if (t === "keras/inputlayer") t = "keras/input";
+                else if (t === "keras/modeloutput") t = "keras/output";
+                else if (t === "keras/batchnormalization" || t === "keras/bn") t = "keras/batchnorm";
+                else if (t === "keras/layernormalization" || t === "keras/ln") t = "keras/layernorm";
+                else if (t === "keras/unitnormalization") t = "keras/unitnorm";
+                else if (t === "keras/max_pooling1d" || t === "keras/maxpool1d") t = "keras/maxpooling1d";
+                else if (t === "keras/avgpooling1d" || t === "keras/avg_pooling1d" || t === "keras/avgpool1d") t = "keras/averagepooling1d";
+                else if (t === "keras/globalmaxpooling1d") t = "keras/global_maxpooling1d";
+                else if (t === "keras/globalaveragepooling1d" || t === "keras/globalavgpooling1d") t = "keras/global_averagepooling1d";
+                else if (t === "keras/multiheadattention") t = "keras/multihead_attention";
+                else if (t === "keras/positionalencoding") t = "keras/positional_encoding";
+                n.type = t;
+
+                if (!n.pos || !Array.isArray(n.pos)) {
+                    n.pos = [100 + Math.random() * 200, 100 + Math.random() * 200];
+                }
+                if (!n.properties || typeof n.properties !== "object") {
+                    n.properties = {};
+                }
+            }
+        }
+
+        this.graph.clear();
+        this.graph.configure(graphData);
+        if (this.canvas) {
+            this.canvas.setDirty(true, true);
+        }
+        this.validateGraph();
+    }
+
+    async validateGraph() {
+        const payload = { graph: this.serializeGraph() };
+        try {
+            const res = await fetch("/api/models/validate", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+            const data = await SignalML.safeJson(res);
+            if (data.valid) {
+                SignalML.toast(`Valid Keras Architecture! Total params: ${data.summary.total_params.toLocaleString()}`, "success");
+                this.renderShapesSummary(data.summary);
+            } else {
+                SignalML.toast(`Validation Error: ${data.error || data.detail || "Validation Error"}`, "error");
+            }
+        } catch (e) {
+            SignalML.toast(`Network Error: ${e.message}`, "error");
+        }
+    }
+
+    renderShapesSummary(summary) {
+        const container = document.getElementById("shapes-summary-container");
+        if (!container) return;
+
+        let html = `
+            <div style="margin-top: 1rem; padding: 1rem; background: var(--bg-secondary); border-radius: 8px; border: 1px solid var(--border-color);">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                    <strong>Inferred Layer Shapes</strong>
+                    <span class="shape-badge">${summary.total_params.toLocaleString()} Params</span>
+                </div>
+                <div style="max-height: 200px; overflow-y: auto;">
+        `;
+        for (let l of summary.layers) {
+            html += `
+                <div style="display: flex; justify-content: space-between; font-size: 12px; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.05);">
+                    <span>${l.layer_type} (${l.node_id})</span>
+                    <span class="shape-badge">${JSON.stringify(l.output_shape)}</span>
+                </div>
+            `;
+        }
+        html += `</div></div>`;
+        container.innerHTML = html;
+    }
+
+    async buildAndSave(name = "Keras Signal Model", taskType = "classification") {
+        const graphData = this.serializeGraph();
+        const payload = {
+            project_id: SignalML.currentProjectId,
+            name: name,
+            task_type: taskType,
+            graph: graphData
+        };
+
+        try {
+            const res = await fetch("/api/models/build", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+            if (res.ok) {
+                const data = await SignalML.safeJson(res);
+                SignalML.toast(`Model '${name}' compiled and saved successfully!`, "success");
+                SignalML.activeModel = data.model_id;
+            } else {
+                const err = await SignalML.safeJson(res);
+                SignalML.toast(`Build Failed: ${err.detail || "Validation Error"}`, "error");
+            }
+        } catch (e) {
+            SignalML.toast(`Network Error: ${e.message}`, "error");
+        }
+    }
+
+    generateArchitecture(type, params = {}) {
+        this.graph.clear();
+        const seqLen = params.seqLen || 512;
+        const baseFilters = params.baseFilters || 32;
+        const latentDim = params.latentDim || 16;
+        const numClasses = params.numClasses || 4;
+        const act = params.activation || "relu";
+
+        if (type === "conv_ae") {
+            // 1D Convolutional Autoencoder:
+            // Input(seq, 1) -> Conv1D(base) -> MaxPool(2) -> Conv1D(base*2) -> MaxPool(2) -> Bottleneck(latent)
+            //               -> UpSampling1D(2) -> Conv1D(base*2) -> UpSampling1D(2) -> Conv1D(base) -> Conv1D(1, linear) -> Output
+            const nInput = LiteGraph.createNode("keras/input");
+            nInput.pos = [80, 160];
+            nInput.properties.shape = `${seqLen}, 1`;
+            this.graph.add(nInput);
+
+            const nEnc1 = LiteGraph.createNode("keras/conv1d");
+            nEnc1.pos = [300, 160];
+            nEnc1.title = "Encoder Conv1";
+            nEnc1.properties.filters = baseFilters;
+            nEnc1.properties.kernel_size = 7;
+            nEnc1.properties.activation = act;
+            this.graph.add(nEnc1);
+
+            const nPool1 = LiteGraph.createNode("keras/maxpooling1d");
+            nPool1.pos = [520, 160];
+            nPool1.properties.pool_size = 2;
+            this.graph.add(nPool1);
+
+            const nEnc2 = LiteGraph.createNode("keras/conv1d");
+            nEnc2.pos = [740, 160];
+            nEnc2.title = "Encoder Conv2";
+            nEnc2.properties.filters = baseFilters * 2;
+            nEnc2.properties.kernel_size = 5;
+            nEnc2.properties.activation = act;
+            this.graph.add(nEnc2);
+
+            const nPool2 = LiteGraph.createNode("keras/maxpooling1d");
+            nPool2.pos = [960, 160];
+            nPool2.properties.pool_size = 2;
+            this.graph.add(nPool2);
+
+            // Bottleneck (Latent Space)
+            const nBottle = LiteGraph.createNode("keras/conv1d");
+            nBottle.pos = [1180, 260];
+            nBottle.title = "Bottleneck (Latent)";
+            nBottle.properties.filters = latentDim;
+            nBottle.properties.kernel_size = 3;
+            nBottle.properties.activation = act;
+            this.graph.add(nBottle);
+
+            // Decoder
+            const nUp1 = LiteGraph.createNode("keras/upsampling1d");
+            nUp1.pos = [960, 420];
+            nUp1.properties.size = 2;
+            this.graph.add(nUp1);
+
+            const nDec1 = LiteGraph.createNode("keras/conv1d");
+            nDec1.pos = [740, 420];
+            nDec1.title = "Decoder Conv1";
+            nDec1.properties.filters = baseFilters * 2;
+            nDec1.properties.kernel_size = 5;
+            nDec1.properties.activation = act;
+            this.graph.add(nDec1);
+
+            const nUp2 = LiteGraph.createNode("keras/upsampling1d");
+            nUp2.pos = [520, 420];
+            nUp2.properties.size = 2;
+            this.graph.add(nUp2);
+
+            const nDec2 = LiteGraph.createNode("keras/conv1d");
+            nDec2.pos = [300, 420];
+            nDec2.title = "Decoder Conv2";
+            nDec2.properties.filters = baseFilters;
+            nDec2.properties.kernel_size = 7;
+            nDec2.properties.activation = act;
+            this.graph.add(nDec2);
+
+            const nFinal = LiteGraph.createNode("keras/conv1d");
+            nFinal.pos = [80, 420];
+            nFinal.title = "Reconstructed Waveform";
+            nFinal.properties.filters = 1;
+            nFinal.properties.kernel_size = 3;
+            nFinal.properties.activation = "linear";
+            this.graph.add(nFinal);
+
+            const nOutput = LiteGraph.createNode("keras/output");
+            nOutput.pos = [80, 560];
+            nOutput.title = "AE Output";
+            nOutput.properties.activation = "linear";
+            this.graph.add(nOutput);
+
+            // Connections
+            nInput.connect(0, nEnc1, 0);
+            nEnc1.connect(0, nPool1, 0);
+            nPool1.connect(0, nEnc2, 0);
+            nEnc2.connect(0, nPool2, 0);
+            nPool2.connect(0, nBottle, 0);
+            nBottle.connect(0, nUp1, 0);
+            nUp1.connect(0, nDec1, 0);
+            nDec1.connect(0, nUp2, 0);
+            nUp2.connect(0, nDec2, 0);
+            nDec2.connect(0, nFinal, 0);
+            nFinal.connect(0, nOutput, 0);
+
+        } else if (type === "unet_1d") {
+            // 1D U-Net with Skip Connections
+            const nInput = LiteGraph.createNode("keras/input");
+            nInput.pos = [80, 140];
+            nInput.properties.shape = `${seqLen}, 1`;
+            this.graph.add(nInput);
+
+            const nEnc1 = LiteGraph.createNode("keras/conv1d");
+            nEnc1.pos = [320, 140];
+            nEnc1.title = "Encoder L1 (Skip Source)";
+            nEnc1.properties.filters = baseFilters;
+            nEnc1.properties.kernel_size = 5;
+            this.graph.add(nEnc1);
+
+            const nDown1 = LiteGraph.createNode("keras/maxpooling1d");
+            nDown1.pos = [540, 140];
+            nDown1.properties.pool_size = 2;
+            this.graph.add(nDown1);
+
+            const nEnc2 = LiteGraph.createNode("keras/conv1d");
+            nEnc2.pos = [760, 240];
+            nEnc2.title = "Encoder L2 (Skip Source)";
+            nEnc2.properties.filters = baseFilters * 2;
+            nEnc2.properties.kernel_size = 5;
+            this.graph.add(nEnc2);
+
+            const nDown2 = LiteGraph.createNode("keras/maxpooling1d");
+            nDown2.pos = [980, 240];
+            nDown2.properties.pool_size = 2;
+            this.graph.add(nDown2);
+
+            const nBottle = LiteGraph.createNode("keras/conv1d");
+            nBottle.pos = [1200, 360];
+            nBottle.title = "U-Net Bottleneck";
+            nBottle.properties.filters = baseFilters * 4;
+            nBottle.properties.kernel_size = 3;
+            this.graph.add(nBottle);
+
+            // Level 2 Decoder with skip from Enc2
+            const nUp2 = LiteGraph.createNode("keras/upsampling1d");
+            nUp2.pos = [980, 480];
+            nUp2.properties.size = 2;
+            this.graph.add(nUp2);
+
+            const nConcat2 = LiteGraph.createNode("keras/concatenate");
+            nConcat2.pos = [760, 480];
+            nConcat2.title = "Skip Concat L2";
+            nConcat2.properties.axis = -1;
+            this.graph.add(nConcat2);
+
+            const nDec2 = LiteGraph.createNode("keras/conv1d");
+            nDec2.pos = [540, 480];
+            nDec2.title = "Decoder L2";
+            nDec2.properties.filters = baseFilters * 2;
+            this.graph.add(nDec2);
+
+            // Level 1 Decoder with skip from Enc1
+            const nUp1 = LiteGraph.createNode("keras/upsampling1d");
+            nUp1.pos = [320, 480];
+            nUp1.properties.size = 2;
+            this.graph.add(nUp1);
+
+            const nConcat1 = LiteGraph.createNode("keras/concatenate");
+            nConcat1.pos = [100, 480];
+            nConcat1.title = "Skip Concat L1";
+            nConcat1.properties.axis = -1;
+            this.graph.add(nConcat1);
+
+            const nDec1 = LiteGraph.createNode("keras/conv1d");
+            nDec1.pos = [100, 620];
+            nDec1.title = "Decoder L1";
+            nDec1.properties.filters = baseFilters;
+            this.graph.add(nDec1);
+
+            const nFinal = LiteGraph.createNode("keras/conv1d");
+            nFinal.pos = [360, 620];
+            nFinal.title = "U-Net Segment/Reconstruct";
+            nFinal.properties.filters = 1;
+            nFinal.properties.kernel_size = 1;
+            nFinal.properties.activation = "linear";
+            this.graph.add(nFinal);
+
+            const nOutput = LiteGraph.createNode("keras/output");
+            nOutput.pos = [620, 620];
+            nOutput.title = "Model Output";
+            nOutput.properties.activation = "linear";
+            this.graph.add(nOutput);
+
+            // Connections
+            nInput.connect(0, nEnc1, 0);
+            nEnc1.connect(0, nDown1, 0);
+            nDown1.connect(0, nEnc2, 0);
+            nEnc2.connect(0, nDown2, 0);
+            nDown2.connect(0, nBottle, 0);
+            nBottle.connect(0, nUp2, 0);
+
+            // Skip connection 2: up2 -> concat2[0], enc2 -> concat2[1]
+            nUp2.connect(0, nConcat2, 0);
+            nEnc2.connect(0, nConcat2, 1);
+            nConcat2.connect(0, nDec2, 0);
+
+            nDec2.connect(0, nUp1, 0);
+            // Skip connection 1: up1 -> concat1[0], enc1 -> concat1[1]
+            nUp1.connect(0, nConcat1, 0);
+            nEnc1.connect(0, nConcat1, 1);
+            nConcat1.connect(0, nDec1, 0);
+
+            nDec1.connect(0, nFinal, 0);
+            nFinal.connect(0, nOutput, 0);
+
+        } else if (type === "dense_ae") {
+            // Dense / MLP Autoencoder
+            const nInput = LiteGraph.createNode("keras/input");
+            nInput.pos = [80, 180];
+            nInput.properties.shape = `${seqLen}, 1`;
+            this.graph.add(nInput);
+
+            const nFlat = LiteGraph.createNode("keras/flatten");
+            nFlat.pos = [300, 180];
+            this.graph.add(nFlat);
+
+            const nEnc = LiteGraph.createNode("keras/dense");
+            nEnc.pos = [520, 180];
+            nEnc.title = "Dense Encoder";
+            nEnc.properties.units = 128;
+            this.graph.add(nEnc);
+
+            const nBottle = LiteGraph.createNode("keras/dense");
+            nBottle.pos = [740, 180];
+            nBottle.title = "Latent Code";
+            nBottle.properties.units = latentDim;
+            this.graph.add(nBottle);
+
+            const nDec = LiteGraph.createNode("keras/dense");
+            nDec.pos = [960, 180];
+            nDec.title = "Dense Decoder";
+            nDec.properties.units = 128;
+            this.graph.add(nDec);
+
+            const nOutDense = LiteGraph.createNode("keras/dense");
+            nOutDense.pos = [1180, 180];
+            nOutDense.title = "Reconstruct Dense";
+            nOutDense.properties.units = seqLen;
+            nOutDense.properties.activation = "linear";
+            this.graph.add(nOutDense);
+
+            const nReshape = LiteGraph.createNode("keras/reshape");
+            nReshape.pos = [1400, 180];
+            nReshape.properties.target_shape = `${seqLen}, 1`;
+            this.graph.add(nReshape);
+
+            const nOutput = LiteGraph.createNode("keras/output");
+            nOutput.pos = [1620, 180];
+            nOutput.properties.activation = "linear";
+            this.graph.add(nOutput);
+
+            nInput.connect(0, nFlat, 0);
+            nFlat.connect(0, nEnc, 0);
+            nEnc.connect(0, nBottle, 0);
+            nBottle.connect(0, nDec, 0);
+            nDec.connect(0, nOutDense, 0);
+            nOutDense.connect(0, nReshape, 0);
+            nReshape.connect(0, nOutput, 0);
+
+        } else if (type === "cnn_classifier") {
+            // 1D CNN Classifier
+            const nInput = LiteGraph.createNode("keras/input");
+            nInput.pos = [80, 200];
+            nInput.properties.shape = `${seqLen}, 1`;
+            this.graph.add(nInput);
+
+            const nConv1 = LiteGraph.createNode("keras/conv1d");
+            nConv1.pos = [300, 200];
+            nConv1.properties.filters = baseFilters;
+            this.graph.add(nConv1);
+
+            const nPool1 = LiteGraph.createNode("keras/maxpooling1d");
+            nPool1.pos = [520, 200];
+            this.graph.add(nPool1);
+
+            const nConv2 = LiteGraph.createNode("keras/conv1d");
+            nConv2.pos = [740, 200];
+            nConv2.properties.filters = baseFilters * 2;
+            this.graph.add(nConv2);
+
+            const nPool2 = LiteGraph.createNode("keras/global_maxpooling1d");
+            nPool2.pos = [960, 200];
+            this.graph.add(nPool2);
+
+            const nDense1 = LiteGraph.createNode("keras/dense");
+            nDense1.pos = [1180, 200];
+            nDense1.properties.units = 64;
+            this.graph.add(nDense1);
+
+            const nDrop = LiteGraph.createNode("keras/dropout");
+            nDrop.pos = [1380, 200];
+            nDrop.properties.rate = 0.3;
+            this.graph.add(nDrop);
+
+            const nDenseOut = LiteGraph.createNode("keras/dense");
+            nDenseOut.pos = [1580, 200];
+            nDenseOut.properties.units = numClasses;
+            nDenseOut.properties.activation = "softmax";
+            this.graph.add(nDenseOut);
+
+            const nOutput = LiteGraph.createNode("keras/output");
+            nOutput.pos = [1780, 200];
+            nOutput.properties.activation = "softmax";
+            this.graph.add(nOutput);
+
+            nInput.connect(0, nConv1, 0);
+            nConv1.connect(0, nPool1, 0);
+            nPool1.connect(0, nConv2, 0);
+            nConv2.connect(0, nPool2, 0);
+            nPool2.connect(0, nDense1, 0);
+            nDense1.connect(0, nDrop, 0);
+            nDrop.connect(0, nDenseOut, 0);
+            nDenseOut.connect(0, nOutput, 0);
+
+        } else if (type === "bilstm") {
+            // BiLSTM Time Series Classifier
+            const nInput = LiteGraph.createNode("keras/input");
+            nInput.pos = [80, 200];
+            nInput.properties.shape = `${seqLen}, 1`;
+            this.graph.add(nInput);
+
+            const nBi = LiteGraph.createNode("keras/bidirectional");
+            nBi.pos = [320, 200];
+            nBi.properties.units = 64;
+            nBi.properties.return_sequences = true;
+            this.graph.add(nBi);
+
+            const nLstm = LiteGraph.createNode("keras/lstm");
+            nLstm.pos = [580, 200];
+            nLstm.properties.units = 32;
+            nLstm.properties.return_sequences = false;
+            this.graph.add(nLstm);
+
+            const nDense = LiteGraph.createNode("keras/dense");
+            nDense.pos = [820, 200];
+            nDense.properties.units = 32;
+            this.graph.add(nDense);
+
+            const nOut = LiteGraph.createNode("keras/dense");
+            nOut.pos = [1040, 200];
+            nOut.properties.units = numClasses;
+            nOut.properties.activation = "softmax";
+            this.graph.add(nOut);
+
+            const nOutput = LiteGraph.createNode("keras/output");
+            nOutput.pos = [1260, 200];
+            nOutput.properties.activation = "softmax";
+            this.graph.add(nOutput);
+
+            nInput.connect(0, nBi, 0);
+            nBi.connect(0, nLstm, 0);
+            nLstm.connect(0, nDense, 0);
+            nDense.connect(0, nOut, 0);
+            nOut.connect(0, nOutput, 0);
+
+        } else if (type === "transformer_1d") {
+            // 1D Transformer Attention
+            const nInput = LiteGraph.createNode("keras/input");
+            nInput.pos = [80, 200];
+            nInput.properties.shape = `${seqLen}, 1`;
+            this.graph.add(nInput);
+
+            const nConv = LiteGraph.createNode("keras/conv1d");
+            nConv.pos = [300, 200];
+            nConv.title = "Linear Projection";
+            nConv.properties.filters = 64;
+            this.graph.add(nConv);
+
+            const nPos = LiteGraph.createNode("keras/positional_encoding");
+            nPos.pos = [520, 200];
+            nPos.properties.d_model = 64;
+            this.graph.add(nPos);
+
+            const nMha = LiteGraph.createNode("keras/multihead_attention");
+            nMha.pos = [760, 200];
+            nMha.properties.num_heads = 4;
+            nMha.properties.key_dim = 32;
+            this.graph.add(nMha);
+
+            const nAdd = LiteGraph.createNode("keras/add");
+            nAdd.pos = [1020, 200];
+            this.graph.add(nAdd);
+
+            const nNorm = LiteGraph.createNode("keras/layernorm");
+            nNorm.pos = [1240, 200];
+            nNorm.properties.axis = -1;
+            this.graph.add(nNorm);
+
+            const nPool = LiteGraph.createNode("keras/global_averagepooling1d");
+            nPool.pos = [1460, 200];
+            this.graph.add(nPool);
+
+            const nOut = LiteGraph.createNode("keras/dense");
+            nOut.pos = [1680, 200];
+            nOut.properties.units = numClasses;
+            nOut.properties.activation = "softmax";
+            this.graph.add(nOut);
+
+            const nOutput = LiteGraph.createNode("keras/output");
+            nOutput.pos = [1900, 200];
+            nOutput.properties.activation = "softmax";
+            this.graph.add(nOutput);
+
+            nInput.connect(0, nConv, 0);
+            nConv.connect(0, nPos, 0);
+            nPos.connect(0, nMha, 0);
+            nMha.connect(0, nAdd, 0);
+            nPos.connect(0, nAdd, 1);
+            nAdd.connect(0, nNorm, 0);
+            nNorm.connect(0, nPool, 0);
+            nPool.connect(0, nOut, 0);
+            nOut.connect(0, nOutput, 0);
+        }
+
+        setTimeout(() => {
+            this.validateGraph();
+        }, 200);
+    }
+}
+
+window.NNEditor = NNEditor;

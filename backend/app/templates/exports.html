@@ -1,0 +1,197 @@
+{% extends "base.html" %}
+
+{% block title %}Exports & Downloads — SignalML{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-title">Exports & Model Weights Downloads</h1>
+        <p class="page-desc">Download or import trained Keras models (.keras / .json), preprocessed signals (exact N columns), and feature matrices</p>
+    </div>
+</div>
+
+<!-- Import Model Card -->
+<div class="card" style="margin-bottom: 1.5rem; background: var(--bg-card); border: 1.5px dashed var(--border-color); border-radius: 12px; padding: 1.25rem;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+        <div>
+            <div style="font-weight: 700; font-size: 15px; display: flex; align-items: center; gap: 8px;">
+                <span>📥</span> Model İçe Aktar (Import Model)
+            </div>
+            <p style="font-size: 12px; color: var(--text-muted); margin: 2px 0 0 0;">
+                Export ettiğiniz veya harici bir <strong>.keras</strong> (ağırlıklar / tam model) ya da <strong>.json</strong> (mimari grafiği) dosyasını projeye yükleyin.
+            </p>
+        </div>
+    </div>
+    
+    <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+        <input type="file" id="import-model-file-input" accept=".keras,.h5,.json" class="form-control" style="flex: 1; min-width: 240px; padding: 6px 10px;">
+        <input type="text" id="import-model-name-input" class="form-control" placeholder="Model Adı (İsteğe bağlı)" style="flex: 1; min-width: 180px;">
+        <select id="import-model-task-type" class="form-control" style="width: auto; min-width: 150px;">
+            <option value="">Otomatik Görev Tipi</option>
+            <option value="classification">Classification</option>
+            <option value="reconstruction">Reconstruction (Autoencoder)</option>
+            <option value="regression">Regression</option>
+        </select>
+        <button class="btn btn-primary" id="btn-import-model" onclick="uploadAndImportModel()" style="display: flex; align-items: center; gap: 6px;">
+            <span>📥</span> Modeli İçe Aktar
+        </button>
+    </div>
+    <div id="import-model-status" style="margin-top: 8px; font-size: 12px; font-weight: 500;"></div>
+</div>
+
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem;">
+    <!-- Trained Keras Models -->
+    <div class="card">
+        <div class="card-title">Trained Keras Models</div>
+        <div class="table-responsive">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Model Name</th>
+                        <th>Parameters</th>
+                        <th>Format</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="models-export-tbody">
+                    <tr><td colspan="4" style="text-align: center; color: var(--text-muted);">Loading models...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Exported Signal Files -->
+    <div class="card">
+        <div class="card-title">Exported Signal Datasets & Bundles</div>
+        <div class="table-responsive">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>File Name</th>
+                        <th>Size</th>
+                        <th>Type</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="files-export-tbody">
+                    <tr><td colspan="4" style="text-align: center; color: var(--text-muted);">Loading exported files...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    async function loadExports() {
+        try {
+            const [mRes, fRes] = await Promise.all([
+                fetch(`/api/models/list/${SignalML.currentProjectId}`),
+                fetch(`/api/exports/list/${SignalML.currentProjectId}`)
+            ]);
+
+            const models = await SignalML.safeJson(mRes);
+            const files = await SignalML.safeJson(fRes);
+
+            const mList = Array.isArray(models) ? models : [];
+            const fList = Array.isArray(files) ? files : [];
+
+            const mTbody = document.getElementById("models-export-tbody");
+            if (mList.length === 0) {
+                mTbody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: var(--text-muted);">No models available yet. Import a model above or train in <a href="/training" style="color: var(--accent-blue);">Training</a>.</td></tr>`;
+            } else {
+                mTbody.innerHTML = mList.map(m => `
+                    <tr>
+                        <td>
+                            <strong>${m.name}</strong>
+                            <div style="font-size: 11px; color: var(--text-muted);">${m.task_type || 'custom'}</div>
+                        </td>
+                        <td>${(m.trainable_params || 0).toLocaleString()}</td>
+                        <td><span class="shape-badge">.KERAS</span></td>
+                        <td>
+                            <div style="display: flex; gap: 6px;">
+                                <a href="/api/exports/model/${m.id}" class="btn btn-primary btn-sm" download title="Ağırlıklar ve model dosyasını indir">.keras</a>
+                                <a href="/api/models/${m.id}/export_json" class="btn btn-secondary btn-sm" download title="Mimari JSON grafiğini indir">JSON</a>
+                            </div>
+                        </td>
+                    </tr>
+                `).join("");
+            }
+
+            const fTbody = document.getElementById("files-export-tbody");
+            if (fList.length === 0) {
+                fTbody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: var(--text-muted);">No exported signal files found. Export signals in <a href="/signal-processing" style="color: var(--accent-blue);">Signal Processing</a>.</td></tr>`;
+            } else {
+                fTbody.innerHTML = files.map(f => `
+                    <tr>
+                        <td><strong>${f.name}</strong></td>
+                        <td>${(f.size_bytes / 1024).toFixed(1)} KB</td>
+                        <td><span class="shape-badge">${f.extension.toUpperCase().replace('.', '')}</span></td>
+                        <td>
+                            <a href="${f.download_url}" class="btn btn-secondary btn-sm" download>Download</a>
+                        </td>
+                    </tr>
+                `).join("");
+            }
+        } catch (e) {
+            console.error(e);
+        }
+    }
+
+    async function uploadAndImportModel() {
+        const fileInput = document.getElementById("import-model-file-input");
+        const nameInput = document.getElementById("import-model-name-input");
+        const taskSelect = document.getElementById("import-model-task-type");
+        const statusEl = document.getElementById("import-model-status");
+        const btn = document.getElementById("btn-import-model");
+
+        const file = fileInput.files[0];
+        if (!file) {
+            SignalML.toast("Lütfen içe aktarılacak .keras veya .json model dosyasını seçin.", "error");
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("project_id", SignalML.currentProjectId);
+        if (nameInput.value.trim()) {
+            formData.append("name", nameInput.value.trim());
+        }
+        if (taskSelect.value) {
+            formData.append("task_type", taskSelect.value);
+        }
+
+        btn.disabled = true;
+        btn.innerHTML = `<span class="spinner-border spinner-border-sm"></span> Yükleniyor...`;
+        statusEl.innerHTML = `<span style="color: var(--accent-cyan);">Model dosyası yükleniyor ve Keras mimarisi doğrulanıyor...</span>`;
+
+        try {
+            const res = await fetch("/api/models/import", {
+                method: "POST",
+                body: formData
+            });
+            const data = await SignalML.safeJson(res);
+
+            if (res.ok) {
+                SignalML.toast(`'${data.name}' modeli başarıyla içe aktarıldı! (${(data.trainable_params || 0).toLocaleString()} p)`, "success");
+                statusEl.innerHTML = `<span style="color: var(--accent-green);">✓ '${data.name}' başarıyla projeye eklendi (${data.task_type || 'custom'}).</span>`;
+                fileInput.value = "";
+                nameInput.value = "";
+                await loadExports();
+            } else {
+                SignalML.toast(`İçe aktarma hatası: ${data.detail || 'Model yüklenemedi.'}`, "error");
+                statusEl.innerHTML = `<span style="color: var(--accent-rose);">✗ Hata: ${data.detail || 'Model yüklenemedi.'}</span>`;
+            }
+        } catch (e) {
+            SignalML.toast(`Ağ hatası: ${e.message}`, "error");
+            statusEl.innerHTML = `<span style="color: var(--accent-rose);">✗ Ağ hatası: ${e.message}</span>`;
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = `<span>📥</span> Modeli İçe Aktar`;
+        }
+    }
+
+    document.addEventListener("DOMContentLoaded", loadExports);
+</script>
+{% endblock %}

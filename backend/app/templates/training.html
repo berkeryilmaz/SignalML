@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+
+{% block title %}Model Training — SignalML{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-title">Asynchronous Model Training</h1>
+        <p class="page-desc">Background job execution with real-time loss/accuracy curves, early stopping, and evaluation metrics</p>
+    </div>
+    <div style="display: flex; gap: 8px;">
+        <button class="btn btn-danger" id="cancel-train-btn">Stop Training</button>
+        <button class="btn btn-primary" id="start-train-btn">▶ Launch Training Job</button>
+    </div>
+</div>
+
+<div style="display: grid; grid-template-columns: 360px 1fr; gap: 1.5rem; margin-bottom: 1.5rem;">
+    <!-- Training Setup Panel -->
+    <div class="card">
+        <div class="card-title" style="display: flex; justify-content: space-between; align-items: center;">
+            <span>Training Configuration</span>
+            <a href="/nn-builder" class="btn btn-primary btn-sm" style="font-size: 11px; padding: 3px 8px; background: linear-gradient(135deg, var(--accent-blue), #8b5cf6); border: none; text-decoration: none;">
+                🪄 Model Sihirbazı
+            </a>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Target Model</label>
+            <select id="train-model-select" class="form-control"></select>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Training Dataset</label>
+            <select id="train-dataset-select" class="form-control"></select>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+            <div class="form-group">
+                <label class="form-label">Epochs</label>
+                <input type="number" id="train-epochs" class="form-control" value="25" min="1" max="1000">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Batch Size</label>
+                <input type="number" id="train-batch-size" class="form-control" value="32" min="1" max="1024">
+            </div>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+            <div class="form-group">
+                <label class="form-label">Optimizer</label>
+                <select id="train-opt" class="form-control">
+                    <option value="adam">Adam</option>
+                    <option value="sgd">SGD</option>
+                    <option value="rmsprop">RMSprop</option>
+                    <option value="adamw">AdamW</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Learning Rate</label>
+                <input type="number" id="train-lr" class="form-control" value="0.001" step="0.0001">
+            </div>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+            <div class="form-group">
+                <label class="form-label">Val Split</label>
+                <input type="number" id="train-val-split" class="form-control" value="0.2" step="0.05" min="0" max="0.5">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Early Stopping</label>
+                <select id="train-es" class="form-control">
+                    <option value="true">Enabled (patience 5)</option>
+                    <option value="false">Disabled</option>
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <!-- Live Monitor & Chart -->
+    <div>
+        <div class="grid-cards" style="margin-bottom: 1rem;">
+            <div class="card">
+                <div class="card-title">Epoch Progress</div>
+                <div class="stat-val" id="train-stat-epoch">0 / 0</div>
+                <div class="stat-desc" id="train-stat-status">IDLE</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Training Loss</div>
+                <div class="stat-val" id="train-stat-loss">0.0000</div>
+                <div class="stat-desc">Current Loss</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Validation Loss</div>
+                <div class="stat-val" id="train-stat-val-loss">0.0000</div>
+                <div class="stat-desc">Generalization Loss</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Elapsed Time</div>
+                <div class="stat-val" style="color: var(--accent-cyan);" id="train-stat-elapsed">0.0s</div>
+                <div class="stat-desc">Background Job Duration</div>
+            </div>
+        </div>
+
+        <div id="train-error-banner" style="display: none; padding: 0.75rem 1rem; margin-bottom: 1rem; background: rgba(244, 63, 94, 0.15); border: 1px solid var(--accent-rose); border-radius: 8px; color: #fca5a5; font-size: 13px;"></div>
+
+        <div class="card">
+            <div class="card-title">Real-Time Loss & Accuracy Learning Curves</div>
+            <div id="training-curves-chart" style="width: 100%; height: 380px;"></div>
+        </div>
+
+        <div id="evaluation-results-container"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/training_monitor.js"></script>
+<script>
+    let monitor = null;
+
+    async function initTrainingView() {
+        monitor = new TrainingMonitor("training-curves-chart");
+
+        // Load models & datasets
+        try {
+            const [mRes, dRes] = await Promise.all([
+                fetch(`/api/models/list/${SignalML.currentProjectId}`),
+                fetch(`/api/data/list/${SignalML.currentProjectId}`)
+            ]);
+            const models = await SignalML.safeJson(mRes);
+            const datasets = await SignalML.safeJson(dRes);
+
+            const mList = Array.isArray(models) ? models : [];
+            const dList = Array.isArray(datasets) ? datasets : [];
+
+            document.getElementById("train-model-select").innerHTML = mList.map(m => `
+                <option value="${m.id}">${m.name} (${(m.trainable_params || 0).toLocaleString()} params)</option>
+            `).join("");
+
+            document.getElementById("train-dataset-select").innerHTML = dList.map(d => `
+                <option value="${d.id}">${d.name} (${d.row_count} samples)</option>
+            `).join("");
+        } catch (e) {
+            console.error(e);
+        }
+
+        document.getElementById("start-train-btn").onclick = () => {
+            const modelId = document.getElementById("train-model-select").value;
+            const datasetId = document.getElementById("train-dataset-select").value;
+            if (!modelId || !datasetId) {
+                SignalML.toast("Please select a model and dataset first", "error");
+                return;
+            }
+
+            const config = {
+                model_id: modelId,
+                dataset_id: datasetId,
+                epochs: Number(document.getElementById("train-epochs").value),
+                batch_size: Number(document.getElementById("train-batch-size").value),
+                learning_rate: Number(document.getElementById("train-lr").value),
+                optimizer: document.getElementById("train-opt").value,
+                val_split: Number(document.getElementById("train-val-split").value),
+                early_stopping: document.getElementById("train-es").value === "true",
+                patience: 5
+            };
+
+            monitor.startJob(config);
+        };
+
+        document.getElementById("cancel-train-btn").onclick = () => {
+            if (monitor) monitor.cancelJob();
+        };
+    }
+
+    document.addEventListener("DOMContentLoaded", initTrainingView);
+</script>
+{% endblock %}

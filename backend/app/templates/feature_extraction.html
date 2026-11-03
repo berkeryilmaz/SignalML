@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+
+{% block title %}Feature Extraction — SignalML{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-title">Intermediate Layer Feature Extraction</h1>
+        <p class="page-desc">Extract internal neural network representations (activations) using Keras submodels (e.g. LSTM, Conv1D, Dense)</p>
+    </div>
+</div>
+
+<div style="display: grid; grid-template-columns: 360px 1fr; gap: 1.5rem; margin-bottom: 1.5rem;">
+    <!-- Extraction Configuration -->
+    <div class="card">
+        <div class="card-title">Extract Activations</div>
+        <div class="form-group">
+            <label class="form-label">Trained Keras Model</label>
+            <select id="feat-model-select" class="form-control"></select>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Target Dataset</label>
+            <select id="feat-dataset-select" class="form-control"></select>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Select Intermediate Layer</label>
+            <select id="feat-layer-select" class="form-control"></select>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Batch Size</label>
+            <input type="number" id="feat-batch-size" class="form-control" value="32">
+        </div>
+        <button class="btn btn-primary" style="width: 100%; justify-content: center;" id="extract-features-btn">⚡ Run Batch Feature Extraction</button>
+    </div>
+
+    <!-- Output Information -->
+    <div>
+        <div class="card" id="feat-result-card" style="display: none; margin-bottom: 1.5rem;">
+            <div class="card-title">
+                <span>Extracted Feature Matrix Summary</span>
+                <span id="feat-shape-badge" class="shape-badge"></span>
+            </div>
+            <div class="grid-cards" style="margin-bottom: 1rem;">
+                <div class="card">
+                    <div class="card-title">Samples Processed</div>
+                    <div class="stat-val" id="feat-stat-samples">0</div>
+                </div>
+                <div class="card">
+                    <div class="card-title">Feature Dimensions</div>
+                    <div class="stat-val" id="feat-stat-dims">0</div>
+                </div>
+            </div>
+            <div style="display: flex; gap: 8px;">
+                <a id="feat-to-clustering-btn" href="/clustering" class="btn btn-primary">Analyze with Clustering & PCA &rarr;</a>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Model Layer Architecture Overview</div>
+            <div class="table-responsive">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Layer Name</th>
+                            <th>Layer Type</th>
+                            <th>Output Tensor Shape</th>
+                        </tr>
+                    </thead>
+                    <tbody id="feat-layers-tbody">
+                        <tr><td colspan="4" style="text-align: center; color: var(--text-muted);">Select a model above to inspect layers.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    async function loadModelsAndDatasets() {
+        try {
+            const [mRes, dRes] = await Promise.all([
+                fetch(`/api/models/list/${SignalML.currentProjectId}`),
+                fetch(`/api/data/list/${SignalML.currentProjectId}`)
+            ]);
+            const models = await SignalML.safeJson(mRes);
+            const datasets = await SignalML.safeJson(dRes);
+
+            const mSel = document.getElementById("feat-model-select");
+            mSel.innerHTML = (Array.isArray(models) ? models : []).map(m => `<option value="${m.id}">${m.name}</option>`).join("");
+
+            const dSel = document.getElementById("feat-dataset-select");
+            dSel.innerHTML = (Array.isArray(datasets) ? datasets : []).map(d => `<option value="${d.id}">${d.name} (${d.row_count} rows)</option>`).join("");
+
+            if (Array.isArray(models) && models.length > 0) loadModelLayers(models[0].id);
+
+            mSel.onchange = (e) => loadModelLayers(e.target.value);
+        } catch (e) {
+            console.error(e);
+        }
+    }
+
+    async function loadModelLayers(modelId) {
+        try {
+            const res = await fetch(`/api/features/layers/${modelId}`);
+            if (res.ok) {
+                const data = await SignalML.safeJson(res);
+                const lSel = document.getElementById("feat-layer-select");
+                const layers = data.layers || [];
+                lSel.innerHTML = layers.map(l => `<option value="${l.name}">${l.name} (${l.class_name}) &rarr; ${JSON.stringify(l.output_shape)}</option>`).join("");
+
+                const tbody = document.getElementById("feat-layers-tbody");
+                tbody.innerHTML = layers.map(l => `
+                    <tr>
+                        <td>${l.index}</td>
+                        <td><strong>${l.name}</strong></td>
+                        <td><span class="shape-badge">${l.class_name}</span></td>
+                        <td style="font-family: var(--font-mono);">${JSON.stringify(l.output_shape)}</td>
+                    </tr>
+                `).join("");
+            }
+        } catch (e) {
+            console.error(e);
+        }
+    }
+
+    document.getElementById("extract-features-btn").onclick = async () => {
+        const modelId = document.getElementById("feat-model-select").value;
+        const datasetId = document.getElementById("feat-dataset-select").value;
+        const layerName = document.getElementById("feat-layer-select").value;
+        const batchSize = Number(document.getElementById("feat-batch-size").value);
+
+        if (!modelId || !datasetId || !layerName) {
+            SignalML.toast("Please select model, dataset, and layer", "error");
+            return;
+        }
+
+        SignalML.toast("Extracting tensor activations from Keras submodel...", "info");
+
+        try {
+            const res = await fetch("/api/features/extract", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    model_id: modelId,
+                    dataset_id: datasetId,
+                    layer_name: layerName,
+                    batch_size: batchSize
+                })
+            });
+
+            if (res.ok) {
+                const data = await SignalML.safeJson(res);
+                SignalML.toast("Feature extraction completed successfully!", "success");
+                document.getElementById("feat-result-card").style.display = "block";
+                document.getElementById("feat-shape-badge").textContent = `Shape: ${JSON.stringify(data.shape)}`;
+                document.getElementById("feat-stat-samples").textContent = data.sample_count;
+                document.getElementById("feat-stat-dims").textContent = data.feature_dim;
+                document.getElementById("feat-to-clustering-btn").href = `/clustering?feature_id=${data.feature_id}`;
+            } else {
+                const err = await SignalML.safeJson(res);
+                SignalML.toast(`Extraction error: ${err.detail || "Server error"}`, "error");
+            }
+        } catch (e) {
+            SignalML.toast(`Network Error: ${e.message}`, "error");
+        }
+    };
+
+    document.addEventListener("DOMContentLoaded", loadModelsAndDatasets);
+</script>
+{% endblock %}

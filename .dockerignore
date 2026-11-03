@@ -1,0 +1,15 @@
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.coverage
+htmlcov
+.git
+.gitignore
+storage/*
+!storage/.gitkeep
+data/*
+!data/.gitkeep
+JsBrain-main
+SignalTagger-main

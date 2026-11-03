@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+
+{% block title %}Visual Workflow Builder — SignalML{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-title">Visual Workflow Builder</h1>
+        <p class="page-desc">General-purpose DAG workflow canvas (Data &rarr; Signal Ops &rarr; ML Features &rarr; Clustering &rarr; Export)</p>
+    </div>
+    <div style="display: flex; gap: 8px;">
+        <a href="/nn-builder" class="btn btn-primary" style="background: linear-gradient(135deg, var(--accent-blue), #8b5cf6); border: none; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; font-weight: 600;">
+            🪄 Model Sihirbazı (NN Builder)
+        </a>
+        <button class="btn btn-secondary" onclick="wfEditor.validateWorkflow()">Validate DAG</button>
+        <button class="btn btn-primary" onclick="wfEditor.executeWorkflow()">▶ Execute Workflow</button>
+    </div>
+</div>
+
+<div class="editor-layout">
+    <!-- Left Node Palette -->
+    <div class="palette-pane">
+        <div class="pane-header">Workflow Nodes</div>
+        <div class="palette-search">
+            <input type="text" id="wf-palette-search" class="form-control" placeholder="Search nodes...">
+        </div>
+        <div class="palette-list" id="wf-palette-list">
+            <div class="node-category-group">
+                <div class="category-title">Data & I/O</div>
+                <div class="node-item" onclick="addWfNode('data_source')">Data Source <span>+</span></div>
+                <div class="node-item" onclick="addWfNode('csv_parser')">CSV / TXT Parser <span>+</span></div>
+            </div>
+            <div class="node-category-group">
+                <div class="category-title">Signal Preprocessing</div>
+                <div class="node-item" onclick="addWfNode('fixed_length')">To Fixed Length <span>+</span></div>
+                <div class="node-item" onclick="addWfNode('signal_truncate')">Signal Truncate <span>+</span></div>
+                <div class="node-item" onclick="addWfNode('signal_pad')">Signal Pad <span>+</span></div>
+                <div class="node-item" onclick="addWfNode('peak_window')">Peak Window <span>+</span></div>
+                <div class="node-item" onclick="addWfNode('normalize')">Normalize <span>+</span></div>
+            </div>
+            <div class="node-category-group">
+                <div class="category-title">Features & Models</div>
+                <div class="node-item" onclick="addWfNode('feature_extractor')">Feature Extractor <span>+</span></div>
+                <a href="/nn-builder" class="node-item" style="color: #c084fc; text-decoration: none; font-weight: 600; border-color: rgba(192, 132, 252, 0.3); background: rgba(192, 132, 252, 0.08);">
+                    🪄 Model Sihirbazı (Autoencoder / U-Net) <span>&rarr;</span>
+                </a>
+            </div>
+            <div class="node-category-group">
+                <div class="category-title">Clustering & PCA</div>
+                <div class="node-item" onclick="addWfNode('clustering_kmeans')">K-Means <span>+</span></div>
+                <div class="node-item" onclick="addWfNode('clustering_dbscan')">DBSCAN <span>+</span></div>
+                <div class="node-item" onclick="addWfNode('pca_analysis')">PCA Analysis <span>+</span></div>
+            </div>
+            <div class="node-category-group">
+                <div class="category-title">Exports</div>
+                <div class="node-item" onclick="addWfNode('signal_export')">Signal Export <span>+</span></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Center Canvas Area -->
+    <div class="canvas-wrapper">
+        <div class="canvas-toolbar">
+            <button class="btn btn-secondary btn-sm" onclick="wfEditor.canvas.adjustMouseMoveSpeed()">Reset View</button>
+            <button class="btn btn-secondary btn-sm" onclick="wfEditor.graph.clear()">Clear Canvas</button>
+        </div>
+        <canvas id="workflow-canvas" class="node-canvas"></canvas>
+    </div>
+
+    <!-- Right Inspector & Execution Results -->
+    <div class="inspector-pane">
+        <div class="pane-header">Node Inspector</div>
+        <div class="inspector-body" id="wf-inspector-body">
+            <div class="empty-inspector">
+                <p>Click any node in the workflow canvas to configure its properties and view execution logs.</p>
+            </div>
+        </div>
+        <div id="wf-results-container" style="padding: 0 1rem 1rem 1rem;"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/workflow_editor.js"></script>
+<script>
+    let wfEditor = null;
+
+    function addWfNode(type) {
+        if (!wfEditor) return;
+        const node = LiteGraph.createNode(type);
+        if (node) {
+            node.pos = [250 + Math.random() * 80, 200 + Math.random() * 80];
+            wfEditor.graph.add(node);
+            SignalML.toast(`Added ${node.title}`, "info");
+        }
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+        wfEditor = new WorkflowEditor("workflow-canvas");
+    });
+</script>
+{% endblock %}

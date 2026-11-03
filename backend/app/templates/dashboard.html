@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard — SignalML{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-title">SignalML Platform Dashboard</h1>
+        <p class="page-desc">Visual Node-Based Machine Learning & Time-Series Signal Processing System</p>
+    </div>
+    <div style="display: flex; gap: 8px;">
+        <a href="/data-manager" class="btn btn-secondary">Upload Data</a>
+        <a href="/workflow-builder" class="btn btn-secondary">Open Workflow</a>
+        <a href="/nn-builder" class="btn btn-primary">Build Neural Network</a>
+    </div>
+</div>
+
+<div class="grid-cards">
+    <div class="card">
+        <div class="card-title">Active Project</div>
+        <div class="stat-val" id="dash-project-name">Loading...</div>
+        <div class="stat-desc">SQLite Persistent Database</div>
+    </div>
+    <div class="card">
+        <div class="card-title">Registered Datasets</div>
+        <div class="stat-val" id="dash-datasets-count">0</div>
+        <div class="stat-desc">CSV, TXT, TSV, NPY, NPZ formats</div>
+    </div>
+    <div class="card">
+        <div class="card-title">Compiled Models</div>
+        <div class="stat-val" id="dash-models-count">0</div>
+        <div class="stat-desc">Keras Functional API Architecture</div>
+    </div>
+    <div class="card">
+        <div class="card-title">TensorFlow Runtime</div>
+        <div class="stat-val" style="color: var(--accent-green);" id="dash-tf-version">TF 2.x</div>
+        <div class="stat-desc" id="dash-tf-device">CPU Engine Initialized</div>
+    </div>
+</div>
+
+<div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem;">
+    <div class="card">
+        <div class="card-title">Platform Quick Actions & Pipeline Progression</div>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-top: 1rem;">
+            <a href="/data-manager" style="text-decoration: none; color: inherit;">
+                <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); padding: 1rem; border-radius: 8px; transition: transform 0.15s ease;">
+                    <div style="color: var(--accent-blue); font-weight: 700; margin-bottom: 4px;">1. Data Manager</div>
+                    <p style="font-size: 12px; color: var(--text-secondary);">Upload ZIP, scan host /data, preview sample rows & column stats.</p>
+                </div>
+            </a>
+            <a href="/signal-processing" style="text-decoration: none; color: inherit;">
+                <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); padding: 1rem; border-radius: 8px; transition: transform 0.15s ease;">
+                    <div style="color: var(--accent-cyan); font-weight: 700; margin-bottom: 4px;">2. Signal Processing</div>
+                    <p style="font-size: 12px; color: var(--text-secondary);">Truncate, zero/edge pad, align onsets, peak window, and normalize.</p>
+                </div>
+            </a>
+            <a href="/nn-builder" style="text-decoration: none; color: inherit;">
+                <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); padding: 1rem; border-radius: 8px; transition: transform 0.15s ease;">
+                    <div style="color: var(--accent-green); font-weight: 700; margin-bottom: 4px; display: flex; align-items: center; justify-content: space-between;">
+                        <span>3. Neural Network Builder</span>
+                        <span class="shape-badge" style="background: rgba(139, 92, 246, 0.2); color: #c084fc; border-color: rgba(139, 92, 246, 0.4);">🪄 Sihirbaz</span>
+                    </div>
+                    <p style="font-size: 12px; color: var(--text-secondary);">1D Autoencoder, U-Net, CNN, BiLSTM mimarilerini sihirbazla kurun veya tasarlayın.</p>
+                </div>
+            </a>
+            <a href="/training" style="text-decoration: none; color: inherit;">
+                <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); padding: 1rem; border-radius: 8px; transition: transform 0.15s ease;">
+                    <div style="color: var(--accent-amber); font-weight: 700; margin-bottom: 4px;">4. Training & Evaluation</div>
+                    <p style="font-size: 12px; color: var(--text-secondary);">Background training jobs, live loss curves, early stopping, metrics.</p>
+                </div>
+            </a>
+            <a href="/feature-extraction" style="text-decoration: none; color: inherit;">
+                <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); padding: 1rem; border-radius: 8px; transition: transform 0.15s ease;">
+                    <div style="color: var(--accent-indigo); font-weight: 700; margin-bottom: 4px;">5. Feature Extraction</div>
+                    <p style="font-size: 12px; color: var(--text-secondary);">Extract intermediate activations from any hidden layer in the model.</p>
+                </div>
+            </a>
+            <a href="/clustering" style="text-decoration: none; color: inherit;">
+                <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); padding: 1rem; border-radius: 8px; transition: transform 0.15s ease;">
+                    <div style="color: var(--accent-rose); font-weight: 700; margin-bottom: 4px;">6. Clustering & 3D PCA</div>
+                    <p style="font-size: 12px; color: var(--text-secondary);">Run K-Means/DBSCAN, interactive 2D/3D scatter plots with tooltips.</p>
+                </div>
+            </a>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">Recent Training Runs</div>
+        <div id="dash-runs-list" style="margin-top: 0.5rem;">
+            <div style="color: var(--text-muted); font-size: 13px;">No training runs recorded yet.</div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener("DOMContentLoaded", async () => {
+        try {
+            const healthRes = await fetch("/health");
+            if (healthRes.ok) {
+                const h = await SignalML.safeJson(healthRes);
+                document.getElementById("dash-tf-version").textContent = `Keras / TF ${h.tensorflow_version || ""}`;
+                document.getElementById("dash-tf-device").textContent = h.gpu_available ? `GPU: ${h.gpu_devices[0]}` : "CPU Optimized Execution";
+            }
+
+            const projRes = await fetch(`/api/projects/${SignalML.currentProjectId}`);
+            if (projRes.ok) {
+                const p = await SignalML.safeJson(projRes);
+                document.getElementById("dash-project-name").textContent = p.name;
+                document.getElementById("dash-datasets-count").textContent = p.datasets ? p.datasets.length : 0;
+                document.getElementById("dash-models-count").textContent = p.models ? p.models.length : 0;
+
+                const runsContainer = document.getElementById("dash-runs-list");
+                if (p.recent_training_runs && p.recent_training_runs.length > 0) {
+                    runsContainer.innerHTML = p.recent_training_runs.map(r => `
+                        <div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 12px;">
+                            <span>Model ${r.model_id.slice(0, 6)}</span>
+                            <span class="status-badge ${r.status === 'completed' ? 'success' : (r.status === 'running' ? 'running' : 'error')}">${r.status}</span>
+                        </div>
+                    `).join("");
+                }
+            }
+        } catch (e) {
+            console.error(e);
+        }
+    });
+</script>
+{% endblock %}

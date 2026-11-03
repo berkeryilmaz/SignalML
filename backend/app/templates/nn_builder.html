@@ -1,0 +1,662 @@
+{% extends "base.html" %}
+
+{% block title %}Neural Network Builder — SignalML{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-title">Neural Network Builder</h1>
+        <p class="page-desc">Design deep architectures with typed tensor ports, automatic Keras Functional API model compilation, and shape inference</p>
+    </div>
+    <div style="display: flex; gap: 10px; align-items: center;">
+        <button class="btn btn-primary" onclick="openWizardModal()" style="background: linear-gradient(135deg, #2563eb, #7c3aed); border: 1.5px solid rgba(255,255,255,0.3); box-shadow: 0 0 16px rgba(124, 58, 237, 0.6); font-weight: 700; font-size: 13px; padding: 8px 18px; display: inline-flex; align-items: center; gap: 8px; cursor: pointer;">
+            <span style="font-size: 16px;">🪄</span> Model Mimarisi Sihirbazı (Autoencoder & U-Net)
+        </button>
+        <button class="btn btn-secondary" onclick="nnEditorInstance.validateGraph()">Check & Infer Shapes</button>
+        <button class="btn btn-secondary" onclick="openBuildModelModal()">Build & Save Keras Model</button>
+    </div>
+</div>
+
+<div class="editor-layout">
+    <!-- Left Layer Palette -->
+    <div class="palette-pane">
+        <div class="pane-header" style="display: flex; justify-content: space-between; align-items: center;">
+            <span>Keras Layer Palette</span>
+            <span class="shape-badge" style="cursor: pointer;" onclick="openWizardModal()">🪄 Sihirbaz</span>
+        </div>
+
+        <!-- Wizard Quick Action Callout in Palette -->
+        <div style="margin: 0.6rem; background: linear-gradient(135deg, rgba(37, 99, 235, 0.2), rgba(124, 58, 237, 0.28)); border: 1.5px solid #8b5cf6; border-radius: 8px; padding: 10px 12px; text-align: center; box-shadow: 0 2px 10px rgba(139, 92, 246, 0.2);">
+            <div style="font-weight: 700; color: #fff; font-size: 12px; margin-bottom: 4px; display: flex; align-items: center; justify-content: center; gap: 6px;">
+                <span style="font-size: 15px;">🪄</span> Model Mimarisi Sihirbazı
+            </div>
+            <div style="font-size: 11px; color: #cbd5e1; margin-bottom: 8px; line-height: 1.3;">
+                Autoencoder, 1D U-Net, CNN, BiLSTM mimarilerini tek tıkla oluşturun.
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="openWizardModal()" style="width: 100%; background: linear-gradient(135deg, #2563eb, #7c3aed); border: none; font-weight: 700; cursor: pointer; padding: 6px 10px; font-size: 11px;">
+                ⚡ Sihirbazı Başlat
+            </button>
+        </div>
+
+        <div class="palette-search">
+            <input type="text" id="nn-palette-search" class="form-control" placeholder="Search layers..." oninput="filterPalette(this.value)">
+        </div>
+        <div class="palette-list" id="nn-palette-list">
+            <div class="node-category-group">
+                <div class="category-title">Core & IO (Giriş / Çıkış)</div>
+                <div class="node-item" onclick="addLayerNode('input')">Input <span>+</span></div>
+                <div class="node-item" onclick="addLayerNode('output')" style="color: var(--accent-green); font-weight: 600;">Model Output (Terminal) <span>+</span></div>
+                <div class="node-item" onclick="addLayerNode('dense')">Dense <span>+</span></div>
+                <div class="node-item" onclick="addLayerNode('activation')">Activation <span>+</span></div>
+                <div class="node-item" onclick="addLayerNode('flatten')">Flatten <span>+</span></div>
+                <div class="node-item" onclick="addLayerNode('reshape')">Reshape <span>+</span></div>
+                <div class="node-item" onclick="addLayerNode('dropout')">Dropout <span>+</span></div>
+                <div class="node-item" onclick="addLayerNode('batchnorm')">Batch Normalization <span>+</span></div>
+                <div class="node-item" onclick="addLayerNode('layernorm')">Layer Normalization <span>+</span></div>
+                <div class="node-item" onclick="addLayerNode('unitnorm')">Unit Normalization (L2) <span>+</span></div>
+            </div>
+            <div class="node-category-group">
+                <div class="category-title">Convolutional & Autoencoder</div>
+                <div class="node-item" onclick="addLayerNode('conv1d')">Conv1D <span>+</span></div>
+                <div class="node-item" onclick="addLayerNode('conv1dtranspose')" style="color: var(--accent-cyan);">Conv1DTranspose (Decoder) <span>+</span></div>
+                <div class="node-item" onclick="addLayerNode('upsampling1d')" style="color: var(--accent-cyan);">UpSampling1D (U-Net / AE) <span>+</span></div>
+                <div class="node-item" onclick="addLayerNode('separable_conv1d')">Separable Conv1D <span>+</span></div>
+                <div class="node-item" onclick="addLayerNode('conv2d')">Conv2D <span>+</span></div>
+                <div class="node-item" onclick="addLayerNode('maxpooling1d')">MaxPooling1D <span>+</span></div>
+                <div class="node-item" onclick="addLayerNode('averagepooling1d')">AveragePooling1D <span>+</span></div>
+                <div class="node-item" onclick="addLayerNode('global_maxpooling1d')">Global MaxPooling1D <span>+</span></div>
+                <div class="node-item" onclick="addLayerNode('global_averagepooling1d')">Global AvgPooling1D <span>+</span></div>
+            </div>
+            <div class="node-category-group">
+                <div class="category-title">Recurrent Time-Series</div>
+                <div class="node-item" onclick="addLayerNode('lstm')">LSTM <span>+</span></div>
+                <div class="node-item" onclick="addLayerNode('gru')">GRU <span>+</span></div>
+                <div class="node-item" onclick="addLayerNode('simplernn')">SimpleRNN <span>+</span></div>
+                <div class="node-item" onclick="addLayerNode('bidirectional')">Bidirectional LSTM <span>+</span></div>
+            </div>
+            <div class="node-category-group">
+                <div class="category-title">Attention & Transformer</div>
+                <div class="node-item" onclick="addLayerNode('multihead_attention')">MultiHeadAttention <span>+</span></div>
+                <div class="node-item" onclick="addLayerNode('positional_encoding')">Positional Encoding <span>+</span></div>
+            </div>
+            <div class="node-category-group">
+                <div class="category-title">Tensor Combinations (Skip Connections)</div>
+                <div class="node-item" onclick="addLayerNode('concatenate')" style="color: #fbbf24;">Concatenate (U-Net Skip) <span>+</span></div>
+                <div class="node-item" onclick="addLayerNode('add')">Add (Residual Skip) <span>+</span></div>
+                <div class="node-item" onclick="addLayerNode('multiply')">Multiply <span>+</span></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Center Canvas Area -->
+    <div class="canvas-wrapper">
+        <div class="canvas-toolbar">
+            <button class="btn btn-primary btn-sm" onclick="openWizardModal()" style="background: linear-gradient(135deg, #2563eb, #7c3aed); border: none; font-weight: 700; box-shadow: 0 0 10px rgba(124, 58, 237, 0.5);">
+                🪄 Model Sihirbazı (AE / U-Net / CNN)
+            </button>
+            <button class="btn btn-secondary btn-sm" onclick="nnEditorInstance.graph.clear()">Clear Canvas</button>
+            <button class="btn btn-secondary btn-sm" onclick="exportGraphJSON()" title="Mevcut mimariyi Graph JSON olarak indir">Export JSON</button>
+            <button class="btn btn-secondary btn-sm" onclick="triggerImportGraphFile()" title="Mimari veya Keras modelini (.json, .keras, .h5) yükle" style="background: rgba(56, 189, 248, 0.15); border-color: rgba(56, 189, 248, 0.4); color: #38bdf8; font-weight: 600;">📥 Import (JSON / Model)</button>
+            <input type="file" id="import-graph-input" accept=".json,.keras,.h5" style="display:none;" onchange="handleImportFileInput(event)">
+            <select id="load-saved-model-select" class="form-control" style="width: auto; padding: 4px 8px; font-size: 12px; height: 32px;" onchange="handleLoadSavedModel(this.value)">
+                <option value="">📂 Kayıtlı Model Yükle...</option>
+            </select>
+            <span style="font-size: 11px; color: var(--text-muted); display: inline-flex; align-items: center; gap: 4px; margin-left: 6px;">
+                💡 <em>Dosyayı tuvale sürükleyip bırakabilirsiniz</em>
+            </span>
+        </div>
+        <canvas id="nn-canvas" class="node-canvas"></canvas>
+
+        <!-- Drag & Drop Zone Overlay -->
+        <div id="canvas-dropzone-overlay" style="display: none; position: absolute; inset: 0; background: rgba(15, 23, 42, 0.92); border: 2.5px dashed #38bdf8; border-radius: 8px; z-index: 100; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; backdrop-filter: blur(5px);">
+            <div style="font-size: 52px; margin-bottom: 12px; filter: drop-shadow(0 0 14px rgba(56, 189, 248, 0.8));">📥</div>
+            <div style="font-size: 18px; font-weight: 700; color: #fff; margin-bottom: 6px;">Model Mimarisini Tuvale Bırakın</div>
+            <div style="font-size: 13px; color: #94a3b8; max-width: 440px; text-align: center; line-height: 1.5;">
+                Önceden export aldığınız <strong>Graph JSON</strong>, <strong>Keras Mimarisi (.json)</strong> veya <strong>Keras Modeli (.keras, .h5)</strong> dosyasını buraya bırakın.
+            </div>
+        </div>
+
+        <!-- Floating Quick Wizard Button at Bottom Right of Canvas -->
+        <div style="position: absolute; bottom: 18px; right: 18px; z-index: 10;">
+            <button class="btn btn-primary" onclick="openWizardModal()" style="background: linear-gradient(135deg, #2563eb, #7c3aed); border: 1.5px solid rgba(255,255,255,0.3); box-shadow: 0 4px 18px rgba(0,0,0,0.6); font-size: 13px; font-weight: 700; padding: 9px 18px; border-radius: 24px; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                <span style="font-size: 16px;">🪄</span> Hazır Mimari Sihirbazı
+            </button>
+        </div>
+    </div>
+
+    <!-- Right Inspector & Shapes Panel -->
+    <div class="inspector-pane">
+        <div class="pane-header">Layer Parameter Inspector</div>
+        <div class="inspector-body" id="nn-inspector-body">
+            <div class="empty-inspector">
+                <p>Click any layer node in the canvas to inspect its parameters, change units, and view output shapes.</p>
+            </div>
+        </div>
+        <div id="shapes-summary-container" style="padding: 0 1rem 1rem 1rem;"></div>
+    </div>
+</div>
+
+<!-- Architecture Wizard Modal -->
+<div id="wizard-modal" class="modal-overlay" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(5px); z-index: 1000; align-items: center; justify-content: center;">
+    <div class="modal-content card" style="width: 840px; max-width: 95%; max-height: 90vh; overflow-y: auto; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 1.75rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.75rem;">
+            <div>
+                <h2 style="margin: 0; font-size: 18px; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 8px;">
+                    <span>⚡</span> Model Mimarisi Sihirbazı (Architecture Wizard)
+                </h2>
+                <p style="font-size: 12px; color: var(--text-muted); margin: 4px 0 0 0;">
+                    Autoencoder, 1D U-Net, CNN, LSTM veya Transformer mimarilerini tek tıkla otomatik oluşturun ve bağlayın.
+                </p>
+            </div>
+            <button class="btn btn-secondary btn-sm" onclick="closeWizardModal()" style="padding: 2px 8px;">✕</button>
+        </div>
+
+        <!-- Step 1: Select Architecture Template -->
+        <div style="font-weight: 600; font-size: 13px; color: var(--accent-cyan); margin-bottom: 8px;">1. Model Mimarisi Seçin:</div>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; margin-bottom: 1.25rem;" id="wizard-templates-grid">
+            <!-- 1D Conv AE -->
+            <div class="wizard-card active" data-type="conv_ae" onclick="selectWizardTemplate('conv_ae', this)">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                    <strong style="color: #fff; font-size: 13px;">1D Convolutional Autoencoder</strong>
+                    <span class="shape-badge" style="background: rgba(56, 189, 248, 0.2); color: #38bdf8;">Denoising / AE</span>
+                </div>
+                <p style="font-size: 11px; color: var(--text-secondary); margin: 0;">
+                    Encoder (Conv1D + MaxPool) → Bottleneck Latent → Decoder (UpSampling1D + Conv1D) → Sinyal Yeniden Yapılandırma Çıktısı.
+                </p>
+            </div>
+
+            <!-- 1D U-Net -->
+            <div class="wizard-card" data-type="unet_1d" onclick="selectWizardTemplate('unet_1d', this)">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                    <strong style="color: #fff; font-size: 13px;">1D U-Net (Skip Connections)</strong>
+                    <span class="shape-badge" style="background: rgba(251, 191, 36, 0.2); color: #fbbf24;">U-Net / Seg</span>
+                </div>
+                <p style="font-size: 11px; color: var(--text-secondary); margin: 0;">
+                    Encoder seviyelerinden Decoder'a Concatenate skip bağlantıları. Tepe noktalarını ve yüksek frekans detaylarını korur.
+                </p>
+            </div>
+
+            <!-- Dense AE -->
+            <div class="wizard-card" data-type="dense_ae" onclick="selectWizardTemplate('dense_ae', this)">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                    <strong style="color: #fff; font-size: 13px;">Dense / MLP Autoencoder</strong>
+                    <span class="shape-badge" style="background: rgba(168, 85, 247, 0.2); color: #a855f7;">Boyut İndirgeme</span>
+                </div>
+                <p style="font-size: 11px; color: var(--text-secondary); margin: 0;">
+                    Flatten → Dense Encoder → Latent Code → Dense Decoder → Reshape. Sinyal sıkıştırma ve anomali tespiti için.
+                </p>
+            </div>
+
+            <!-- 1D CNN Classifier -->
+            <div class="wizard-card" data-type="cnn_classifier" onclick="selectWizardTemplate('cnn_classifier', this)">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                    <strong style="color: #fff; font-size: 13px;">1D CNN Sinyal Sınıflandırıcı</strong>
+                    <span class="shape-badge" style="background: rgba(52, 211, 153, 0.2); color: #34d399;">Sınıflandırma</span>
+                </div>
+                <p style="font-size: 11px; color: var(--text-secondary); margin: 0;">
+                    Conv1D + MaxPool öznitelik çıkarımı → Global Pooling → Dense Softmax çıkışı.
+                </p>
+            </div>
+
+            <!-- BiLSTM -->
+            <div class="wizard-card" data-type="bilstm" onclick="selectWizardTemplate('bilstm', this)">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                    <strong style="color: #fff; font-size: 13px;">Bidirectional LSTM</strong>
+                    <span class="shape-badge" style="background: rgba(244, 63, 94, 0.2); color: #f43f5e;">Zaman Serisi</span>
+                </div>
+                <p style="font-size: 11px; color: var(--text-secondary); margin: 0;">
+                    Çift yönlü LSTM katmanı + Tek yönlü LSTM + Dense. Uzun vadeli bağımlılıkları ve periyodik sinyalleri yakalar.
+                </p>
+            </div>
+
+            <!-- 1D Transformer -->
+            <div class="wizard-card" data-type="transformer_1d" onclick="selectWizardTemplate('transformer_1d', this)">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                    <strong style="color: #fff; font-size: 13px;">1D Transformer (Self-Attention)</strong>
+                    <span class="shape-badge" style="background: rgba(56, 189, 248, 0.2); color: #38bdf8;">Attention</span>
+                </div>
+                <p style="font-size: 11px; color: var(--text-secondary); margin: 0;">
+                    Projeksiyon → Positional Encoding → MultiHeadAttention → Residual Add → LayerNorm.
+                </p>
+            </div>
+        </div>
+
+        <!-- Step 2: Configuration Parameters -->
+        <div style="font-weight: 600; font-size: 13px; color: var(--accent-cyan); margin-bottom: 8px;">2. Parametreleri Belirleyin:</div>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 1.25rem; background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px;">
+            <div class="form-group">
+                <label class="form-label">Sinyal Uzunluğu (Seq Length)</label>
+                <input type="number" id="wiz-seq-len" class="form-control" value="512" min="16" step="16">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Başlangıç Filtre / Unit Sayısı</label>
+                <input type="number" id="wiz-base-filters" class="form-control" value="32" min="8" step="8">
+            </div>
+            <div class="form-group" id="wiz-latent-group">
+                <label class="form-label" id="wiz-latent-label">Bottleneck / Latent Boyutu</label>
+                <input type="number" id="wiz-latent-dim" class="form-control" value="16" min="2">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Aktivasyon Fonksiyonu</label>
+                <select id="wiz-activation" class="form-control">
+                    <option value="relu" selected>ReLU</option>
+                    <option value="elu">ELU</option>
+                    <option value="tanh">Tanh</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Architecture Topology Summary Box -->
+        <div id="wizard-summary-box" style="background: rgba(15, 23, 42, 0.8); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px; margin-bottom: 1.25rem; font-size: 12px; color: var(--text-secondary);">
+            <div style="font-weight: 700; color: #fff; margin-bottom: 4px;" id="wiz-summary-title">Autoencoder Akışı:</div>
+            <div id="wiz-summary-desc" style="font-family: var(--font-mono); font-size: 11px; line-height: 1.6; color: var(--accent-cyan);">
+                Input(512, 1) → Conv1D(32, k=7) → MaxPool(2) → Conv1D(64, k=5) → MaxPool(2) → Latent(16) → UpSampling1D(2) → Conv1D(64) → UpSampling1D(2) → Conv1D(32) → Output(512, 1)
+            </div>
+        </div>
+
+        <div style="display: flex; justify-content: flex-end; gap: 10px;">
+            <button class="btn btn-secondary" onclick="closeWizardModal()">İptal</button>
+            <button class="btn btn-primary" onclick="executeWizardPlacement()" style="background: linear-gradient(135deg, var(--accent-blue), #8b5cf6); border: none; font-weight: 700; padding: 8px 18px;">
+                🚀 Modeli Tuvale Yerleştir (Generate & Connect)
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Build & Save Keras Model Dialog Modal -->
+<div id="build-model-modal" class="modal-overlay" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75); backdrop-filter: blur(4px); z-index: 1000; align-items: center; justify-content: center;">
+    <div class="modal-content card" style="width: 480px; max-width: 90%; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; padding: 1.5rem;">
+        <h3 style="margin: 0 0 1rem 0; font-size: 16px; font-weight: 700; color: #fff;">Build & Save Keras Model</h3>
+        <div class="form-group" style="margin-bottom: 1rem;">
+            <label class="form-label">Model Adı</label>
+            <input type="text" id="save-model-name" class="form-control" value="SignalML Deep Model">
+        </div>
+        <div class="form-group" style="margin-bottom: 1rem;">
+            <label class="form-label">Görev Tipi (Task Type)</label>
+            <select id="save-model-task" class="form-control" onchange="updateLossOptions(this.value)">
+                <option value="reconstruction">Reconstruction / Autoencoder / U-Net (MSE Loss)</option>
+                <option value="classification">Classification (Categorical Cross-Entropy)</option>
+                <option value="regression">Regression (Mean Squared Error)</option>
+            </select>
+        </div>
+        <div class="form-group" style="margin-bottom: 1.25rem;">
+            <label class="form-label">Optimizer</label>
+            <select id="save-model-opt" class="form-control">
+                <option value="adam" selected>Adam (Önerilen)</option>
+                <option value="adamw">AdamW</option>
+                <option value="rmsprop">RMSprop</option>
+                <option value="sgd">SGD</option>
+            </select>
+        </div>
+        <div style="display: flex; justify-content: flex-end; gap: 8px;">
+            <button class="btn btn-secondary" onclick="closeBuildModelModal()">İptal</button>
+            <button class="btn btn-primary" onclick="executeBuildAndSave()">Compile & Save to Workspace</button>
+        </div>
+    </div>
+</div>
+
+<style>
+.wizard-card {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 12px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+.wizard-card:hover {
+    border-color: var(--accent-cyan);
+    background: rgba(56, 189, 248, 0.05);
+}
+.wizard-card.active {
+    border-color: var(--accent-blue);
+    background: rgba(59, 130, 246, 0.12);
+    box-shadow: 0 0 10px rgba(59, 130, 246, 0.3);
+}
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/nn_editor.js"></script>
+<script>
+    let nnEditorInstance = null;
+    let selectedWizardTemplate = "conv_ae";
+
+    function filterPalette(query) {
+        const q = query.toLowerCase().trim();
+        document.querySelectorAll("#nn-palette-list .node-item").forEach(item => {
+            const txt = item.textContent.toLowerCase();
+            item.style.display = (!q || txt.includes(q)) ? "flex" : "none";
+        });
+    }
+
+    function addLayerNode(type) {
+        if (!nnEditorInstance) return;
+        const node = LiteGraph.createNode(`keras/${type}`);
+        if (node) {
+            node.pos = [300 + Math.random() * 80, 200 + Math.random() * 80];
+            nnEditorInstance.graph.add(node);
+            SignalML.toast(`Added ${node.title}`, "info");
+        }
+    }
+
+    function exportGraphJSON() {
+        if (!nnEditorInstance) return;
+        const json = JSON.stringify(nnEditorInstance.serializeGraph(), null, 2);
+        const blob = new Blob([json], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "keras_model_graph.json";
+        a.click();
+        a.remove();
+        SignalML.toast("Graph JSON exported!", "success");
+    }
+
+    function triggerImportGraphFile() {
+        document.getElementById("import-graph-input").click();
+    }
+
+    function triggerImportGraphJSON() {
+        triggerImportGraphFile();
+    }
+
+    async function handleImportFileInput(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+        try {
+            await importArchitectureFile(file);
+        } finally {
+            event.target.value = "";
+        }
+    }
+
+    async function handleImportGraphJSON(event) {
+        return handleImportFileInput(event);
+    }
+
+    async function importArchitectureFile(file) {
+        if (!file) return;
+        const filename = file.name || "uploaded_model";
+        const lowerName = filename.toLowerCase();
+
+        // 1. JSON file handling
+        if (lowerName.endsWith(".json")) {
+            try {
+                const text = await file.text();
+                const data = JSON.parse(text);
+
+                // Detect if it is LiteGraph graph data or wrapped graph data or Keras native JSON
+                if (data.nodes || data.graph?.nodes || data.class_name || data.config?.layers || data.layers) {
+                    if (nnEditorInstance) {
+                        nnEditorInstance.loadGraph(data);
+                        SignalML.toast(`Model mimarisi '${filename}' tuvale aktarıldı!`, "success");
+                        const stem = filename.replace(/\.json$/i, "").replace(/_graph$/i, "");
+                        const nameInput = document.getElementById("save-model-name");
+                        if (nameInput) nameInput.value = stem;
+                    }
+                    return;
+                }
+
+                // If JSON isn't recognized directly, send to backend API to parse
+                await uploadModelToBackend(file);
+            } catch (e) {
+                SignalML.toast(`JSON okuma hatası: ${e.message}`, "error");
+            }
+        }
+        // 2. Keras model binary files (.keras, .h5)
+        else if (lowerName.endsWith(".keras") || lowerName.endsWith(".h5")) {
+            await uploadModelToBackend(file);
+        } else {
+            SignalML.toast("Desteklenmeyen dosya formatı. Lütfen .json, .keras veya .h5 dosyası yükleyin.", "error");
+        }
+    }
+
+    async function uploadModelToBackend(file) {
+        try {
+            SignalML.toast(`'${file.name}' yükleniyor ve çözümleniyor...`, "info");
+            const formData = new FormData();
+            formData.append("file", file);
+            formData.append("project_id", SignalML.currentProjectId || "default-project");
+            const res = await fetch("/api/models/import", {
+                method: "POST",
+                body: formData
+            });
+
+            if (!res.ok) {
+                const err = await SignalML.safeJson(res);
+                throw new Error(err.detail || "Model import başarısız");
+            }
+
+            const data = await SignalML.safeJson(res);
+            if (data.graph && nnEditorInstance) {
+                nnEditorInstance.loadGraph(data.graph);
+                const paramsStr = data.total_params ? ` (${data.total_params.toLocaleString()} parametre)` : "";
+                SignalML.toast(`'${data.name}' modeli${paramsStr} başarıyla import edildi ve tuvale aktarıldı!`, "success");
+
+                const nameInput = document.getElementById("save-model-name");
+                if (nameInput) nameInput.value = data.name;
+
+                populateSavedModelsDropdown();
+            } else {
+                SignalML.toast(`Model başarıyla import edildi: ${data.name}`, "success");
+            }
+        } catch (e) {
+            SignalML.toast(`Model import hatası: ${e.message}`, "error");
+        }
+    }
+
+    async function populateSavedModelsDropdown() {
+        const sel = document.getElementById("load-saved-model-select");
+        if (!sel) return;
+        try {
+            const res = await fetch(`/api/models/list/${SignalML.currentProjectId}`);
+            if (res.ok) {
+                const models = await SignalML.safeJson(res);
+                if (Array.isArray(models)) {
+                    sel.innerHTML = `<option value="">📂 Kayıtlı Model Yükle (${models.length})...</option>` +
+                        models.map(m => `<option value="${m.id}">${m.name} (${(m.trainable_params || 0).toLocaleString()} p)</option>`).join("");
+                }
+            }
+        } catch (e) {
+            console.error("Failed to populate models dropdown", e);
+        }
+    }
+
+    async function handleLoadSavedModel(modelId) {
+        if (!modelId) return;
+        try {
+            const res = await fetch(`/api/models/${modelId}`);
+            if (res.ok) {
+                const model = await SignalML.safeJson(res);
+                if (model.graph && nnEditorInstance) {
+                    nnEditorInstance.loadGraph(model.graph);
+                    SignalML.toast(`'${model.name}' modeli tuvale yüklendi!`, "success");
+                    const nameInput = document.getElementById("save-model-name");
+                    if (nameInput) nameInput.value = model.name;
+                    const taskInput = document.getElementById("save-model-task");
+                    if (taskInput) taskInput.value = model.task_type || "classification";
+                }
+            }
+        } catch (e) {
+            SignalML.toast(`Model yüklenemedi: ${e.message}`, "error");
+        }
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+        populateSavedModelsDropdown();
+    });
+
+    // Architecture Wizard Handlers
+    function openWizardModal() {
+        document.getElementById("wizard-modal").style.display = "flex";
+        updateWizardSummary();
+    }
+
+    function closeWizardModal() {
+        document.getElementById("wizard-modal").style.display = "none";
+    }
+
+    function selectWizardTemplate(type, el) {
+        selectedWizardTemplate = type;
+        document.querySelectorAll(".wizard-card").forEach(c => c.classList.remove("active"));
+        if (el) el.classList.add("active");
+
+        const latentLabel = document.getElementById("wiz-latent-label");
+        const latentInput = document.getElementById("wiz-latent-dim");
+        if (type.includes("classifier") || type === "bilstm" || type === "transformer_1d") {
+            latentLabel.textContent = "Sınıf Sayısı (Number of Classes)";
+            latentInput.value = "4";
+        } else {
+            latentLabel.textContent = "Bottleneck / Latent Boyutu";
+            latentInput.value = "16";
+        }
+        updateWizardSummary();
+    }
+
+    function updateWizardSummary() {
+        const seq = document.getElementById("wiz-seq-len").value || 512;
+        const base = document.getElementById("wiz-base-filters").value || 32;
+        const latent = document.getElementById("wiz-latent-dim").value || 16;
+        const titleEl = document.getElementById("wiz-summary-title");
+        const descEl = document.getElementById("wiz-summary-desc");
+
+        if (selectedWizardTemplate === "conv_ae") {
+            titleEl.textContent = "1D Convolutional Autoencoder (Sinyal Yeniden Yapılandırma):";
+            descEl.innerHTML = `Input(${seq}, 1) &rarr; Conv1D(${base}, k=7) &rarr; MaxPool(2) &rarr; Conv1D(${base*2}, k=5) &rarr; MaxPool(2) &rarr; <span style="color:#fbbf24">Bottleneck(${latent})</span> &rarr; UpSampling1D(2) &rarr; Conv1D(${base*2}) &rarr; UpSampling1D(2) &rarr; Conv1D(${base}) &rarr; <span style="color:#34d399">Output(${seq}, 1)</span>`;
+        } else if (selectedWizardTemplate === "unet_1d") {
+            titleEl.textContent = "1D U-Net (Skip Connections ile İyileştirme / Segmentasyon):";
+            descEl.innerHTML = `Encoder L1(${base}) &rarr; Encoder L2(${base*2}) &rarr; <span style="color:#fbbf24">Bottleneck(${base*4})</span> &rarr; Decoder L2 + <span style="color:#fbbf24">Skip(L2)</span> &rarr; Decoder L1 + <span style="color:#fbbf24">Skip(L1)</span> &rarr; <span style="color:#34d399">U-Net Output(${seq}, 1)</span>`;
+        } else if (selectedWizardTemplate === "dense_ae") {
+            titleEl.textContent = "Dense / MLP Autoencoder (Tam Bağlantılı):";
+            descEl.innerHTML = `Input(${seq}, 1) &rarr; Flatten &rarr; Dense(128) &rarr; <span style="color:#fbbf24">Latent Code(${latent})</span> &rarr; Dense(128) &rarr; Dense(${seq}) &rarr; Reshape(${seq}, 1) &rarr; Output`;
+        } else if (selectedWizardTemplate === "cnn_classifier") {
+            titleEl.textContent = "1D CNN Sinyal Sınıflandırıcı:";
+            descEl.innerHTML = `Input(${seq}, 1) &rarr; Conv1D(${base}) &rarr; MaxPool(2) &rarr; Conv1D(${base*2}) &rarr; GlobalMaxPool &rarr; Dense(64) &rarr; Dropout(0.3) &rarr; <span style="color:#34d399">Softmax(${latent})</span>`;
+        } else if (selectedWizardTemplate === "bilstm") {
+            titleEl.textContent = "Bidirectional LSTM Zaman Serisi:";
+            descEl.innerHTML = `Input(${seq}, 1) &rarr; BiLSTM(64) &rarr; LSTM(32) &rarr; Dense(32) &rarr; <span style="color:#34d399">Softmax Output(${latent})</span>`;
+        } else if (selectedWizardTemplate === "transformer_1d") {
+            titleEl.textContent = "1D Transformer Self-Attention:";
+            descEl.innerHTML = `Input(${seq}, 1) &rarr; Conv1D(64) &rarr; PositionalEncoding &rarr; MultiHeadAttention &rarr; Add(Residual) &rarr; LayerNorm &rarr; GlobalAvgPool &rarr; <span style="color:#34d399">Output(${latent})</span>`;
+        }
+    }
+
+    function executeWizardPlacement() {
+        const seq = Number(document.getElementById("wiz-seq-len").value) || 512;
+        const base = Number(document.getElementById("wiz-base-filters").value) || 32;
+        const latent = Number(document.getElementById("wiz-latent-dim").value) || 16;
+        const act = document.getElementById("wiz-activation").value || "relu";
+
+        nnEditorInstance.generateArchitecture(selectedWizardTemplate, {
+            seqLen: seq,
+            baseFilters: base,
+            latentDim: latent,
+            numClasses: latent,
+            activation: act
+        });
+
+        closeWizardModal();
+        SignalML.toast(`Model Sihirbazı: ${selectedWizardTemplate.toUpperCase()} mimarisi başarıyla tuvale yerleştirildi!`, "success");
+    }
+
+    // Build Model Modal Handlers
+    function openBuildModelModal() {
+        document.getElementById("build-model-modal").style.display = "flex";
+    }
+
+    function closeBuildModelModal() {
+        document.getElementById("build-model-modal").style.display = "none";
+    }
+
+    function updateLossOptions(task) {
+        // Can adjust loss or name defaults if needed
+    }
+
+    function executeBuildAndSave() {
+        const name = document.getElementById("save-model-name").value.trim();
+        const task = document.getElementById("save-model-task").value;
+        const opt = document.getElementById("save-model-opt").value;
+
+        if (!name) {
+            SignalML.toast("Model adı gereklidir", "error");
+            return;
+        }
+
+        closeBuildModelModal();
+        nnEditorInstance.buildAndSave(name, task);
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+        nnEditorInstance = new NNEditor("nn-canvas");
+        window.nnEditorInstance = nnEditorInstance;
+
+        // Auto update wizard summary on parameter input
+        ["wiz-seq-len", "wiz-base-filters", "wiz-latent-dim"].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.addEventListener("input", updateWizardSummary);
+        });
+
+        // Keyboard shortcuts: 'W' opens Wizard, 'Escape' closes modals
+        document.addEventListener("keydown", (e) => {
+            if (e.key === "Escape") {
+                closeWizardModal();
+                closeBuildModelModal();
+            } else if ((e.key === "w" || e.key === "W") && !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName)) {
+                openWizardModal();
+            }
+        });
+
+        // Setup Drag & Drop for .canvas-wrapper
+        const canvasWrapper = document.querySelector(".canvas-wrapper");
+        const dropOverlay = document.getElementById("canvas-dropzone-overlay");
+
+        if (canvasWrapper) {
+            let dragCounter = 0;
+
+            canvasWrapper.addEventListener("dragenter", (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                dragCounter++;
+                if (dropOverlay) dropOverlay.style.display = "flex";
+            });
+
+            canvasWrapper.addEventListener("dragover", (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                e.dataTransfer.dropEffect = "copy";
+            });
+
+            canvasWrapper.addEventListener("dragleave", (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                dragCounter--;
+                if (dragCounter <= 0) {
+                    dragCounter = 0;
+                    if (dropOverlay) dropOverlay.style.display = "none";
+                }
+            });
+
+            canvasWrapper.addEventListener("drop", async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                dragCounter = 0;
+                if (dropOverlay) dropOverlay.style.display = "none";
+
+                const files = e.dataTransfer?.files;
+                if (files && files.length > 0) {
+                    await importArchitectureFile(files[0]);
+                }
+            });
+        }
+
+        // Prevent browser from navigating away on file drop outside canvas
+        window.addEventListener("dragover", (e) => {
+            e.preventDefault();
+        }, false);
+        window.addEventListener("drop", (e) => {
+            e.preventDefault();
+        }, false);
+    });
+</script>
+{% endblock %}

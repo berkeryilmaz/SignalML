@@ -1,0 +1,28 @@
+services:
+  signalml:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: signalml:latest
+    container_name: signalml_app
+    ports:
+      - "8080:8080"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8080
+      - SIGNALML_STORAGE_DIR=/app/storage
+      - SIGNALML_DATA_DIR=/data
+      - TF_ENABLE_ONEDNN_OPTS=0
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/tests:/app/tests
+      - ./storage:/app/storage
+      - ./data:/data
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--reload", "--reload-dir", "/app/app"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

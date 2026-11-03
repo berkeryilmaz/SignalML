@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+
+{% block title %}Model Evaluation — SignalML{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-title">Model Evaluation & Validation Metrics</h1>
+        <p class="page-desc">In-depth statistical validation, confusion matrices, classification reports, and training history</p>
+    </div>
+    <div>
+        <select id="eval-model-select" class="form-control" style="width: 280px;"></select>
+    </div>
+</div>
+
+<div id="eval-content-area">
+    <div class="card">
+        <div style="color: var(--text-muted); padding: 2rem; text-align: center;">Select a model above to view evaluation metrics and historical performance logs.</div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    async function loadModels() {
+        const sel = document.getElementById("eval-model-select");
+        try {
+            const res = await fetch(`/api/models/list/${SignalML.currentProjectId}`);
+            if (res.ok) {
+                const data = await SignalML.safeJson(res);
+                const models = Array.isArray(data) ? data : [];
+                sel.innerHTML = `<option value="">Select Model...</option>` +
+                    models.map(m => `<option value="${m.id}">${m.name} (${m.task_type})</option>`).join("");
+
+                sel.onchange = (e) => {
+                    if (e.target.value) loadEvaluation(e.target.value);
+                };
+
+                if (models.length > 0) {
+                    sel.value = models[0].id;
+                    loadEvaluation(models[0].id);
+                }
+            }
+        } catch (e) {
+            console.error(e);
+        }
+    }
+
+    async function loadEvaluation(modelId) {
+        const container = document.getElementById("eval-content-area");
+        try {
+            const res = await fetch(`/api/training/history/${modelId}`);
+            if (!res.ok) return;
+
+            const runsData = await SignalML.safeJson(res);
+            const runs = Array.isArray(runsData) ? runsData : [];
+            if (runs.length === 0) {
+                container.innerHTML = `<div class="card"><div style="text-align: center; color: var(--text-muted); padding: 2rem;">No completed training runs recorded for this model yet. Go to <a href="/training" style="color: var(--accent-blue);">Training</a> to run an experiment.</div></div>`;
+                return;
+            }
+
+            const latest = runs[0];
+            const evalData = latest.evaluation || {};
+            const statusColor = latest.status === "completed" ? "var(--accent-green)" : "var(--accent-rose)";
+
+            let html = "";
+            if (latest.error_message || evalData.error) {
+                html += `
+                    <div style="padding: 0.75rem 1rem; background: rgba(244, 63, 94, 0.15); border: 1px solid var(--accent-rose); border-radius: 6px; color: #fca5a5; margin-bottom: 1.5rem; font-size: 13px;">
+                        <strong>Değerlendirme Uyarısı / Eğitim Hatası:</strong> ${latest.error_message || evalData.error}
+                    </div>
+                `;
+            }
+
+            html += `
+                <div class="grid-cards" style="margin-bottom: 1.5rem;">
+                    <div class="card">
+                        <div class="card-title">Run Status</div>
+                        <div class="stat-val" style="color: ${statusColor};">${latest.status.toUpperCase()}</div>
+                        <div class="stat-desc">Run ID: ${latest.id.slice(0, 8)}</div>
+                    </div>
+            `;
+
+            if (evalData.accuracy !== undefined && evalData.accuracy !== null) {
+                html += `
+                    <div class="card">
+                        <div class="card-title">Accuracy</div>
+                        <div class="stat-val">${(evalData.accuracy * 100).toFixed(2)}%</div>
+                        <div class="stat-desc">Validation / Test Set</div>
+                    </div>
+                `;
+            } else if (evalData.rmse !== undefined && evalData.rmse !== null) {
+                html += `
+                    <div class="card">
+                        <div class="card-title">RMSE</div>
+                        <div class="stat-val">${evalData.rmse}</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">MAE</div>
+                        <div class="stat-val">${evalData.mae !== undefined && evalData.mae !== null ? evalData.mae : "—"}</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">R² Score</div>
+                        <div class="stat-val">${evalData.r2}</div>
+                    </div>
+                `;
+            }
+
+            html += `</div>`;
+
+            if (evalData.confusion_matrix) {
+                html += `
+                    <div class="card" style="margin-bottom: 1.5rem;">
+                        <div class="card-title">Confusion Matrix</div>
+                        <div class="table-responsive">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>True \\ Predicted</th>
+                                        ${evalData.class_labels.map(l => `<th>Class ${l}</th>`).join("")}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${evalData.confusion_matrix.map((row, i) => `
+                                        <tr>
+                                            <td><strong>Class ${evalData.class_labels[i]}</strong></td>
+                                            ${row.map(v => `<td style="font-family: var(--font-mono); font-weight: 600;">${v}</td>`).join("")}
+                                        </tr>
+                                    `).join("")}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                `;
+            }
+
+            // Training Run History
+            html += `
+                <div class="card">
+                    <div class="card-title">Training History Runs</div>
+                    <div class="table-responsive">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Run ID</th>
+                                    <th>Status</th>
+                                    <th>Epochs</th>
+                                    <th>Learning Rate</th>
+                                    <th>Started At</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${runs.map(r => `
+                                    <tr>
+                                        <td style="font-family: var(--font-mono);">${r.id.slice(0, 8)}...</td>
+                                        <td><span class="status-badge ${r.status === 'completed' ? 'success' : 'error'}">${r.status}</span></td>
+                                        <td>${r.config.epochs || '—'}</td>
+                                        <td>${r.config.learning_rate || '—'}</td>
+                                        <td style="font-size: 12px; color: var(--text-muted);">${new Date(r.created_at).toLocaleString()}</td>
+                                    </tr>
+                                `).join("")}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+
+            container.innerHTML = html;
+        } catch (e) {
+            console.error(e);
+        }
+    }
+
+    document.addEventListener("DOMContentLoaded", loadModels);
+</script>
+{% endblock %}
