@@ -530,3 +530,95 @@ def export_model_json(model_id: str):
             media_type="application/json",
             headers={"Content-Disposition": f'attachment; filename="{filename}"'}
         )
+
+
+@router.post("/{model_id}/freeze")
+def freeze_model_layers(
+    model_id: str,
+    payload: Dict[str, Any] = Body(...)
+):
+    """
+    Selectively freezes or unfreezes model layers.
+    Accepts frozen_layers (list of layer names to freeze), learning_rate, and optimizer.
+    Recompiles model while preserving existing weights, saves updated .keras file,
+    and updates trainable/non-trainable parameters count and summary_json in SQLite.
+    """
+    with get_db_connection() as conn:
+        row = conn.execute("SELECT * FROM models WHERE id = ?", (model_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Model not found")
+        model_record = dict(row)
+
+    weights_path = resolve_storage_path(model_record.get("weights_path"))
+    if not weights_path or not weights_path.exists():
+        raise HTTPException(status_code=404, detail=f"Model weights file not found on disk: {model_record.get('weights_path')}")
+
+    try:
+        model = keras.models.load_model(str(weights_path))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load Keras model: {str(e)}")
+
+    frozen_layers = set(payload.get("frozen_layers", []))
+    lr = float(payload.get("learning_rate", 0.001))
+    opt_name = str(payload.get("optimizer", "adam"))
+
+    # Apply trainable flags to layers
+    for layer in model.layers:
+        layer.trainable = (layer.name not in frozen_layers)
+
+    task_type = model_record.get("task_type", "classification")
+    loss = "mse" if task_type in ("regression", "reconstruction") else "sparse_categorical_crossentropy"
+    metrics = ["mae"] if task_type in ("regression", "reconstruction") else ["accuracy"]
+
+    # Recompile model while preserving existing weights
+    try:
+        compiled_model = KerasModelBuilder.compile_model(
+            model=model,
+            optimizer=opt_name,
+            learning_rate=lr,
+            loss=loss,
+            metrics=metrics
+        )
+        compiled_model.save(str(weights_path))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to recompile/save frozen model: {str(e)}")
+
+    total_params = int(compiled_model.count_params())
+    trainable_params = int(sum(np.prod(p.shape) for p in compiled_model.trainable_weights))
+    non_trainable_params = total_params - trainable_params
+
+    try:
+        summary = json.loads(model_record.get("summary_json") or "{}")
+    except Exception:
+        summary = {}
+
+    summary["total_params"] = total_params
+    summary["trainable_params"] = trainable_params
+    summary["non_trainable_params"] = non_trainable_params
+
+    summary_layers = summary.get("layers", [])
+    for l_info in summary_layers:
+        l_name = l_info.get("layer_name") or l_info.get("name")
+        if l_name:
+            l_info["trainable"] = (l_name not in frozen_layers)
+    summary["layers"] = summary_layers
+
+    now = datetime.now(timezone.utc).isoformat()
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            UPDATE models
+            SET trainable_params = ?, non_trainable_params = ?, summary_json = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (trainable_params, non_trainable_params, json.dumps(summary), now, model_id)
+        )
+        conn.commit()
+
+    return {
+        "success": True,
+        "model_id": model_id,
+        "trainable_params": trainable_params,
+        "non_trainable_params": non_trainable_params,
+        "summary": summary
+    }

@@ -80,10 +80,46 @@ class KerasModelBuilder:
         return t.replace(" ", "").replace("_", "")
 
     @staticmethod
-    def _create_keras_layer(node_type: str, props: Dict[str, Any], node_id: str) -> Any:
+    def sanitize_layer_name(raw_name: Optional[str], fallback: str, used_names: set) -> str:
+        """
+        Converts a user's custom node name (props.get('custom_name') or non-generic node.get('title'))
+        into a valid, unique Keras layer name (e.g. Conv1D_Ozellik_Cikarici, Birlesim_Katmani).
+        """
+        candidate = ""
+        if raw_name:
+            tr_map = str.maketrans({
+                'ç': 'c', 'Ç': 'C',
+                'ğ': 'g', 'Ğ': 'G',
+                'ı': 'i', 'I': 'I', 'İ': 'I',
+                'ö': 'o', 'Ö': 'O',
+                'ş': 's', 'Ş': 'S',
+                'ü': 'u', 'Ü': 'U'
+            })
+            s = str(raw_name).translate(tr_map)
+            import re
+            s = re.sub(r'[^a-zA-Z0-9_]+', '_', s)
+            s = re.sub(r'_+', '_', s).strip('_')
+            if s:
+                candidate = s
+
+        if not candidate:
+            candidate = fallback
+
+        unique_name = candidate
+        counter = 1
+        while unique_name in used_names:
+            unique_name = f"{candidate}_{counter}"
+            counter += 1
+
+        used_names.add(unique_name)
+        return unique_name
+
+    @staticmethod
+    def _create_keras_layer(node_type: str, props: Dict[str, Any], node_id: str, name: Optional[str] = None) -> Any:
         """Instantiates the corresponding Keras layer based on node type and properties."""
         t = KerasModelBuilder.clean_node_type(node_type)
-        name = f"{t}_{node_id}"
+        if not name:
+            name = f"{t}_{node_id}"
 
         # 1. Core Layers
         if t in ("input", "inputlayer"):
@@ -335,6 +371,7 @@ class KerasModelBuilder:
 
         tensor_outputs: Dict[str, Any] = {}
         layer_summary: List[Dict[str, Any]] = []
+        used_names: set = set()
 
         # Construct Functional model layer by layer
         for nid in topo_order:
@@ -347,16 +384,38 @@ class KerasModelBuilder:
             if isinstance(w_vals, list) and len(w_vals) > 0 and not props:
                 props = {"units": w_vals[0]}
 
+            # Determine custom vs fallback layer name
+            custom_name = props.get("custom_name")
+            title = node.get("title")
+            is_generic_title = False
+            if title:
+                c_title = KerasModelBuilder.clean_node_type(title)
+                if c_title in (clean_ntype, f"{clean_ntype}layer", f"{clean_ntype}node", ""):
+                    is_generic_title = True
+
+            raw_name = custom_name if custom_name else (title if not is_generic_title else None)
+            fallback = f"{clean_ntype}_{nid}"
+            layer_name = cls.sanitize_layer_name(raw_name, fallback, used_names)
+
             # Case A: Input node
             if clean_ntype in ("input", "inputlayer"):
                 try:
-                    tensor = cls._create_keras_layer(ntype, props, nid)
+                    tensor = cls._create_keras_layer(ntype, props, nid, name=layer_name)
+                    input_source = props.get("input_source", "auto")
+                    try:
+                        tensor._input_source = input_source
+                    except Exception:
+                        pass
                     tensor_outputs[nid] = tensor
                     layer_summary.append({
                         "node_id": nid,
                         "layer_type": "Input",
+                        "layer_name": getattr(tensor, "name", layer_name),
+                        "custom_name": props.get("custom_name") or node.get("title") or getattr(tensor, "name", layer_name),
+                        "trainable": False,
                         "output_shape": list(tensor.shape),
-                        "params": 0
+                        "params": 0,
+                        "input_source": input_source
                     })
                 except Exception as e:
                     raise KerasGraphError(f"Error configuring Input node {nid}: {str(e)}")
@@ -376,7 +435,10 @@ class KerasModelBuilder:
                 parent_tensors.append(tensor_outputs[origin_id])
 
             try:
-                layer_obj = cls._create_keras_layer(ntype, props, nid)
+                layer_obj = cls._create_keras_layer(ntype, props, nid, name=layer_name)
+                # Honor trainable property
+                if hasattr(layer_obj, "trainable"):
+                    layer_obj.trainable = bool(props.get("trainable", True))
 
                 # Connect layer
                 if clean_ntype in ("concatenate", "add", "multiply", "average"):
@@ -384,6 +446,32 @@ class KerasModelBuilder:
                         # If only one input connected to merge layer, pass it directly
                         out_tensor = parent_tensors[0]
                     else:
+                        if clean_ntype == "concatenate":
+                            ranks = [len(t.shape) for t in parent_tensors]
+                            if len(set(ranks)) > 1:
+                                flattened_parents = []
+                                for idx, t in enumerate(parent_tensors):
+                                    if len(t.shape) > 2:
+                                        flat_name = f"auto_flatten_{nid}_{idx}"
+                                        used_names.add(flat_name)
+                                        flat_layer = layers.Flatten(name=flat_name)
+                                        flat_t = flat_layer(t)
+                                        flattened_parents.append(flat_t)
+                                        layer_summary.append({
+                                            "node_id": flat_name,
+                                            "layer_type": "Flatten",
+                                            "layer_name": flat_layer.name,
+                                            "custom_name": flat_layer.name,
+                                            "trainable": False,
+                                            "output_shape": [dim if dim is not None else -1 for dim in list(flat_t.shape)],
+                                            "params": 0
+                                        })
+                                    else:
+                                        flattened_parents.append(t)
+                                parent_tensors = flattened_parents
+                                if hasattr(layer_obj, "axis") and (layer_obj.axis > 1 or layer_obj.axis < -1):
+                                    layer_obj = layers.Concatenate(axis=-1, name=layer_obj.name)
+
                         out_tensor = layer_obj(parent_tensors)
                 elif clean_ntype in ("multiheadattention", "mha"):
                     # MultiHeadAttention query, key, value
@@ -409,6 +497,9 @@ class KerasModelBuilder:
                 layer_summary.append({
                     "node_id": nid,
                     "layer_type": ntype,
+                    "layer_name": layer_obj.name,
+                    "custom_name": props.get("custom_name") or node.get("title") or layer_obj.name,
+                    "trainable": getattr(layer_obj, "trainable", True),
                     "output_shape": out_shape,
                     "params": layer_obj.count_params() if hasattr(layer_obj, "count_params") else 0
                 })
@@ -493,3 +584,7 @@ class KerasModelBuilder:
 
         model.compile(optimizer=opt, loss=loss, metrics=metrics)
         return model
+
+
+sanitize_layer_name = KerasModelBuilder.sanitize_layer_name
+

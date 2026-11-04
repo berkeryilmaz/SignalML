@@ -61,7 +61,11 @@ class TrainingMonitor {
 
             const data = await SignalML.safeJson(res);
             this.activeJobId = data.job_id;
-            SignalML.toast("Training dispatched in background thread!", "success");
+            if (config.resume) {
+                SignalML.toast("Eğitim kaldığı yerden devam ettiriliyor (Resume Training)...", "info");
+            } else {
+                SignalML.toast("Training dispatched in background thread!", "success");
+            }
             this.startPolling();
         } catch (e) {
             SignalML.toast(`Network Error: ${e.message}`, "error");

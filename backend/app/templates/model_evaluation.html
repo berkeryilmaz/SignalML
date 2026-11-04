@@ -13,6 +13,24 @@
     </div>
 </div>
 
+<div class="card" style="margin-bottom: 1.5rem;" id="batch-predict-card">
+    <div class="card-title" style="display: flex; align-items: center; gap: 8px;">
+        <span>🧪 Batch Tahmin CSV Dışa Aktarma</span>
+    </div>
+    <p class="stat-desc" style="margin-bottom: 1rem;">
+        Seçili model ile kayıtlı bir veri kümesi üzerinde toplu çıkarım (batch inference) gerçekleştirin ve tahminleri, sınıf olasılıklarını ve gerçek etiketleri içeren CSV dosyasını indirin.
+    </p>
+    <div style="display: flex; gap: 12px; align-items: flex-end; max-width: 650px;">
+        <div class="form-group" style="flex: 1; margin-bottom: 0;">
+            <label class="form-label">Değerlendirme Veri Kümesi (Evaluation Dataset)</label>
+            <select id="batch-eval-dataset-select" class="form-control"></select>
+        </div>
+        <button id="download-predict-csv-btn" class="btn btn-primary" style="white-space: nowrap; height: 38px;">
+            📥 CSV Olarak İndir
+        </button>
+    </div>
+</div>
+
 <div id="eval-content-area">
     <div class="card">
         <div style="color: var(--text-muted); padding: 2rem; text-align: center;">Select a model above to view evaluation metrics and historical performance logs.</div>
@@ -22,7 +40,23 @@
 
 {% block scripts %}
 <script>
+    async function loadDatasets() {
+        const dSel = document.getElementById("batch-eval-dataset-select");
+        if (!dSel) return;
+        try {
+            const res = await fetch(`/api/data/list/${SignalML.currentProjectId}`);
+            if (res.ok) {
+                const data = await SignalML.safeJson(res);
+                const datasets = Array.isArray(data) ? data : [];
+                dSel.innerHTML = datasets.map(d => `<option value="${d.id}">${d.name} (${d.row_count} samples)</option>`).join("");
+            }
+        } catch (e) {
+            console.error("Failed to load datasets for batch predict", e);
+        }
+    }
+
     async function loadModels() {
+        await loadDatasets();
         const sel = document.getElementById("eval-model-select");
         try {
             const res = await fetch(`/api/models/list/${SignalML.currentProjectId}`);
@@ -169,6 +203,20 @@
         } catch (e) {
             console.error(e);
         }
+        document.getElementById("download-predict-csv-btn").onclick = () => {
+            const modelId = document.getElementById("eval-model-select").value;
+            const datasetId = document.getElementById("batch-eval-dataset-select").value;
+            if (!modelId) {
+                SignalML.toast("Lütfen önce bir model seçin.", "error");
+                return;
+            }
+            if (!datasetId) {
+                SignalML.toast("Lütfen bir değerlendirme veri kümesi seçin.", "error");
+                return;
+            }
+            SignalML.toast("Batch tahmin CSV hazırlanıyor ve indiriliyor...", "info");
+            window.location.href = `/api/training/predict_csv/${modelId}/${datasetId}`;
+        };
     }
 
     document.addEventListener("DOMContentLoaded", loadModels);
