@@ -522,3 +522,282 @@ def test_workflow_engine_dirty_array_clustering_pca():
     for v in pca.explained_variance_ratio_:
         assert not np.isnan(v)
 
+
+# =====================================================================
+# HDBSCAN, OPTICS, Probabilities ($q_{ij}$), Detail, CSV Export, CRUD
+# =====================================================================
+def test_hdbscan_clustering_and_probabilities(tmp_path):
+    proj = ensure_default_project()
+    proj_id = proj["id"]
+
+    np.random.seed(42)
+    c1 = np.random.normal(loc=-4.0, scale=0.4, size=(15, 6)).astype(np.float32)
+    c2 = np.random.normal(loc=4.0, scale=0.4, size=(15, 6)).astype(np.float32)
+    outliers = np.random.uniform(low=-15.0, high=15.0, size=(4, 6)).astype(np.float32)
+    X = np.vstack([c1, c2, outliers])
+
+    csv_path = tmp_path / "hdbscan_data.csv"
+    pd.DataFrame(X).to_csv(csv_path, header=False, index=False)
+    ds = DataManager.register_dataset(proj_id, "HDBSCAN Test", csv_path)
+
+    res = ClusteringService.run_clustering(
+        project_id=proj_id,
+        source_type="dataset",
+        source_id=ds["id"],
+        algorithm="hdbscan",
+        min_cluster_size=5,
+        min_samples=3,
+        compute_pca=True
+    )
+
+    assert_no_nans_or_infs(res)
+    assert res["algorithm"] == "hdbscan"
+    assert res["num_samples"] == 34
+    assert len(res["points"]) == 34
+
+    # Verify soft probabilities, confidence, uncertainty, input_id on points
+    p0 = res["points"][0]
+    assert "input_id" in p0
+    assert p0["input_id"] == "0"
+    assert "confidence" in p0 and isinstance(p0["confidence"], float)
+    assert "uncertainty" in p0 and 0.0 <= p0["uncertainty"] <= 1.0
+    assert "probabilities" in p0 and isinstance(p0["probabilities"], dict)
+
+    # Check that sum of soft probabilities across clusters is close to 1.0
+    prob_sum = sum(p0["probabilities"].values())
+    assert abs(prob_sum - 1.0) < 1e-3
+
+    # Check persistent storage (.npz)
+    with get_db_connection() as conn:
+        row = conn.execute("SELECT result_path FROM clusterings WHERE id = ?", (res["clustering_id"],)).fetchone()
+        assert row is not None
+        npz_path = Path(row["result_path"])
+        assert npz_path.exists()
+
+    with np.load(str(npz_path), allow_pickle=False) as npz:
+        assert "probabilities" in npz
+        assert "confidence" in npz
+        assert "uncertainty" in npz
+        assert "cluster_ids" in npz
+        assert "sample_ids" in npz
+        assert len(npz["sample_ids"]) == 34
+        assert len(npz["confidence"]) == 34
+
+
+def test_optics_clustering_and_probabilities(tmp_path):
+    proj = ensure_default_project()
+    proj_id = proj["id"]
+
+    np.random.seed(42)
+    c1 = np.random.normal(loc=-2.0, scale=0.3, size=(12, 4)).astype(np.float32)
+    c2 = np.random.normal(loc=2.0, scale=0.3, size=(12, 4)).astype(np.float32)
+    X = np.vstack([c1, c2])
+
+    csv_path = tmp_path / "optics_data.csv"
+    pd.DataFrame(X).to_csv(csv_path, header=False, index=False)
+    ds = DataManager.register_dataset(proj_id, "OPTICS Test", csv_path)
+
+    res = ClusteringService.run_clustering(
+        project_id=proj_id,
+        source_type="dataset",
+        source_id=ds["id"],
+        algorithm="optics",
+        min_samples=4,
+        xi=0.05,
+        compute_pca=True
+    )
+
+    assert_no_nans_or_infs(res)
+    assert res["algorithm"] == "optics"
+    assert res["num_samples"] == 24
+    assert len(res["points"]) == 24
+
+    for pt in res["points"]:
+        assert "input_id" in pt
+        assert "confidence" in pt
+        assert "uncertainty" in pt
+        assert "probabilities" in pt
+
+
+def test_clustering_detail_csv_export_and_delete(tmp_path):
+    proj = ensure_default_project()
+    proj_id = proj["id"]
+
+    X = np.array([
+        [1.0, 2.0, 3.0],
+        [1.1, 1.9, 3.1],
+        [10.0, 10.0, 10.0],
+        [10.2, 9.8, 10.1]
+    ], dtype=np.float32)
+
+    csv_path = tmp_path / "detail_export_test.csv"
+    pd.DataFrame(X).to_csv(csv_path, header=False, index=False)
+    ds = DataManager.register_dataset(proj_id, "Export Detail Test", csv_path)
+
+    # 1. Run clustering
+    res = ClusteringService.run_clustering(
+        project_id=proj_id,
+        source_type="dataset",
+        source_id=ds["id"],
+        algorithm="kmeans",
+        n_clusters=2,
+        compute_pca=True
+    )
+    clustering_id = res["clustering_id"]
+
+    # 2. Get Detail
+    detail = ClusteringService.get_clustering_detail(clustering_id)
+    assert_no_nans_or_infs(detail)
+    assert detail["clustering_id"] == clustering_id
+    assert detail["algorithm"] == "kmeans"
+    assert detail["num_samples"] == 4
+    assert len(detail["points"]) == 4
+    assert detail["points"][0]["input_id"] == "0"
+    assert "confidence" in detail["points"][0]
+    assert "uncertainty" in detail["points"][0]
+
+    # 3. Export CSV
+    csv_str = ClusteringService.export_clustering_csv(clustering_id)
+    lines = [line.split(",") for line in csv_str.strip().splitlines()]
+    header = lines[0]
+    assert "input_id" in header
+    assert "cluster_label" in header
+    assert "confidence" in header
+    assert "uncertainty" in header
+    assert "pca_x" in header
+    assert "pca_y" in header
+    assert "pca_z" in header
+    assert "ground_truth" in header
+    # 1 header + 4 rows
+    assert len(lines) == 5
+
+    # 4. Delete clustering
+    with get_db_connection() as conn:
+        row = conn.execute("SELECT result_path FROM clusterings WHERE id = ?", (clustering_id,)).fetchone()
+        file_path = Path(row["result_path"])
+        assert file_path.exists()
+
+    ClusteringService.delete_clustering(clustering_id)
+
+    with get_db_connection() as conn:
+        row = conn.execute("SELECT * FROM clusterings WHERE id = ?", (clustering_id,)).fetchone()
+        assert row is None
+    assert not file_path.exists()
+
+    # Querying deleted clustering raises ValueError
+    with pytest.raises(ValueError, match="not found"):
+        ClusteringService.get_clustering_detail(clustering_id)
+
+
+def test_clustering_api_endpoints(tmp_path):
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    client = TestClient(app)
+    proj = ensure_default_project()
+    proj_id = proj["id"]
+
+    X = np.random.randn(10, 5).astype(np.float32)
+    csv_path = tmp_path / "api_test_data.csv"
+    pd.DataFrame(X).to_csv(csv_path, header=False, index=False)
+    ds = DataManager.register_dataset(proj_id, "API Test Dataset", csv_path)
+
+    # 1. POST /api/clustering/run with HDBSCAN
+    run_resp = client.post("/api/clustering/run", json={
+        "source_type": "dataset",
+        "source_id": ds["id"],
+        "algorithm": "hdbscan",
+        "min_cluster_size": 3,
+        "min_samples": 2,
+        "compute_pca": True
+    })
+    assert run_resp.status_code == 200
+    run_data = run_resp.json()
+    c_id = run_data["clustering_id"]
+    assert run_data["algorithm"] == "hdbscan"
+    assert len(run_data["points"]) == 10
+
+    # 2. GET /api/clustering/detail/{id}
+    detail_resp = client.get(f"/api/clustering/detail/{c_id}")
+    assert detail_resp.status_code == 200
+    detail_data = detail_resp.json()
+    assert detail_data["clustering_id"] == c_id
+    assert len(detail_data["points"]) == 10
+
+    # 3. GET /api/clustering/{id}/export_csv
+    csv_resp = client.get(f"/api/clustering/{c_id}/export_csv")
+    assert csv_resp.status_code == 200
+    assert "text/csv" in csv_resp.headers["content-type"]
+    assert f"filename=clustering_{c_id}.csv" in csv_resp.headers["content-disposition"]
+    csv_text = csv_resp.text
+    assert "input_id,cluster_label,confidence,uncertainty" in csv_text
+
+    # 4. DELETE /api/clustering/{id}
+    del_resp = client.delete(f"/api/clustering/{c_id}")
+    assert del_resp.status_code == 200
+    assert del_resp.json()["status"] == "success"
+
+    # Detail after delete should return 404
+    detail_after_del = client.get(f"/api/clustering/detail/{c_id}")
+    assert detail_after_del.status_code == 404
+
+
+def test_clustering_with_custom_sample_ids():
+    """
+    Verifies that when a dataset has explicit sample_ids in its .npz,
+    those sample_ids are tracked into points['input_id'], saved to clustering .npz,
+    and exported into the CSV.
+    """
+    from app.core.config import DATASETS_DIR
+    proj = ensure_default_project()
+    proj_id = proj["id"]
+
+    X = np.array([
+        [1.0, 1.0],
+        [1.2, 0.9],
+        [8.0, 8.0],
+        [8.1, 7.9]
+    ], dtype=np.float32)
+    custom_ids = ["sensor_001_a", "sensor_002_b", "sensor_101_x", "sensor_102_y"]
+
+    dest_dir = DATASETS_DIR / proj_id
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dataset_id = str(uuid.uuid4())
+    npz_path = dest_dir / f"{dataset_id}.npz"
+    np.savez_compressed(str(npz_path), data=X, sample_ids=np.array(custom_ids, dtype=str))
+
+    now = datetime.now(timezone.utc).isoformat()
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO datasets (id, project_id, name, file_path, file_format, row_count, col_count, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (dataset_id, proj_id, "Custom IDs Dataset", str(npz_path), "npz", 4, 2, now)
+        )
+        conn.commit()
+
+    res = ClusteringService.run_clustering(
+        project_id=proj_id,
+        source_type="dataset",
+        source_id=dataset_id,
+        algorithm="kmeans",
+        n_clusters=2,
+        compute_pca=True
+    )
+
+    clustering_id = res["clustering_id"]
+    point_input_ids = [p["input_id"] for p in res["points"]]
+    assert point_input_ids == custom_ids
+
+    # Check detail
+    detail = ClusteringService.get_clustering_detail(clustering_id)
+    assert [p["input_id"] for p in detail["points"]] == custom_ids
+
+    # Check CSV export
+    csv_str = ClusteringService.export_clustering_csv(clustering_id)
+    csv_lines = [line.split(",") for line in csv_str.strip().splitlines()]
+    exported_ids = [row[0] for row in csv_lines[1:]]
+    assert exported_ids == custom_ids
+
+
