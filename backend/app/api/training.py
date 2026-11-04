@@ -128,6 +128,18 @@ def get_model_training_history(model_id: str):
         return runs
 
 
+@router.delete("/runs/{run_id}")
+def delete_training_run(run_id: str):
+    """Deletes a training run record from the database."""
+    with get_db_connection() as conn:
+        row = conn.execute("SELECT id FROM training_runs WHERE id = ?", (run_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Training run not found")
+        conn.execute("DELETE FROM training_runs WHERE id = ?", (run_id,))
+        conn.commit()
+    return {"message": "Training run deleted successfully", "id": run_id}
+
+
 @router.get("/predict_csv/{model_id}/{dataset_id}")
 def export_predictions_csv(model_id: str, dataset_id: str):
     """

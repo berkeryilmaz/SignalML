@@ -155,6 +155,27 @@ const SignalML = {
         }
     },
 
+    duplicateProject: async function(id) {
+        try {
+            const res = await fetch(`/api/projects/${id}/duplicate`, {
+                method: "POST"
+            });
+            if (res.ok) {
+                const proj = await this.safeJson(res);
+                this.toast(`Project duplicated as '${proj.name}'`, "success");
+                await this.loadProjects();
+                return proj;
+            } else {
+                const err = await this.safeJson(res);
+                this.toast(`Error: ${err.detail || "Could not duplicate project"}`, "error");
+                return null;
+            }
+        } catch (e) {
+            this.toast(`Error: ${e.message}`, "error");
+            return null;
+        }
+    },
+
     checkSystemHealth: async function() {
         try {
             const res = await fetch("/health");

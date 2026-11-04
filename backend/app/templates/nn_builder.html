@@ -8,12 +8,21 @@
         <h1 class="page-title">Neural Network Builder</h1>
         <p class="page-desc">Design deep architectures with typed tensor ports, automatic Keras Functional API model compilation, and shape inference</p>
     </div>
-    <div style="display: flex; gap: 10px; align-items: center;">
-        <button class="btn btn-primary" onclick="openWizardModal()" style="background: linear-gradient(135deg, #2563eb, #7c3aed); border: 1.5px solid rgba(255,255,255,0.3); box-shadow: 0 0 16px rgba(124, 58, 237, 0.6); font-weight: 700; font-size: 13px; padding: 8px 18px; display: inline-flex; align-items: center; gap: 8px; cursor: pointer;">
-            <span style="font-size: 16px;">🪄</span> Model Mimarisi Sihirbazı (Autoencoder & U-Net)
+    <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+        <button class="btn btn-primary" onclick="openWizardModal()" style="background: linear-gradient(135deg, #2563eb, #7c3aed); border: 1.5px solid rgba(255,255,255,0.3); box-shadow: 0 0 16px rgba(124, 58, 237, 0.6); font-weight: 700; font-size: 13px; padding: 7px 16px; display: inline-flex; align-items: center; gap: 6px; cursor: pointer;">
+            <span style="font-size: 15px;">🪄</span> Model Sihirbazı (AE, U-Net, IDEC)
         </button>
-        <button class="btn btn-secondary" onclick="nnEditorInstance.validateGraph()">Check & Infer Shapes</button>
-        <button class="btn btn-secondary" onclick="openBuildModelModal()">Build & Save Keras Model</button>
+        <button class="btn btn-secondary btn-sm" onclick="openCustomLayerModal()" style="border-color: rgba(192, 132, 252, 0.4); color: #c084fc; font-weight: 600;" title="Keras Özel Katmanlarını Yönet ve Oluştur">
+            <span>🧩</span> Özel Katmanlar
+        </button>
+        <button class="btn btn-secondary btn-sm" onclick="openPythonExportModal()" style="border-color: rgba(52, 211, 153, 0.4); color: #34d399; font-weight: 600;" title="Keras Functional API Python Kodunu Dışa Aktar">
+            <span>🐍</span> Python Export
+        </button>
+        <button class="btn btn-secondary btn-sm" onclick="openIdecProbabilitiesModal()" style="border-color: rgba(56, 189, 248, 0.4); color: #38bdf8; font-weight: 600;" title="IDEC Kümeleme Olasılıklarını ve Dağılımını İncele">
+            <span>📊</span> IDEC Küme İncele
+        </button>
+        <button class="btn btn-secondary btn-sm" onclick="nnEditorInstance.validateGraph()">Check & Infer Shapes</button>
+        <button class="btn btn-secondary btn-sm" onclick="openBuildModelModal()">Build & Save Model</button>
     </div>
 </div>
 
@@ -80,6 +89,12 @@
                 <div class="node-item" onclick="addLayerNode('positional_encoding')">Positional Encoding <span>+</span></div>
             </div>
             <div class="node-category-group">
+                <div class="category-title" style="color: #c084fc;">IDEC & Custom Layers</div>
+                <div class="node-item" onclick="addLayerNode('clustering')" style="color: #38bdf8; font-weight: 600;">ClusteringLayer (IDEC) <span>+</span></div>
+                <div class="node-item" onclick="addLayerNode('custom_layer')" style="color: #c084fc; font-weight: 600;">Custom Layer <span>+</span></div>
+                <div class="node-item" onclick="openCustomLayerModal()" style="color: #94a3b8; font-size: 11px; cursor: pointer; text-decoration: underline;">⚙️ Katman Şablonları...</div>
+            </div>
+            <div class="node-category-group">
                 <div class="category-title">Tensor Combinations (Skip Connections)</div>
                 <div class="node-item" onclick="addLayerNode('concatenate')" style="color: #fbbf24;">Concatenate (U-Net Skip) <span>+</span></div>
                 <div class="node-item" onclick="addLayerNode('add')">Add (Residual Skip) <span>+</span></div>
@@ -97,6 +112,8 @@
             <button class="btn btn-secondary btn-sm" onclick="toggleExpandCanvas()" title="Kenar panellerini gizle/göster">⛶ Geniş Tuval (Expand Canvas)</button>
             <button class="btn btn-secondary btn-sm" onclick="nnEditorInstance.autoLayout()" title="Düğümleri otomatik hizala">✨ Otomatik Hizalama (Auto-Layout)</button>
             <button class="btn btn-secondary btn-sm" onclick="exportGraphJSON()" title="Mevcut mimariyi Graph JSON olarak indir">Export JSON</button>
+            <button class="btn btn-secondary btn-sm" onclick="openPythonExportModal()" style="background: rgba(52, 211, 153, 0.15); border-color: rgba(52, 211, 153, 0.4); color: #34d399; font-weight: 600;" title="Keras Functional API Python Kodunu Görüntüle ve İndir">🐍 Python (.py)</button>
+            <button class="btn btn-secondary btn-sm" onclick="openIdecProbabilitiesModal()" style="background: rgba(56, 189, 248, 0.15); border-color: rgba(56, 189, 248, 0.4); color: #38bdf8; font-weight: 600;" title="IDEC Küme Olasılıklarını İncele & CSV İndir">📊 IDEC Küme İncele</button>
             <button class="btn btn-secondary btn-sm" onclick="triggerImportGraphFile()" title="Mimari veya Keras modelini (.json, .keras, .h5) yükle" style="background: rgba(56, 189, 248, 0.15); border-color: rgba(56, 189, 248, 0.4); color: #38bdf8; font-weight: 600;">📥 Import (JSON / Model)</button>
             <input type="file" id="import-graph-input" accept=".json,.keras,.h5" style="display:none;" onchange="handleImportFileInput(event)">
             <select id="load-saved-model-select" class="form-control" style="width: auto; padding: 4px 8px; font-size: 12px; height: 32px;" onchange="handleLoadSavedModel(this.value)">
@@ -222,6 +239,39 @@
                     Projeksiyon → Positional Encoding → MultiHeadAttention → Residual Add → LayerNorm.
                 </p>
             </div>
+
+            <!-- 1D-CNN IDEC -->
+            <div class="wizard-card" data-type="idec_cnn" onclick="selectWizardTemplate('idec_cnn', this)">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                    <strong style="color: #fff; font-size: 13px;">1D-CNN IDEC (Clustering + AE)</strong>
+                    <span class="shape-badge" style="background: rgba(14, 165, 233, 0.2); color: #38bdf8;">IDEC / 1D-CNN</span>
+                </div>
+                <p style="font-size: 11px; color: var(--text-secondary); margin: 0;">
+                    1D-CNN Encoder → Bottleneck → Çift Çıkış: ClusteringLayer (KLD Kümeleme) + 1D-CNN Decoder (MSE Rekonstrüksiyon).
+                </p>
+            </div>
+
+            <!-- Dense IDEC -->
+            <div class="wizard-card" data-type="idec_dense" onclick="selectWizardTemplate('idec_dense', this)">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                    <strong style="color: #fff; font-size: 13px;">Dense / MLP IDEC</strong>
+                    <span class="shape-badge" style="background: rgba(168, 85, 247, 0.2); color: #c084fc;">IDEC / Dense</span>
+                </div>
+                <p style="font-size: 11px; color: var(--text-secondary); margin: 0;">
+                    Dense Encoder → Bottleneck → Çift Çıkış: ClusteringLayer (KLD) + Dense Decoder (MSE).
+                </p>
+            </div>
+
+            <!-- Hybrid 1D-CNN + Tabular -->
+            <div class="wizard-card" data-type="hybrid_cnn_tabular" onclick="selectWizardTemplate('hybrid_cnn_tabular', this)">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                    <strong style="color: #fff; font-size: 13px;">Hibrit 1D-CNN + Tabular Model</strong>
+                    <span class="shape-badge" style="background: rgba(245, 158, 11, 0.2); color: #fbbf24;">Multi-Input / Füzyon</span>
+                </div>
+                <p style="font-size: 11px; color: var(--text-secondary); margin: 0;">
+                    Çok Girişli Mimari: Sinyal Dalga Formu (1D-CNN) + Tabular Metaveri (Dense) → Concatenate → Sınıflandırma Başı.
+                </p>
+            </div>
         </div>
 
         <!-- Step 2: Configuration Parameters -->
@@ -294,6 +344,185 @@
         <div style="display: flex; justify-content: flex-end; gap: 8px;">
             <button class="btn btn-secondary" onclick="closeBuildModelModal()">İptal</button>
             <button class="btn btn-primary" onclick="executeBuildAndSave()">Compile & Save to Workspace</button>
+        </div>
+    </div>
+</div>
+
+<!-- Custom Layer Studio Modal -->
+<div id="custom-layer-modal" class="modal-overlay" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(5px); z-index: 1000; align-items: center; justify-content: center;">
+    <div class="modal-content card" style="width: 860px; max-width: 95%; max-height: 90vh; overflow-y: auto; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 1.75rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.75rem;">
+            <div>
+                <h2 style="margin: 0; font-size: 18px; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 8px;">
+                    <span>🧩</span> Keras Özel Katman Yöneticisi (Custom Layer Studio)
+                </h2>
+                <p style="font-size: 12px; color: var(--text-muted); margin: 4px 0 0 0;">
+                    Keras 3 / TensorFlow için özel katmanlarınızı (__init__, build, call, get_config) oluşturun ve tuvale ekleyin.
+                </p>
+            </div>
+            <button class="btn btn-secondary btn-sm" onclick="closeCustomLayerModal()" style="padding: 2px 8px;">✕</button>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 240px 1fr; gap: 16px;">
+            <!-- Left: Saved Custom Layers in Project -->
+            <div style="background: rgba(0,0,0,0.25); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; display: flex; flex-direction: column;">
+                <div style="font-weight: 600; font-size: 12px; color: #fff; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
+                    <span>Proje Katmanları</span>
+                    <button class="btn btn-primary btn-sm" onclick="createNewCustomLayerForm()" style="font-size: 10px; padding: 2px 8px;">+ Yeni</button>
+                </div>
+                <div id="custom-layers-list-container" style="flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; max-height: 400px;">
+                    <div style="font-size: 11px; color: var(--text-muted); text-align: center; padding: 12px;">Yükleniyor...</div>
+                </div>
+            </div>
+
+            <!-- Right: Code Editor & Metadata Form -->
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+                <input type="hidden" id="cl-layer-id" value="">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                    <div class="form-group" style="margin: 0;">
+                        <label class="form-label" style="font-size: 12px;">Katman Adı (Display Name)</label>
+                        <input type="text" id="cl-name" class="form-control" placeholder="Örn: Signal FIR Filter Layer">
+                    </div>
+                    <div class="form-group" style="margin: 0;">
+                        <label class="form-label" style="font-size: 12px;">Python Sınıf Adı (Class Name)</label>
+                        <input type="text" id="cl-class-name" class="form-control" placeholder="Örn: CustomSignalLayer">
+                    </div>
+                </div>
+                <div class="form-group" style="margin: 0;">
+                    <label class="form-label" style="font-size: 12px;">Açıklama (Opsiyonel)</label>
+                    <input type="text" id="cl-desc" class="form-control" placeholder="Katmanın matematiksel işlevi hakkında kısa bilgi">
+                </div>
+                <div class="form-group" style="margin: 0;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                        <label class="form-label" style="font-size: 12px; margin: 0;">Python / Keras Kodu (__init__, build, call, get_config)</label>
+                        <button class="btn btn-secondary btn-sm" onclick="loadDefaultCustomLayerTemplate()" style="font-size: 11px; padding: 2px 8px;">Varsayılan Şablonu Yükle</button>
+                    </div>
+                    <textarea id="cl-code" class="form-control" rows="12" style="font-family: var(--font-mono); font-size: 11px; line-height: 1.5; background: #0b0f19; color: #e2e8f0; tab-size: 4;" spellcheck="false"></textarea>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px;">
+                    <div>
+                        <button id="cl-btn-delete" class="btn btn-secondary btn-sm" onclick="deleteCurrentCustomLayer()" style="display: none; color: #f87171; border-color: rgba(248,113,113,0.3);">🗑️ Sil</button>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                        <button class="btn btn-secondary btn-sm" onclick="closeCustomLayerModal()">Kapat</button>
+                        <button class="btn btn-secondary btn-sm" onclick="saveCustomLayer()" style="background: rgba(168,85,247,0.2); border-color: #a855f7; color: #c084fc; font-weight: 600;">💾 Projeye Kaydet</button>
+                        <button class="btn btn-primary btn-sm" onclick="addCustomLayerToCanvas()" style="background: linear-gradient(135deg, #2563eb, #7c3aed); font-weight: 700;">🚀 Tuvale Ekle</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Python Functional API Exporter Modal -->
+<div id="python-export-modal" class="modal-overlay" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(5px); z-index: 1000; align-items: center; justify-content: center;">
+    <div class="modal-content card" style="width: 900px; max-width: 95%; max-height: 90vh; overflow-y: auto; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 1.75rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.75rem;">
+            <div>
+                <h2 style="margin: 0; font-size: 18px; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 8px;">
+                    <span>🐍</span> Keras Functional API Python Kod Dışa Aktarımı
+                </h2>
+                <p style="font-size: 12px; color: var(--text-muted); margin: 4px 0 0 0;">
+                    Veri ön işleme (Input ID ayrıştırma, StandardScaler/OneHotEncoder), özel katmanlar, model inşası ve CSV export içeren eksiksiz ve çalıştırılabilir Python kodu.
+                </p>
+            </div>
+            <button class="btn btn-secondary btn-sm" onclick="closePythonExportModal()" style="padding: 2px 8px;">✕</button>
+        </div>
+
+        <div style="position: relative; margin-bottom: 1rem;">
+            <div style="position: absolute; top: 10px; right: 10px; display: flex; gap: 8px; z-index: 5;">
+                <button class="btn btn-secondary btn-sm" onclick="copyPythonCode()" id="btn-copy-py" style="background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.2); font-size: 11px;">📋 Kopyala</button>
+                <button class="btn btn-primary btn-sm" onclick="downloadPythonCode()" style="background: linear-gradient(135deg, #10b981, #059669); border: none; font-size: 11px; font-weight: 600;">💾 .py Olarak İndir</button>
+            </div>
+            <pre id="python-code-view" style="max-height: 55vh; overflow: auto; background: #080c14; border: 1px solid var(--border-color); border-radius: 8px; padding: 1rem; font-family: var(--font-mono); font-size: 11px; line-height: 1.5; color: #38bdf8; tab-size: 4; margin: 0; white-space: pre;"></pre>
+        </div>
+
+        <div style="display: flex; justify-content: flex-end;">
+            <button class="btn btn-secondary" onclick="closePythonExportModal()">Kapat</button>
+        </div>
+    </div>
+</div>
+
+<!-- IDEC Cluster Probabilities Inspector Modal -->
+<div id="idec-probabilities-modal" class="modal-overlay" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(5px); z-index: 1000; align-items: center; justify-content: center;">
+    <div class="modal-content card" style="width: 950px; max-width: 95%; max-height: 90vh; overflow-y: auto; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 1.75rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.75rem;">
+            <div>
+                <h2 style="margin: 0; font-size: 18px; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 8px;">
+                    <span>📊</span> IDEC Sinyal Kümeleme Olasılıkları & Dağılım İnceleyicisi
+                </h2>
+                <p style="font-size: 12px; color: var(--text-muted); margin: 4px 0 0 0;">
+                    IDEC ClusteringLayer tarafından hesaplanan Student-t yumuşak küme olasılıklarını (q), güven skorlarını ve küme boyutlarını görüntüleyin.
+                </p>
+            </div>
+            <button class="btn btn-secondary btn-sm" onclick="closeIdecProbabilitiesModal()" style="padding: 2px 8px;">✕</button>
+        </div>
+
+        <!-- Selection Controls -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr auto auto; gap: 10px; align-items: flex-end; margin-bottom: 1.25rem; background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px;">
+            <div class="form-group" style="margin: 0;">
+                <label class="form-label" style="font-size: 12px;">IDEC Modeli</label>
+                <select id="idec-model-select" class="form-control" style="font-size: 12px; height: 36px;"></select>
+            </div>
+            <div class="form-group" style="margin: 0;">
+                <label class="form-label" style="font-size: 12px;">Veri Kümesi (Signals Dataset)</label>
+                <select id="idec-dataset-select" class="form-control" style="font-size: 12px; height: 36px;"></select>
+            </div>
+            <button class="btn btn-primary" onclick="loadIdecProbabilities()" style="background: linear-gradient(135deg, #2563eb, #38bdf8); border: none; font-weight: 600; font-size: 12px; height: 36px; padding: 0 16px;">
+                🔍 Hesapla & Görüntüle
+            </button>
+            <button id="idec-btn-download-csv" class="btn btn-secondary" onclick="downloadIdecProbabilitiesCSV()" style="border-color: rgba(56,189,248,0.4); color: #38bdf8; font-weight: 600; font-size: 12px; height: 36px; padding: 0 16px;" disabled>
+                📥 CSV İndir
+            </button>
+        </div>
+
+        <!-- Results Container -->
+        <div id="idec-results-container" style="display: none;">
+            <!-- Metrics Summary Row -->
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 1rem;">
+                <div style="background: rgba(15, 23, 42, 0.7); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; text-align: center;">
+                    <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">Toplam Sinyal Sayısı</div>
+                    <div id="idec-stat-total" style="font-size: 20px; font-weight: 700; color: #fff;">-</div>
+                </div>
+                <div style="background: rgba(15, 23, 42, 0.7); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; text-align: center;">
+                    <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">Küme Sayısı (Clusters)</div>
+                    <div id="idec-stat-clusters" style="font-size: 20px; font-weight: 700; color: #38bdf8;">-</div>
+                </div>
+                <div style="background: rgba(15, 23, 42, 0.7); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; text-align: center;">
+                    <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">Ortalama Güven Skoru</div>
+                    <div id="idec-stat-confidence" style="font-size: 20px; font-weight: 700; color: #34d399;">-</div>
+                </div>
+                <div style="background: rgba(15, 23, 42, 0.7); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; text-align: center;">
+                    <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">Durum</div>
+                    <div id="idec-stat-stability" style="font-size: 13px; font-weight: 600; color: #fbbf24; margin-top: 4px;">Başarılı</div>
+                </div>
+            </div>
+
+            <!-- Cluster Distribution Bars -->
+            <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px; margin-bottom: 1rem;">
+                <div style="font-weight: 600; font-size: 12px; color: #fff; margin-bottom: 8px;">Küme Başına Örnek Dağılımı:</div>
+                <div id="idec-cluster-bars" style="display: flex; flex-wrap: wrap; gap: 8px;"></div>
+            </div>
+
+            <!-- Samples Table -->
+            <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px; margin-bottom: 1rem; max-height: 280px; overflow-y: auto;">
+                <div style="font-weight: 600; font-size: 12px; color: #fff; margin-bottom: 8px;">Örnek Sinyal Olasılıkları (İlk 100):</div>
+                <table class="data-table" style="width: 100%; font-size: 11px; border-collapse: collapse;">
+                    <thead>
+                        <tr style="border-bottom: 1px solid var(--border-color); color: var(--text-muted); text-align: left;">
+                            <th style="padding: 6px;">Input ID</th>
+                            <th style="padding: 6px;">Atanan Küme</th>
+                            <th style="padding: 6px;">Güven Skoru</th>
+                            <th style="padding: 6px;">Küme Olasılık Dağılımı [P(c)]</th>
+                        </tr>
+                    </thead>
+                    <tbody id="idec-samples-tbody"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div style="display: flex; justify-content: flex-end;">
+            <button class="btn btn-secondary" onclick="closeIdecProbabilitiesModal()">Kapat</button>
         </div>
     </div>
 </div>
@@ -577,6 +806,8 @@
             window.dispatchEvent(new Event("resize"));
         }
     }
+
+    document.addEventListener("DOMContentLoaded", () => {
         populateSavedModelsDropdown();
     });
 
@@ -597,9 +828,12 @@
 
         const latentLabel = document.getElementById("wiz-latent-label");
         const latentInput = document.getElementById("wiz-latent-dim");
-        if (type.includes("classifier") || type === "bilstm" || type === "transformer_1d") {
+        if (type.includes("classifier") || type === "bilstm" || type === "transformer_1d" || type === "hybrid_cnn_tabular") {
             latentLabel.textContent = "Sınıf Sayısı (Number of Classes)";
             latentInput.value = "4";
+        } else if (type === "idec_cnn" || type === "idec_dense") {
+            latentLabel.textContent = "Bottleneck (Latent Z) & Küme Sayısı";
+            latentInput.value = "8";
         } else {
             latentLabel.textContent = "Bottleneck / Latent Boyutu";
             latentInput.value = "16";
@@ -632,6 +866,15 @@
         } else if (selectedWizardTemplate === "transformer_1d") {
             titleEl.textContent = "1D Transformer Self-Attention:";
             descEl.innerHTML = `Input(${seq}, 1) &rarr; Conv1D(64) &rarr; PositionalEncoding &rarr; MultiHeadAttention &rarr; Add(Residual) &rarr; LayerNorm &rarr; GlobalAvgPool &rarr; <span style="color:#34d399">Output(${latent})</span>`;
+        } else if (selectedWizardTemplate === "idec_cnn") {
+            titleEl.textContent = "1D-CNN IDEC (Clustering + Autoencoder Çift Çıkış):";
+            descEl.innerHTML = `Input(${seq}, 1) &rarr; Conv1D(${base}, k=7) &rarr; MaxPool(2) &rarr; Conv1D(${base*2}, k=5) &rarr; MaxPool(2) &rarr; Flatten &rarr; <span style="color:#fbbf24">Bottleneck Latent(${latent})</span> &rarr; <span style="color:#38bdf8">[Çift Çıkış: ClusteringLayer(${latent}) (KLD) + 1D-CNN Decoder (MSE)]</span>`;
+        } else if (selectedWizardTemplate === "idec_dense") {
+            titleEl.textContent = "Dense / MLP IDEC (Clustering + Autoencoder Çift Çıkış):";
+            descEl.innerHTML = `Input(${seq}, 1) &rarr; Flatten &rarr; Dense(128) &rarr; Dense(64) &rarr; <span style="color:#fbbf24">Bottleneck Latent(${latent})</span> &rarr; <span style="color:#c084fc">[Çift Çıkış: ClusteringLayer(${latent}) (KLD) + Dense Decoder (MSE)]</span>`;
+        } else if (selectedWizardTemplate === "hybrid_cnn_tabular") {
+            titleEl.textContent = "Hibrit Çok Girişli 1D-CNN + Tabular Modeli:";
+            descEl.innerHTML = `<span style="color:#38bdf8">Giriş 1: Sinyal(${seq}, 1) &rarr; Conv1D(${base}) &rarr; GlobalAvgPool</span> + <span style="color:#fbbf24">Giriş 2: Tabular(16) &rarr; Dense(32)</span> &rarr; <span style="color:#34d399">Concatenate &rarr; Fusion Dense(64) &rarr; Output(${latent})</span>`;
         }
     }
 
@@ -680,12 +923,373 @@
         nnEditorInstance.buildAndSave(name, task);
     }
 
-    function toggleExpandCanvas() {
-        const layout = document.querySelector(".editor-layout");
-        if (layout) {
-            layout.classList.toggle("expanded-canvas");
-            window.dispatchEvent(new Event("resize"));
+    // ==========================================
+    // Custom Layer Studio Handlers
+    // ==========================================
+    let currentCustomLayers = [];
+
+    async function openCustomLayerModal() {
+        document.getElementById("custom-layer-modal").style.display = "flex";
+        await loadCustomLayersList();
+    }
+
+    function closeCustomLayerModal() {
+        document.getElementById("custom-layer-modal").style.display = "none";
+    }
+
+    async function loadCustomLayersList() {
+        const projectId = SignalML.currentProjectId || "default-project";
+        const container = document.getElementById("custom-layers-list-container");
+        try {
+            const res = await fetch(`/api/models/custom_layers/${projectId}`);
+            if (res.ok) {
+                currentCustomLayers = await SignalML.safeJson(res);
+                if (!currentCustomLayers || currentCustomLayers.length === 0) {
+                    container.innerHTML = `<div style="font-size: 11px; color: var(--text-muted); text-align: center; padding: 12px;">Henüz kayıtlı özel katman yok. Yeni oluşturabilirsiniz.</div>`;
+                    createNewCustomLayerForm();
+                } else {
+                    let html = "";
+                    currentCustomLayers.forEach((l, idx) => {
+                        html += `
+                            <div class="custom-layer-item" onclick="selectCustomLayer(${idx})" style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); border-radius: 6px; padding: 8px 10px; cursor: pointer; transition: all 0.15s ease;">
+                                <div style="font-weight: 600; font-size: 12px; color: #fff;">${SignalML.escapeHtml(l.name)}</div>
+                                <div style="font-size: 10px; color: #a855f7; font-family: var(--font-mono);">${SignalML.escapeHtml(l.class_name)}</div>
+                            </div>
+                        `;
+                    });
+                    container.innerHTML = html;
+                    selectCustomLayer(0);
+                }
+            }
+        } catch (e) {
+            container.innerHTML = `<div style="font-size: 11px; color: #f87171; padding: 8px;">Hata: ${e.message}</div>`;
         }
+    }
+
+    async function loadDefaultCustomLayerTemplate() {
+        try {
+            const res = await fetch("/api/models/custom_layers/template/default");
+            if (res.ok) {
+                const data = await SignalML.safeJson(res);
+                document.getElementById("cl-code").value = data.template;
+            }
+        } catch (e) {
+            SignalML.toast("Şablon yüklenemedi: " + e.message, "error");
+        }
+    }
+
+    function createNewCustomLayerForm() {
+        document.getElementById("cl-layer-id").value = "";
+        document.getElementById("cl-name").value = "Yeni Özel Katman";
+        document.getElementById("cl-class-name").value = "CustomSignalLayer";
+        document.getElementById("cl-desc").value = "Özel Keras sinyal katmanı";
+        document.getElementById("cl-btn-delete").style.display = "none";
+        loadDefaultCustomLayerTemplate();
+    }
+
+    function selectCustomLayer(idx) {
+        const l = currentCustomLayers[idx];
+        if (!l) return;
+        document.querySelectorAll(".custom-layer-item").forEach((el, i) => {
+            el.style.borderColor = (i === idx) ? "var(--accent-blue)" : "var(--border-color)";
+            el.style.background = (i === idx) ? "rgba(37, 99, 235, 0.15)" : "rgba(255,255,255,0.03)";
+        });
+
+        document.getElementById("cl-layer-id").value = l.id;
+        document.getElementById("cl-name").value = l.name || "";
+        document.getElementById("cl-class-name").value = l.class_name || "CustomSignalLayer";
+        document.getElementById("cl-desc").value = l.description || "";
+        document.getElementById("cl-code").value = l.code || "";
+        document.getElementById("cl-btn-delete").style.display = "inline-block";
+    }
+
+    async function saveCustomLayer() {
+        const layerId = document.getElementById("cl-layer-id").value;
+        const name = document.getElementById("cl-name").value.trim();
+        const className = document.getElementById("cl-class-name").value.trim();
+        const desc = document.getElementById("cl-desc").value.trim();
+        const code = document.getElementById("cl-code").value;
+        const projectId = SignalML.currentProjectId || "default-project";
+
+        if (!name || !className || !code) {
+            SignalML.toast("Katman adı, sınıf adı ve Python kodu gereklidir", "error");
+            return;
+        }
+
+        const payload = {
+            project_id: projectId,
+            name: name,
+            class_name: className,
+            description: desc,
+            code: code
+        };
+
+        try {
+            let res;
+            if (layerId) {
+                res = await fetch(`/api/models/custom_layers/${layerId}`, {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+            } else {
+                res = await fetch(`/api/models/custom_layers`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+            }
+
+            if (res.ok) {
+                SignalML.toast(`'${name}' katmanı başarıyla kaydedildi!`, "success");
+                await loadCustomLayersList();
+            } else {
+                const err = await SignalML.safeJson(res);
+                SignalML.toast("Kayıt hatası: " + (err.detail || "Doğrulama hatası"), "error");
+            }
+        } catch (e) {
+            SignalML.toast("Ağ hatası: " + e.message, "error");
+        }
+    }
+
+    async function deleteCurrentCustomLayer() {
+        const layerId = document.getElementById("cl-layer-id").value;
+        if (!layerId) return;
+        if (!confirm("Bu özel katmanı silmek istediğinizden emin misiniz?")) return;
+
+        try {
+            const res = await fetch(`/api/models/custom_layers/${layerId}`, { method: "DELETE" });
+            if (res.ok) {
+                SignalML.toast("Katman silindi", "info");
+                await loadCustomLayersList();
+            }
+        } catch (e) {
+            SignalML.toast("Silme hatası: " + e.message, "error");
+        }
+    }
+
+    function addCustomLayerToCanvas() {
+        const name = document.getElementById("cl-name").value.trim() || "Custom Layer";
+        const className = document.getElementById("cl-class-name").value.trim() || "CustomSignalLayer";
+        const code = document.getElementById("cl-code").value;
+
+        const node = LiteGraph.createNode("keras/custom_layer");
+        if (node) {
+            node.pos = [260, 200];
+            node.title = name;
+            node.properties.class_name = className;
+            node.properties.code = code;
+            nnEditorInstance.graph.add(node);
+            nnEditorInstance.validateGraph();
+            closeCustomLayerModal();
+            SignalML.toast(`'${className}' katmanı tuvale eklendi!`, "success");
+        }
+    }
+
+    // ==========================================
+    // Python Functional API Exporter Handlers
+    // ==========================================
+    let currentGeneratedPythonCode = "";
+
+    async function openPythonExportModal() {
+        document.getElementById("python-export-modal").style.display = "flex";
+        const codeView = document.getElementById("python-code-view");
+        codeView.textContent = "# Python Functional API kodu derleniyor...";
+
+        const graph = nnEditorInstance.serializeGraph();
+        const modelName = document.getElementById("save-model-name")?.value || "SignalML_Functional_Model";
+        const taskType = document.getElementById("save-model-task")?.value || "classification";
+
+        try {
+            const res = await fetch("/api/models/export_python_preview", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    graph: graph,
+                    model_name: modelName,
+                    task_type: taskType
+                })
+            });
+
+            if (res.ok) {
+                const data = await SignalML.safeJson(res);
+                currentGeneratedPythonCode = data.code;
+                codeView.textContent = data.code;
+            } else {
+                const err = await SignalML.safeJson(res);
+                codeView.textContent = `# Hata: ${err.detail || "Python kodu üretilemedi"}`;
+            }
+        } catch (e) {
+            codeView.textContent = `# Ağ Hatası: ${e.message}`;
+        }
+    }
+
+    function closePythonExportModal() {
+        document.getElementById("python-export-modal").style.display = "none";
+    }
+
+    function copyPythonCode() {
+        if (!currentGeneratedPythonCode) return;
+        navigator.clipboard.writeText(currentGeneratedPythonCode).then(() => {
+            const btn = document.getElementById("btn-copy-py");
+            if (btn) {
+                const orig = btn.textContent;
+                btn.textContent = "✓ Kopyalandı!";
+                setTimeout(() => { btn.textContent = orig; }, 1800);
+            }
+            SignalML.toast("Python kodu panoya kopyalandı!", "success");
+        }).catch(err => {
+            SignalML.toast("Kopyalama başarısız: " + err, "error");
+        });
+    }
+
+    function downloadPythonCode() {
+        if (!currentGeneratedPythonCode) return;
+        const modelName = (document.getElementById("save-model-name")?.value || "signalml_model").replace(/\s+/g, "_").toLowerCase();
+        const blob = new Blob([currentGeneratedPythonCode], { type: "text/x-python;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${modelName}_functional_api.py`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        SignalML.toast(`'${a.download}' dosyası indirildi!`, "success");
+    }
+
+    // ==========================================
+    // IDEC Cluster Probabilities Inspector Handlers
+    // ==========================================
+    async function openIdecProbabilitiesModal() {
+        document.getElementById("idec-probabilities-modal").style.display = "flex";
+        await populateIdecSelectors();
+    }
+
+    function closeIdecProbabilitiesModal() {
+        document.getElementById("idec-probabilities-modal").style.display = "none";
+    }
+
+    async function populateIdecSelectors() {
+        const projectId = SignalML.currentProjectId || "default-project";
+        const modelSelect = document.getElementById("idec-model-select");
+        const datasetSelect = document.getElementById("idec-dataset-select");
+
+        modelSelect.innerHTML = `<option value="">Model yükleniyor...</option>`;
+        datasetSelect.innerHTML = `<option value="">Veri kümesi yükleniyor...</option>`;
+
+        try {
+            const [modelsRes, datasetsRes] = await Promise.all([
+                fetch(`/api/models/list/${projectId}`),
+                fetch(`/api/datasets/list/${projectId}`)
+            ]);
+
+            if (modelsRes.ok) {
+                const models = await SignalML.safeJson(modelsRes);
+                if (!models || models.length === 0) {
+                    modelSelect.innerHTML = `<option value="">Kayıtlı model bulunamadı</option>`;
+                } else {
+                    modelSelect.innerHTML = models.map(m => `<option value="${m.id}" ${m.id === SignalML.activeModel ? 'selected' : ''}>${SignalML.escapeHtml(m.name)} (${m.task_type})</option>`).join("");
+                }
+            }
+
+            if (datasetsRes.ok) {
+                const datasets = await SignalML.safeJson(datasetsRes);
+                if (!datasets || datasets.length === 0) {
+                    datasetSelect.innerHTML = `<option value="">Kayıtlı veri kümesi bulunamadı</option>`;
+                } else {
+                    datasetSelect.innerHTML = datasets.map(d => `<option value="${d.id}">${SignalML.escapeHtml(d.name)} (${d.row_count} satır)</option>`).join("");
+                }
+            }
+        } catch (e) {
+            SignalML.toast("Seçenekler yüklenemedi: " + e.message, "error");
+        }
+    }
+
+    async function loadIdecProbabilities() {
+        const modelId = document.getElementById("idec-model-select").value;
+        const datasetId = document.getElementById("idec-dataset-select").value;
+
+        if (!modelId || !datasetId) {
+            SignalML.toast("Lütfen bir model ve veri kümesi seçin", "error");
+            return;
+        }
+
+        const container = document.getElementById("idec-results-container");
+        container.style.display = "none";
+
+        try {
+            const res = await fetch(`/api/models/${modelId}/idec_probabilities/${datasetId}`);
+            if (!res.ok) {
+                const err = await SignalML.safeJson(res);
+                SignalML.toast("Hesaplama Hatası: " + (err.detail || "IDEC olasılıkları alınamadı"), "error");
+                return;
+            }
+
+            const data = await SignalML.safeJson(res);
+            container.style.display = "block";
+
+            // Populate stats
+            document.getElementById("idec-stat-total").textContent = data.total_samples || "-";
+            document.getElementById("idec-stat-clusters").textContent = data.n_clusters || "-";
+            document.getElementById("idec-stat-confidence").textContent = `%${Math.round((data.mean_confidence || 0) * 100)}`;
+            document.getElementById("idec-btn-download-csv").disabled = false;
+
+            // Render Cluster Bars
+            const barsContainer = document.getElementById("idec-cluster-bars");
+            const counts = data.cluster_counts || {};
+            const total = data.total_samples || 1;
+            let barsHtml = "";
+
+            const colors = ["#38bdf8", "#818cf8", "#c084fc", "#f472b6", "#fb923c", "#facc15", "#4ade80", "#2dd4bf"];
+            Object.keys(counts).sort((a,b) => Number(a) - Number(b)).forEach((c, idx) => {
+                const count = counts[c];
+                const pct = Math.round((count / total) * 100);
+                const col = colors[idx % colors.length];
+                barsHtml += `
+                    <div style="background: rgba(255,255,255,0.03); border: 1px solid ${col}; border-radius: 6px; padding: 6px 12px; display: inline-flex; align-items: center; gap: 8px;">
+                        <span style="font-weight: 700; color: ${col}; font-size: 12px;">Küme ${c}:</span>
+                        <span style="color: #fff; font-size: 12px;">${count} sinyal</span>
+                        <span style="background: rgba(255,255,255,0.1); border-radius: 4px; padding: 1px 5px; font-size: 10px; color: ${col};">%${pct}</span>
+                    </div>
+                `;
+            });
+            barsContainer.innerHTML = barsHtml;
+
+            // Render Samples Table
+            const tbody = document.getElementById("idec-samples-tbody");
+            const samples = data.samples || [];
+            let rowsHtml = "";
+            samples.forEach(s => {
+                const probBadges = (s.probabilities || []).map((p, c) => {
+                    const isMax = c === s.assigned_cluster;
+                    const style = isMax ? 'background: rgba(56, 189, 248, 0.25); color: #38bdf8; font-weight: 700;' : 'color: #94a3b8;';
+                    return `<span style="display: inline-block; padding: 1px 4px; margin-right: 4px; border-radius: 3px; ${style}">c${c}:${Math.round(p * 100)}%</span>`;
+                }).join("");
+
+                rowsHtml += `
+                    <tr style="border-bottom: 1px solid rgba(255,255,255,0.04);">
+                        <td style="padding: 6px; font-family: var(--font-mono); color: #fff;">${SignalML.escapeHtml(s.id)}</td>
+                        <td style="padding: 6px;"><span class="shape-badge" style="background: rgba(56,189,248,0.2); color: #38bdf8;">Küme ${s.assigned_cluster}</span></td>
+                        <td style="padding: 6px; color: #34d399; font-weight: 600;">%${Math.round(s.confidence * 100)}</td>
+                        <td style="padding: 6px; font-family: var(--font-mono); font-size: 10px;">${probBadges}</td>
+                    </tr>
+                `;
+            });
+            tbody.innerHTML = rowsHtml;
+
+        } catch (e) {
+            SignalML.toast("Ağ Hatası: " + e.message, "error");
+        }
+    }
+
+    function downloadIdecProbabilitiesCSV() {
+        const modelId = document.getElementById("idec-model-select").value;
+        const datasetId = document.getElementById("idec-dataset-select").value;
+        if (!modelId || !datasetId) return;
+
+        window.location.href = `/api/models/${modelId}/idec_probabilities/${datasetId}/export_csv`;
+        SignalML.toast("IDEC küme olasılıkları CSV indirme başlatıldı!", "success");
     }
 
     document.addEventListener("DOMContentLoaded", () => {
@@ -702,6 +1306,9 @@
             if (e.key === "Escape") {
                 closeWizardModal();
                 closeBuildModelModal();
+                closeCustomLayerModal();
+                closePythonExportModal();
+                closeIdecProbabilitiesModal();
             } else if ((e.key === "w" || e.key === "W") && !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName)) {
                 openWizardModal();
             }

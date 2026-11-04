@@ -1,16 +1,19 @@
 import json
 import uuid
+import io
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, HTTPException, Body, UploadFile, File, Form
 from fastapi.responses import JSONResponse, Response
 from datetime import datetime, timezone
 import numpy as np
+import pandas as pd
 import keras
 
 from app.core.config import MODELS_DIR, resolve_storage_path
 from app.core.database import get_db_connection
-from app.services.keras_model_builder import KerasModelBuilder, KerasGraphError
+from app.services.data_manager import DataManager
+from app.services.keras_model_builder import KerasModelBuilder, KerasGraphError, DEFAULT_CUSTOM_LAYER_TEMPLATE, ClusteringLayer
 
 router = APIRouter(prefix="/api/models", tags=["Neural Network Builder"])
 
@@ -622,3 +625,393 @@ def freeze_model_layers(
         "non_trainable_params": non_trainable_params,
         "summary": summary
     }
+
+
+# =====================================================================
+# Custom Layer CRUD Endpoints
+# =====================================================================
+@router.get("/custom_layers/template/default")
+def get_default_custom_layer_template():
+    """Returns the default starter template for custom Keras layers with Turkish comments."""
+    return {"template": DEFAULT_CUSTOM_LAYER_TEMPLATE}
+
+
+@router.get("/custom_layers/{project_id}")
+def list_custom_layers(project_id: str):
+    """Lists all user-defined custom layers for a project."""
+    with get_db_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM custom_layers WHERE project_id = ? ORDER BY created_at DESC",
+            (project_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+@router.post("/custom_layers")
+def create_custom_layer(payload: Dict[str, Any] = Body(...)):
+    """Registers a new custom Keras layer for a project with Python syntax validation."""
+    project_id = payload.get("project_id")
+    name = payload.get("name")
+    class_name = payload.get("class_name", "CustomSignalLayer")
+    code = payload.get("code")
+    description = payload.get("description", "")
+
+    if not project_id:
+        raise HTTPException(status_code=400, detail="project_id is required")
+    if not name or not name.strip():
+        raise HTTPException(status_code=400, detail="name is required")
+    if not code or not code.strip():
+        raise HTTPException(status_code=400, detail="code is required")
+
+    try:
+        compile(code, f"<custom_layer_{class_name}>", "exec")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Python syntax error in layer code: {str(e)}")
+
+    layer_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO custom_layers (id, project_id, name, class_name, code, description, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (layer_id, project_id, name.strip(), class_name.strip(), code, description, now, now)
+        )
+        conn.commit()
+
+    return {
+        "id": layer_id,
+        "project_id": project_id,
+        "name": name,
+        "class_name": class_name,
+        "code": code,
+        "description": description,
+        "created_at": now,
+        "updated_at": now
+    }
+
+
+@router.put("/custom_layers/{layer_id}")
+def update_custom_layer(layer_id: str, payload: Dict[str, Any] = Body(...)):
+    """Updates an existing custom Keras layer with Python syntax validation."""
+    name = payload.get("name")
+    class_name = payload.get("class_name")
+    code = payload.get("code")
+    description = payload.get("description")
+
+    with get_db_connection() as conn:
+        row = conn.execute("SELECT * FROM custom_layers WHERE id = ?", (layer_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Custom layer not found")
+
+        curr = dict(row)
+        new_name = name.strip() if name else curr["name"]
+        new_class = class_name.strip() if class_name else curr["class_name"]
+        new_code = code if code is not None else curr["code"]
+        new_desc = description if description is not None else curr["description"]
+
+        if code:
+            try:
+                compile(new_code, f"<custom_layer_{new_class}>", "exec")
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Python syntax error in layer code: {str(e)}")
+
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            """
+            UPDATE custom_layers
+            SET name = ?, class_name = ?, code = ?, description = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (new_name, new_class, new_code, new_desc, now, layer_id)
+        )
+        conn.commit()
+
+    return {
+        "id": layer_id,
+        "project_id": curr["project_id"],
+        "name": new_name,
+        "class_name": new_class,
+        "code": new_code,
+        "description": new_desc,
+        "updated_at": now
+    }
+
+
+@router.delete("/custom_layers/{layer_id}")
+def delete_custom_layer(layer_id: str):
+    """Deletes a custom layer from project."""
+    with get_db_connection() as conn:
+        row = conn.execute("SELECT * FROM custom_layers WHERE id = ?", (layer_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Custom layer not found")
+        conn.execute("DELETE FROM custom_layers WHERE id = ?", (layer_id,))
+        conn.commit()
+    return {"status": "deleted", "id": layer_id}
+
+
+# =====================================================================
+# IDEC Cluster Probabilities Endpoints
+# =====================================================================
+@router.get("/{model_id}/idec_probabilities/{dataset_id}")
+def get_idec_probabilities(model_id: str, dataset_id: str):
+    """
+    Computes soft cluster probabilities (Q) from the model's ClusteringLayer on dataset,
+    returns assigned clusters, confidence scores, and preview of sample predictions.
+    """
+    with get_db_connection() as conn:
+        m_row = conn.execute("SELECT * FROM models WHERE id = ?", (model_id,)).fetchone()
+        if not m_row:
+            raise HTTPException(status_code=404, detail="Model not found")
+        model_record = dict(m_row)
+
+    weights_path = resolve_storage_path(model_record.get("weights_path"))
+    if not weights_path or not weights_path.exists():
+        raise HTTPException(status_code=404, detail="Model weights file not found on disk")
+
+    try:
+        model = keras.models.load_model(str(weights_path))
+    except Exception:
+        graph_json = json.loads(model_record.get("graph_json", "{}"))
+        model, _ = KerasModelBuilder.build_model(graph_json)
+
+    try:
+        X, y, dataset_record = DataManager.load_dataset_arrays(dataset_id)
+        X = np.nan_to_num(X, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to load dataset: {str(e)}")
+
+    model_input_shape = model.input_shape
+    if isinstance(model_input_shape, list):
+        model_input_shape = model_input_shape[0]
+
+    if len(model_input_shape) == 3 and X.ndim == 2:
+        X = np.expand_dims(X, axis=-1)
+
+    outputs = model.outputs if isinstance(model.outputs, list) else [model.output]
+    clustering_out_idx = 0
+    found_clustering = False
+
+    for idx, out_tensor in enumerate(outputs):
+        layer = None
+        if hasattr(out_tensor, "_keras_history"):
+            hist = out_tensor._keras_history
+            layer = hist[0] if isinstance(hist, tuple) else getattr(hist, "operation", None)
+        if layer is not None:
+            if isinstance(layer, ClusteringLayer) or layer.__class__.__name__ == "ClusteringLayer" or "clustering" in getattr(layer, "name", "").lower():
+                clustering_out_idx = idx
+                found_clustering = True
+                break
+
+    if not found_clustering and len(outputs) == 2:
+        output_shapes = model.output_shape if isinstance(model.output_shape, list) else [model.output_shape]
+        if len(output_shapes[1]) == 2 and len(output_shapes[0]) > 2:
+            clustering_out_idx = 1
+            found_clustering = True
+        elif len(output_shapes[0]) == 2 and len(output_shapes[1]) > 2:
+            clustering_out_idx = 0
+            found_clustering = True
+
+    try:
+        preds = model.predict(X, verbose=0)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Inference error: {str(e)}")
+
+    if isinstance(preds, list):
+        Q = preds[clustering_out_idx]
+    else:
+        Q = preds
+
+    if Q.ndim != 2:
+        raise HTTPException(status_code=400, detail=f"Clustering output must be 2D probabilities tensor, got shape {Q.shape}")
+
+    n_clusters = int(Q.shape[1])
+    assigned_clusters = np.argmax(Q, axis=1)
+    confidences = np.max(Q, axis=1)
+    unique_c, counts_c = np.unique(assigned_clusters, return_counts=True)
+    cluster_counts = {int(k): int(v) for k, v in zip(unique_c, counts_c)}
+
+    # Read original IDs from CSV if available
+    raw_file_path = resolve_storage_path(dataset_record.get("file_path"))
+    input_ids = []
+    if raw_file_path and raw_file_path.exists():
+        try:
+            df_preview = pd.read_csv(raw_file_path)
+            for c in ["Input ID", "input_id", "ID", "id", "SampleID", "signal_id"]:
+                if c in df_preview.columns:
+                    input_ids = df_preview[c].astype(str).tolist()
+                    break
+        except Exception:
+            pass
+
+    if not input_ids or len(input_ids) != len(X):
+        input_ids = [f"SIG_{i:04d}" for i in range(len(X))]
+
+    samples = []
+    for i in range(min(100, len(X))):
+        samples.append({
+            "id": input_ids[i],
+            "assigned_cluster": int(assigned_clusters[i]),
+            "confidence": round(float(confidences[i]), 4),
+            "probabilities": [round(float(p), 4) for p in Q[i]]
+        })
+
+    return {
+        "model_id": model_id,
+        "dataset_id": dataset_id,
+        "total_samples": int(len(X)),
+        "n_clusters": n_clusters,
+        "mean_confidence": round(float(np.mean(confidences)), 4),
+        "cluster_counts": cluster_counts,
+        "samples": samples
+    }
+
+
+@router.get("/{model_id}/idec_probabilities/{dataset_id}/export_csv")
+def export_idec_probabilities_csv(model_id: str, dataset_id: str):
+    """Exports all IDEC cluster probabilities with Input ID as a downloadable CSV."""
+    with get_db_connection() as conn:
+        m_row = conn.execute("SELECT * FROM models WHERE id = ?", (model_id,)).fetchone()
+        if not m_row:
+            raise HTTPException(status_code=404, detail="Model not found")
+        model_record = dict(m_row)
+
+    weights_path = resolve_storage_path(model_record.get("weights_path"))
+    if not weights_path or not weights_path.exists():
+        raise HTTPException(status_code=404, detail="Model weights file not found on disk")
+
+    try:
+        model = keras.models.load_model(str(weights_path))
+    except Exception:
+        graph_json = json.loads(model_record.get("graph_json", "{}"))
+        model, _ = KerasModelBuilder.build_model(graph_json)
+
+    try:
+        X, y, dataset_record = DataManager.load_dataset_arrays(dataset_id)
+        X = np.nan_to_num(X, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to load dataset: {str(e)}")
+
+    model_input_shape = model.input_shape
+    if isinstance(model_input_shape, list):
+        model_input_shape = model_input_shape[0]
+
+    if len(model_input_shape) == 3 and X.ndim == 2:
+        X = np.expand_dims(X, axis=-1)
+
+    outputs = model.outputs if isinstance(model.outputs, list) else [model.output]
+    clustering_out_idx = 0
+    found_clustering = False
+
+    for idx, out_tensor in enumerate(outputs):
+        layer = None
+        if hasattr(out_tensor, "_keras_history"):
+            hist = out_tensor._keras_history
+            layer = hist[0] if isinstance(hist, tuple) else getattr(hist, "operation", None)
+        if layer is not None:
+            if isinstance(layer, ClusteringLayer) or layer.__class__.__name__ == "ClusteringLayer" or "clustering" in getattr(layer, "name", "").lower():
+                clustering_out_idx = idx
+                found_clustering = True
+                break
+
+    if not found_clustering and len(outputs) == 2:
+        output_shapes = model.output_shape if isinstance(model.output_shape, list) else [model.output_shape]
+        if len(output_shapes[1]) == 2 and len(output_shapes[0]) > 2:
+            clustering_out_idx = 1
+        else:
+            clustering_out_idx = 0
+
+    preds = model.predict(X, verbose=0)
+    Q = preds[clustering_out_idx] if isinstance(preds, list) else preds
+
+    assigned_clusters = np.argmax(Q, axis=1)
+    confidences = np.max(Q, axis=1)
+
+    # Read original IDs
+    raw_file_path = resolve_storage_path(dataset_record.get("file_path"))
+    input_ids = []
+    if raw_file_path and raw_file_path.exists():
+        try:
+            df_preview = pd.read_csv(raw_file_path)
+            for c in ["Input ID", "input_id", "ID", "id", "SampleID", "signal_id"]:
+                if c in df_preview.columns:
+                    input_ids = df_preview[c].astype(str).tolist()
+                    break
+        except Exception:
+            pass
+
+    if not input_ids or len(input_ids) != len(X):
+        input_ids = [f"SIG_{i:04d}" for i in range(len(X))]
+
+    df_out = pd.DataFrame({
+        "Input_ID": input_ids,
+        "Assigned_Cluster": assigned_clusters,
+        "Confidence": np.round(confidences, 4)
+    })
+    for c in range(Q.shape[1]):
+        df_out[f"Cluster_{c}_Prob"] = np.round(Q[:, c], 4)
+
+    csv_buffer = io.StringIO()
+    df_out.to_csv(csv_buffer, index=False)
+    csv_str = csv_buffer.getvalue()
+
+    filename = f"idec_cluster_probabilities_{model_record['name'].replace(' ', '_')}_{model_id[:8]}.csv"
+    return Response(
+        content=csv_str,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+
+# =====================================================================
+# Python Functional API Exporter Endpoints
+# =====================================================================
+@router.post("/export_python_preview")
+def export_python_preview(payload: Dict[str, Any] = Body(...)):
+    """Generates Python Functional API code string from graph payload for modal preview."""
+    graph_data = payload.get("graph", payload)
+    name = payload.get("model_name", "SignalML_Functional_Model")
+    task_type = payload.get("task_type", "classification")
+
+    try:
+        code = KerasModelBuilder.generate_functional_python_code(
+            graph_data=graph_data,
+            model_name=name,
+            task_type=task_type
+        )
+        return {"code": code}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to generate Python code: {str(e)}")
+
+
+@router.get("/{model_id}/export_python")
+def export_model_python(model_id: str):
+    """Exports saved model architecture as a runnable Python Functional API script download."""
+    with get_db_connection() as conn:
+        row = conn.execute("SELECT * FROM models WHERE id = ?", (model_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Model not found")
+
+        model_record = dict(row)
+        graph = json.loads(model_record.get("graph_json", "{}"))
+        name = model_record.get("name", "SignalML_Functional_Model")
+        task_type = model_record.get("task_type", "classification")
+
+        try:
+            code = KerasModelBuilder.generate_functional_python_code(
+                graph_data=graph,
+                model_name=name,
+                task_type=task_type
+            )
+            safe_name = name.replace(" ", "_")
+            filename = f"{safe_name}_{model_id[:8]}_functional_api.py"
+            return Response(
+                content=code,
+                media_type="text/x-python",
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to export Python code: {str(e)}")
+

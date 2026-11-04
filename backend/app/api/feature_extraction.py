@@ -1,8 +1,9 @@
 from typing import Dict, Any, List, Optional
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Body
 from app.services.feature_extraction import FeatureExtractor, FeatureExtractionError
 from app.schemas.clustering import FeatureExtractionRequest
 from app.core.database import get_db_connection
+from app.core.config import resolve_storage_path
 
 router = APIRouter(prefix="/api/features", tags=["Feature Extraction"])
 
@@ -68,7 +69,7 @@ def list_extracted_features(project_id: str):
 
 @router.get("/{feature_id}/export_csv")
 def export_features_csv(feature_id: str):
-    """Exports extracted feature matrix as a CSV file download (with Input ID column)."""
+    """Exports extracted feature matrix as a CSV file download (with Input ID column and custom layer name)."""
     try:
         features, labels, record = FeatureExtractor.load_feature_matrix(feature_id)
     except Exception as e:
@@ -76,19 +77,47 @@ def export_features_csv(feature_id: str):
 
     import io
     import csv
+    import numpy as np
     from fastapi.responses import StreamingResponse
+
+    num_samples, dim = features.shape
+    sample_ids = [str(i) for i in range(num_samples)]
+
+    # Try loading sample_ids from feature .npz or parent dataset .npz
+    try:
+        fp = resolve_storage_path(record.get("file_path"))
+        if fp and fp.exists():
+            with np.load(str(fp), allow_pickle=False) as fnpz:
+                if "sample_ids" in fnpz:
+                    s_ids = [s.decode("utf-8") if isinstance(s, bytes) else str(s) for s in fnpz["sample_ids"]]
+                    if len(s_ids) == num_samples:
+                        sample_ids = s_ids
+        if sample_ids == [str(i) for i in range(num_samples)] and record.get("dataset_id"):
+            with get_db_connection() as conn:
+                ds_row = conn.execute("SELECT file_path FROM datasets WHERE id = ?", (record["dataset_id"],)).fetchone()
+                if ds_row and ds_row["file_path"]:
+                    dsp = resolve_storage_path(ds_row["file_path"])
+                    if dsp and dsp.exists():
+                        with np.load(str(dsp), allow_pickle=False) as dnpz:
+                            if "sample_ids" in dnpz:
+                                s_ids = [s.decode("utf-8") if isinstance(s, bytes) else str(s) for s in dnpz["sample_ids"]]
+                                if len(s_ids) >= num_samples:
+                                    sample_ids = s_ids[:num_samples]
+    except Exception:
+        pass
+
+    layer_prefix = (record.get("layer_id") or "feat").replace(" ", "_")
 
     output = io.StringIO()
     writer = csv.writer(output)
 
-    num_samples, dim = features.shape
-    header = ["input_id"] + [f"feat_{i}" for i in range(dim)]
+    header = ["input_id"] + [f"{layer_prefix}_{i}" for i in range(dim)]
     if labels is not None:
         header.append("label")
     writer.writerow(header)
 
     for i in range(num_samples):
-        row = [i] + [float(val) for val in features[i]]
+        row = [sample_ids[i]] + [float(val) for val in features[i]]
         if labels is not None:
             try:
                 row.append(float(labels[i]))
@@ -97,7 +126,7 @@ def export_features_csv(feature_id: str):
         writer.writerow(row)
 
     output.seek(0)
-    filename = f"features_{feature_id[:8]}_{record.get('layer_id', 'layer').replace('/', '_')}.csv"
+    filename = f"features_{feature_id[:8]}_{layer_prefix.replace('/', '_')}.csv"
     return StreamingResponse(
         iter([output.getvalue()]),
         media_type="text/csv",

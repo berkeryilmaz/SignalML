@@ -520,7 +520,7 @@ class DataManager:
 
             num_rows, num_cols = data.shape
             # Input ID Traceability: default sample_ids
-            sample_ids = np.array([str(i) for i in range(num_rows)], dtype=object)
+            sample_ids = np.array([str(i) for i in range(num_rows)], dtype=str)
 
             save_dict = {
                 "data": data,
@@ -578,7 +578,7 @@ class DataManager:
                     transpose=transpose
                 )
                 num_rows, num_cols = data.shape
-                sample_ids = np.array([str(i) for i in range(num_rows)], dtype=object)
+                sample_ids = np.array([str(i) for i in range(num_rows)], dtype=str)
                 X_seq = np.expand_dims(data, axis=-1).astype(np.float32)
                 X_tabular = None
                 y = labels
@@ -670,10 +670,10 @@ class DataManager:
                             break
 
                 if id_col_name is not None and id_col_name in df.columns:
-                    sample_ids = df[id_col_name].astype(str).to_numpy()
+                    sample_ids = np.array([str(v) for v in df[id_col_name].tolist()], dtype=str)
                     df = df.drop(columns=[id_col_name])
                 else:
-                    sample_ids = np.array([str(i) for i in range(num_rows)], dtype=object)
+                    sample_ids = np.array([str(i) for i in range(num_rows)], dtype=str)
 
                 # 2. Output Target Extraction
                 out_col_name = None

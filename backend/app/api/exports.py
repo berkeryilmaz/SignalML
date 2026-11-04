@@ -63,3 +63,22 @@ def download_model_weights(model_id: str):
             filename=clean_name,
             media_type="application/octet-stream"
         )
+
+
+@router.delete("/file/{filename}")
+def delete_export_file(filename: str):
+    """Deletes an exported file from EXPORTS_DIR."""
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    target = EXPORTS_DIR / filename
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="Export file not found")
+
+    try:
+        target.unlink()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Could not delete file: {str(e)}")
+
+    return {"message": f"Export file '{filename}' deleted successfully", "filename": filename}
+

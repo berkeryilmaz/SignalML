@@ -128,6 +128,18 @@ def init_database() -> None:
             created_at TEXT NOT NULL,
             FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
         );
+
+        CREATE TABLE IF NOT EXISTS custom_layers (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            class_name TEXT NOT NULL,
+            code TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+        );
         """)
         # Normalize any /workspace/SignalML/storage paths in DB to /app/storage so host Docker
         # container always sees native /app/storage paths while resolve_storage_path() maps locally.

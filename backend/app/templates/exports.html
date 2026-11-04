@@ -110,9 +110,11 @@
                         <td>${(m.trainable_params || 0).toLocaleString()}</td>
                         <td><span class="shape-badge">.KERAS</span></td>
                         <td>
-                            <div style="display: flex; gap: 6px;">
+                            <div style="display: flex; gap: 6px; flex-wrap: wrap;">
                                 <a href="/api/exports/model/${m.id}" class="btn btn-primary btn-sm" download title="Ağırlıklar ve model dosyasını indir">.keras</a>
                                 <a href="/api/models/${m.id}/export_json" class="btn btn-secondary btn-sm" download title="Mimari JSON grafiğini indir">JSON</a>
+                                <a href="/api/models/${m.id}/export_python" class="btn btn-secondary btn-sm" style="color: #34d399; border-color: rgba(52, 211, 153, 0.4);" download title="Keras Functional API Python (.py) kodunu indir">🐍 .py</a>
+                                <button class="btn btn-secondary btn-sm" style="color: var(--accent-rose);" onclick="deleteModelRow('${m.id}')" title="Modeli Sil">🗑️</button>
                             </div>
                         </td>
                     </tr>
@@ -129,7 +131,10 @@
                         <td>${(f.size_bytes / 1024).toFixed(1)} KB</td>
                         <td><span class="shape-badge">${f.extension.toUpperCase().replace('.', '')}</span></td>
                         <td>
-                            <a href="${f.download_url}" class="btn btn-secondary btn-sm" download>Download</a>
+                            <div style="display: flex; gap: 6px;">
+                                <a href="${f.download_url}" class="btn btn-secondary btn-sm" download>Download</a>
+                                <button class="btn btn-secondary btn-sm" style="color: var(--accent-rose);" onclick="deleteExportFileRow('${f.name}')" title="Dosyayı Sil">🗑️</button>
+                            </div>
                         </td>
                     </tr>
                 `).join("");
@@ -189,6 +194,28 @@
         } finally {
             btn.disabled = false;
             btn.innerHTML = `<span>📥</span> Modeli İçe Aktar`;
+        }
+    }
+
+    async function deleteModelRow(modelId) {
+        if (!confirm("Bu modeli silmek istediğinize emin misiniz?")) return;
+        const res = await fetch(`/api/models/${modelId}`, { method: "DELETE" });
+        if (res.ok) {
+            SignalML.toast("Model silindi", "success");
+            await loadExports();
+        } else {
+            SignalML.toast("Model silinemedi", "error");
+        }
+    }
+
+    async function deleteExportFileRow(filename) {
+        if (!confirm(`'${filename}' dosyasını silmek istediğinize emin misiniz?`)) return;
+        const res = await fetch(`/api/exports/file/${encodeURIComponent(filename)}`, { method: "DELETE" });
+        if (res.ok) {
+            SignalML.toast("Dosya silindi", "success");
+            await loadExports();
+        } else {
+            SignalML.toast("Dosya silinemedi", "error");
         }
     }
 
