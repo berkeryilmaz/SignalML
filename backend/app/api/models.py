@@ -110,18 +110,92 @@ def build_and_save_model(payload: Dict[str, Any] = Body(...)):
     }
 
 
-@router.get("/{model_id}")
-def get_model(model_id: str):
-    """Retrieves model record and architecture details."""
+@router.put("/{model_id}")
+def update_model(model_id: str, payload: Dict[str, Any] = Body(...)):
+    """Updates an existing loaded model graph architecture and rebuilds weights."""
     with get_db_connection() as conn:
         row = conn.execute("SELECT * FROM models WHERE id = ?", (model_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Model not found")
+        project_id = row["project_id"]
 
-        m = dict(row)
-        m["graph"] = json.loads(m.get("graph_json", "{}"))
-        m["summary"] = json.loads(m.get("summary_json", "{}"))
-        return m
+    name = payload.get("name", row["name"])
+    graph_data = payload.get("graph", {})
+    task_type = payload.get("task_type", row["task_type"])
+
+    try:
+        model, summary = KerasModelBuilder.build_model(graph_data)
+        compiled_model = KerasModelBuilder.compile_model(
+            model=model,
+            optimizer="adam",
+            learning_rate=0.001,
+            loss=None
+        )
+    except KerasGraphError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to build Keras model for update: {str(e)}")
+
+    dest_dir = MODELS_DIR / project_id
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    weights_path = dest_dir / f"{model_id}.keras"
+
+    try:
+        compiled_model.save(str(weights_path))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save model weights on disk: {str(e)}")
+
+    now = datetime.now(timezone.utc).isoformat()
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            UPDATE models SET
+                name = ?, task_type = ?, graph_json = ?, summary_json = ?,
+                weights_path = ?, trainable_params = ?, non_trainable_params = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                name, task_type, json.dumps(graph_data), json.dumps(summary),
+                str(weights_path), summary["trainable_params"], summary["non_trainable_params"],
+                now, model_id
+            )
+        )
+        conn.commit()
+
+    return {
+        "model_id": model_id,
+        "name": name,
+        "task_type": task_type,
+        "weights_path": str(weights_path),
+        "summary": summary,
+        "graph": graph_data
+    }
+
+
+@router.delete("/{model_id}")
+def delete_model(model_id: str):
+    """Deletes a saved model from database and disk."""
+    with get_db_connection() as conn:
+        row = conn.execute("SELECT * FROM models WHERE id = ?", (model_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Model not found")
+        weights_path = row["weights_path"]
+
+    # Remove weights file if exists
+    if weights_path:
+        p = resolve_storage_path(weights_path)
+        if p and p.exists():
+            try:
+                p.unlink()
+            except Exception:
+                pass
+
+    with get_db_connection() as conn:
+        conn.execute("DELETE FROM models WHERE id = ?", (model_id,))
+        conn.execute("UPDATE projects SET active_model_id = NULL WHERE active_model_id = ?", (model_id,))
+        conn.commit()
+
+    return {"status": "success", "deleted_model_id": model_id}
 
 
 @router.get("/list/{project_id}")

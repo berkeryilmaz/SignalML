@@ -170,10 +170,16 @@ class NNEditor {
         const body = document.getElementById("nn-inspector-body");
         if (!body) return;
 
+        const currentCustomName = (node.properties && node.properties.custom_name) !== undefined ? node.properties.custom_name : (node.title || "");
+
         let html = `
             <div style="margin-bottom: 1rem;">
                 <div style="font-size: 16px; font-weight: 700; color: #fff;">${node.title}</div>
                 <div style="font-size: 12px; color: var(--text-muted); font-family: var(--font-mono);">Type: ${node.type} | ID: ${node.id}</div>
+            </div>
+            <div class="form-group" style="background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 8px; padding: 10px; margin-bottom: 1rem;">
+                <label class="form-label" style="font-weight: 700; color: #38bdf8; margin-bottom: 4px;">Özel Düğüm / Katman Adı (Custom Node Name)</label>
+                <input class="form-control" id="inspector-custom-name" type="text" value="${currentCustomName}" placeholder="örn: Conv1D_Ozellik_Cikarici">
             </div>
             <hr style="border: none; border-top: 1px solid var(--border-color); margin-bottom: 1rem;">
         `;
@@ -193,6 +199,19 @@ class NNEditor {
         }
 
         body.innerHTML = html;
+
+        // Bind custom name input event
+        const nameInput = document.getElementById("inspector-custom-name");
+        if (nameInput) {
+            nameInput.addEventListener("input", (e) => {
+                const val = e.target.value;
+                node.properties.custom_name = val.trim();
+                node.title = val.trim() || node.type;
+                if (this.canvas) {
+                    this.canvas.setDirty(true, true);
+                }
+            });
+        }
 
         // Bind input events
         body.querySelectorAll(".prop-input").forEach(input => {
@@ -216,8 +235,137 @@ class NNEditor {
         }
     }
 
-    serializeGraph() {
-        return this.graph.serialize();
+    autoLayout() {
+        if (!this.graph || !this.graph._nodes || this.graph._nodes.length === 0) {
+            if (window.SignalML && typeof window.SignalML.toast === "function") {
+                window.SignalML.toast("Hizalanacak düğüm bulunamadı!", "warning");
+            }
+            return;
+        }
+
+        const nodes = this.graph._nodes;
+        const links = this.graph.links || {};
+
+        // Build adjacency list and in-degree for topological longest-path depth computation
+        const adj = {};
+        const inDegree = {};
+        nodes.forEach(n => {
+            adj[n.id] = [];
+            inDegree[n.id] = 0;
+        });
+
+        // Map node id to node object
+        const nodeMap = {};
+        nodes.forEach(n => {
+            nodeMap[n.id] = n;
+        });
+
+        // Collect links from graph.links or node outputs
+        const allLinks = [];
+        if (Array.isArray(links)) {
+            links.forEach(l => {
+                if (l) allLinks.push({ origin_id: l[1], target_id: l[3] });
+            });
+        } else if (typeof links === "object" && links !== null) {
+            Object.values(links).forEach(l => {
+                if (l) allLinks.push({ origin_id: l.origin_id || l[1], target_id: l.target_id || l[3] });
+            });
+        }
+
+        // Also check node.outputs/inputs if graph.links is sparse
+        nodes.forEach(n => {
+            if (n.outputs) {
+                n.outputs.forEach((out, outIdx) => {
+                    if (out.links) {
+                        out.links.forEach(linkId => {
+                            const l = (this.graph.links && this.graph.links[linkId]) || (Array.isArray(links) && links.find(x => x && x[0] === linkId));
+                            if (l) {
+                                allLinks.push({ origin_id: l[1], target_id: l[3] });
+                            }
+                        });
+                    }
+                });
+            }
+        });
+
+        // Deduplicate links
+        const uniqueLinks = {};
+        allLinks.forEach(l => {
+            if (l.origin_id && l.target_id && nodeMap[l.origin_id] && nodeMap[l.target_id]) {
+                const key = `${l.origin_id}->${l.target_id}`;
+                if (!uniqueLinks[key]) {
+                    uniqueLinks[key] = true;
+                    adj[l.origin_id].push(l.target_id);
+                    inDegree[l.target_id] = (inDegree[l.target_id] || 0) + 1;
+                }
+            }
+        });
+
+        // Compute longest path depth using Kahn's algorithm / BFS topological sort
+        const depth = {};
+        nodes.forEach(n => { depth[n.id] = 0; });
+
+        const queue = [];
+        nodes.forEach(n => {
+            if ((inDegree[n.id] || 0) === 0) {
+                queue.push(n.id);
+                depth[n.id] = 0;
+            }
+        });
+
+        // If no 0 in-degree nodes found, fallback to node order
+        if (queue.length === 0 && nodes.length > 0) {
+            queue.push(nodes[0].id);
+            depth[nodes[0].id] = 0;
+        }
+
+        while (queue.length > 0) {
+            const u = queue.shift();
+            const currentDepth = depth[u];
+            (adj[u] || []).forEach(v => {
+                if (depth[v] < currentDepth + 1) {
+                    depth[v] = currentDepth + 1;
+                }
+                inDegree[v]--;
+                if (inDegree[v] === 0) {
+                    queue.push(v);
+                }
+            });
+        }
+
+        // Group nodes by depth
+        const depthGroups = {};
+        nodes.forEach(n => {
+            const d = depth[n.id] !== undefined ? depth[n.id] : 0;
+            if (!depthGroups[d]) depthGroups[d] = [];
+            depthGroups[d].push(n);
+        });
+
+        // Position nodes into clean horizontal columns and vertically centered rows
+        const colWidth = 260;
+        const rowHeight = 160;
+        const startX = 80;
+        const startY = 140;
+
+        Object.keys(depthGroups).sort((a, b) => Number(a) - Number(b)).forEach(dStr => {
+            const d = Number(dStr);
+            const groupNodes = depthGroups[d];
+            const x = startX + d * colWidth;
+            const totalGroupHeight = groupNodes.length * rowHeight;
+            
+            groupNodes.forEach((node, idx) => {
+                const y = startY + idx * rowHeight;
+                node.pos = [x, y];
+            });
+        });
+
+        if (this.canvas) {
+            this.canvas.setDirty(true, true);
+        }
+
+        if (window.SignalML && typeof window.SignalML.toast === "function") {
+            window.SignalML.toast("Mimari düğümleri otomatik hizalandı!", "success");
+        }
     }
 
     convertKerasConfigToLiteGraph(kerasConfig) {

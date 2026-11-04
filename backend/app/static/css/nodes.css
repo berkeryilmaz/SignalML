@@ -3,7 +3,24 @@
     display: grid;
     grid-template-columns: 280px 1fr 320px;
     gap: 1rem;
-    height: calc(100vh - 120px);
+    height: calc(100vh - 140px);
+    min-height: 700px;
+    transition: grid-template-columns 0.2s ease;
+}
+
+.editor-layout.expanded-canvas {
+    grid-template-columns: 0px 1fr 0px;
+    gap: 0;
+}
+
+.editor-layout.expanded-canvas .palette-pane,
+.editor-layout.expanded-canvas .inspector-pane {
+    overflow: hidden;
+    opacity: 0;
+    pointer-events: none;
+    border: none;
+    padding: 0;
+    margin: 0;
 }
 
 .palette-pane {

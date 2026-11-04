@@ -64,3 +64,83 @@ def list_extracted_features(project_id: str):
             d["shape"] = json.loads(d.get("shape_json", "[]"))
             res.append(d)
         return res
+
+
+@router.get("/{feature_id}/export_csv")
+def export_features_csv(feature_id: str):
+    """Exports extracted feature matrix as a CSV file download (with Input ID column)."""
+    try:
+        features, labels, record = FeatureExtractor.load_feature_matrix(feature_id)
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"Feature not found: {str(e)}")
+
+    import io
+    import csv
+    from fastapi.responses import StreamingResponse
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    num_samples, dim = features.shape
+    header = ["input_id"] + [f"feat_{i}" for i in range(dim)]
+    if labels is not None:
+        header.append("label")
+    writer.writerow(header)
+
+    for i in range(num_samples):
+        row = [i] + [float(val) for val in features[i]]
+        if labels is not None:
+            try:
+                row.append(float(labels[i]))
+            except Exception:
+                row.append(str(labels[i]))
+        writer.writerow(row)
+
+    output.seek(0)
+    filename = f"features_{feature_id[:8]}_{record.get('layer_id', 'layer').replace('/', '_')}.csv"
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+
+@router.put("/{feature_id}")
+def update_feature_name(feature_id: str, payload: Dict[str, Any] = Body(...)):
+    """Updates custom name or metadata for a saved feature extraction."""
+    new_name = payload.get("name") or payload.get("custom_name")
+    if not new_name:
+        raise HTTPException(status_code=400, detail="Name is required")
+
+    with get_db_connection() as conn:
+        row = conn.execute("SELECT * FROM features WHERE id = ?", (feature_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Feature extraction not found")
+        conn.execute("UPDATE features SET layer_id = ? WHERE id = ?", (new_name, feature_id))
+        conn.commit()
+
+    return {"status": "success", "feature_id": feature_id, "custom_name": new_name}
+
+
+@router.delete("/{feature_id}")
+def delete_feature(feature_id: str):
+    """Deletes saved feature set from database and disk."""
+    with get_db_connection() as conn:
+        row = conn.execute("SELECT * FROM features WHERE id = ?", (feature_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Feature extraction not found")
+        file_path = row["file_path"]
+
+    if file_path:
+        p = resolve_storage_path(file_path)
+        if p and p.exists():
+            try:
+                p.unlink()
+            except Exception:
+                pass
+
+    with get_db_connection() as conn:
+        conn.execute("DELETE FROM features WHERE id = ?", (feature_id,))
+        conn.commit()
+
+    return {"status": "success", "deleted_feature_id": feature_id}
