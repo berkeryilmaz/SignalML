@@ -8,6 +8,7 @@ from typing import Dict, Any, List, Optional
 import numpy as np
 import keras
 from sklearn.model_selection import train_test_split
+from sklearn.cluster import KMeans
 from sklearn.metrics import (
     classification_report,
     confusion_matrix,
@@ -19,7 +20,7 @@ from sklearn.metrics import (
 from app.core.config import MODELS_DIR, CHECKPOINTS_DIR, resolve_storage_path
 from app.core.database import get_db_connection
 from app.services.data_manager import DataManager
-from app.services.keras_model_builder import KerasModelBuilder
+from app.services.keras_model_builder import KerasModelBuilder, ClusteringLayer
 from datetime import datetime, timezone
 
 
@@ -199,11 +200,6 @@ class TrainingService:
             # Determine task type and targets
             task_type = model_record.get("task_type", "classification")
 
-            if y is None:
-                # If no labels, use self-supervised autoencoder task (y = X)
-                y = X.copy()
-                task_type = "regression"
-
             # Check model input shape compatibility
             model_input_shape = model.input_shape
             if isinstance(model_input_shape, list):
@@ -213,62 +209,194 @@ class TrainingService:
                 # Conv1D/LSTM expects (samples, seq_len, channels)
                 X = np.expand_dims(X, axis=-1)
 
+            # Check if model contains ClusteringLayer or is a 2-output IDEC model
+            clustering_layer = None
+            clustering_out_idx = 0
+            is_idec = False
+
+            outputs = model.outputs if isinstance(model.outputs, list) else [model.output]
+            for layer in model.layers:
+                if isinstance(layer, ClusteringLayer) or layer.__class__.__name__ == "ClusteringLayer" or "clustering" in getattr(layer, "name", "").lower():
+                    clustering_layer = layer
+                    break
+
+            if clustering_layer is not None or len(outputs) == 2:
+                is_idec = True
+                for idx, out_tensor in enumerate(outputs):
+                    layer = None
+                    if hasattr(out_tensor, "_keras_history"):
+                        hist = out_tensor._keras_history
+                        layer = hist[0] if isinstance(hist, tuple) else getattr(hist, "operation", None)
+                    if layer is not None:
+                        if isinstance(layer, ClusteringLayer) or layer.__class__.__name__ == "ClusteringLayer" or "clustering" in getattr(layer, "name", "").lower():
+                            clustering_out_idx = idx
+                            clustering_layer = layer
+                            break
+                if clustering_out_idx == 0 and len(outputs) == 2:
+                    output_shapes = model.output_shape if isinstance(model.output_shape, list) else [model.output_shape]
+                    if len(output_shapes[1]) == 2 and len(output_shapes[0]) > 2:
+                        clustering_out_idx = 1
+
             val_split = float(job.config.get("val_split", 0.2))
             shuffle = bool(job.config.get("shuffle", True))
             seed = job.config.get("seed", 42)
-
-            if val_split > 0.0 and len(X) > 4:
-                X_train, X_val, y_train, y_val = train_test_split(
-                    X, y, test_size=val_split, shuffle=shuffle, random_state=seed
-                )
-                validation_data = (X_val, y_val)
-            else:
-                X_train, y_train = X, y
-                validation_data = None
-
-            # Setup Callbacks
-            callbacks = [CancelCallback(job)]
-            if job.config.get("early_stopping", False):
-                patience = int(job.config.get("patience", 5))
-                monitor = "val_loss" if validation_data is not None else "loss"
-                callbacks.append(keras.callbacks.EarlyStopping(
-                    monitor=monitor,
-                    patience=patience,
-                    restore_best_weights=True
-                ))
-
-            # Train
             batch_size = int(job.config.get("batch_size", 32))
             epochs = int(job.config.get("epochs", 20))
+            opt_name = job.config.get("optimizer", "adam")
+            lr = float(job.config.get("learning_rate", 0.001))
 
-            # Ensure model is compiled
-            if not model.optimizer:
-                opt_name = job.config.get("optimizer", "adam")
-                lr = float(job.config.get("learning_rate", 0.001))
-                loss_name = job.config.get("loss") or ("mse" if task_type == "regression" else "sparse_categorical_crossentropy")
-                metrics = job.config.get("metrics") or (["mae"] if task_type == "regression" else ["accuracy"])
-                model.compile(optimizer=keras.optimizers.get({"class_name": opt_name, "config": {"learning_rate": lr}}), loss=loss_name, metrics=metrics)
+            callbacks = [CancelCallback(job)]
 
-            model.fit(
-                X_train,
-                y_train,
-                batch_size=batch_size,
-                epochs=epochs,
-                validation_data=validation_data,
-                callbacks=callbacks,
-                verbose=0
-            )
+            if is_idec:
+                # Automated IDEC Training:
+                # 1. Initialize cluster centers with KMeans on bottleneck layer embeddings
+                if clustering_layer is not None and hasattr(clustering_layer, "input"):
+                    try:
+                        encoder = keras.Model(inputs=model.inputs, outputs=clustering_layer.input)
+                        bottleneck_features = encoder.predict(X, verbose=0)
+                        n_clusters = getattr(clustering_layer, "n_clusters", 8)
+                        kmeans = KMeans(n_clusters=n_clusters, n_init=20, random_state=seed)
+                        kmeans.fit(bottleneck_features)
+                        clustering_layer.set_weights([kmeans.cluster_centers_])
+                    except Exception:
+                        pass
 
-            if job.status == "failed":
-                return
+                # 2. Compute initial high-confidence target distribution P
+                def compute_target_distribution(q: np.ndarray) -> np.ndarray:
+                    weight = q ** 2 / np.maximum(q.sum(axis=0), 1e-10)
+                    return (weight.T / np.maximum(weight.sum(axis=1), 1e-10)).T
 
-            # Run evaluation on validation set or training set
-            eval_X = X_val if validation_data is not None else X_train
-            eval_y = y_val if validation_data is not None else y_train
+                initial_preds = model.predict(X, verbose=0)
+                q_initial = initial_preds[clustering_out_idx] if isinstance(initial_preds, list) else initial_preds
+                P_target = compute_target_distribution(q_initial)
 
-            y_pred = model.predict(eval_X, verbose=0)
-            evaluation_results = cls._compute_evaluation_metrics(eval_y, y_pred, task_type)
-            job.evaluation = evaluation_results
+                if clustering_out_idx == 0:
+                    targets = [P_target, X]
+                else:
+                    targets = [X, P_target]
+
+                if val_split > 0.0 and len(X) > 4:
+                    idx_train, idx_val = train_test_split(
+                        np.arange(len(X)), test_size=val_split, shuffle=shuffle, random_state=seed
+                    )
+                    X_train, X_val = X[idx_train], X[idx_val]
+                    y_train = [t[idx_train] for t in targets]
+                    y_val = [t[idx_val] for t in targets]
+                    validation_data = (X_val, y_val)
+                else:
+                    X_train = X
+                    y_train = targets
+                    validation_data = None
+
+                # Compile with IDEC losses & loss weights
+                losses = ["kld", "mse"] if clustering_out_idx == 0 else ["mse", "kld"]
+                loss_weights = [0.1, 1.0] if clustering_out_idx == 0 else [1.0, 0.1]
+                model = KerasModelBuilder.compile_model(
+                    model,
+                    optimizer=opt_name,
+                    learning_rate=lr,
+                    loss=losses,
+                    loss_weights=loss_weights
+                )
+
+                if job.config.get("early_stopping", False):
+                    patience = int(job.config.get("patience", 5))
+                    callbacks.append(keras.callbacks.EarlyStopping(
+                        monitor="val_loss" if validation_data is not None else "loss",
+                        patience=patience,
+                        restore_best_weights=True
+                    ))
+
+                # Train IDEC model
+                model.fit(
+                    X_train,
+                    y_train,
+                    batch_size=batch_size,
+                    epochs=epochs,
+                    validation_data=validation_data,
+                    callbacks=callbacks,
+                    verbose=0
+                )
+
+                if job.status == "failed":
+                    return
+
+                # Evaluation for IDEC
+                eval_X = X_val if validation_data is not None else X_train
+                y_pred = model.predict(eval_X, verbose=0)
+                q_eval = y_pred[clustering_out_idx] if isinstance(y_pred, list) else y_pred
+                recon_eval = y_pred[1 - clustering_out_idx] if isinstance(y_pred, list) else y_pred
+
+                pred_clusters = np.argmax(q_eval, axis=1)
+                cluster_conf = float(np.mean(np.max(q_eval, axis=1)))
+                unique_c, counts_c = np.unique(pred_clusters, return_counts=True)
+                rec_mse = float(mean_squared_error(eval_X.flatten(), recon_eval.flatten()))
+                rec_mae = float(mean_absolute_error(eval_X.flatten(), recon_eval.flatten()))
+
+                evaluation_results = {
+                    "task_type": "idec_clustering",
+                    "n_clusters": int(q_eval.shape[1]),
+                    "mean_cluster_confidence": round(cluster_conf, 4),
+                    "cluster_distribution": {str(k): int(v) for k, v in zip(unique_c, counts_c)},
+                    "reconstruction_mse": round(rec_mse, 6),
+                    "reconstruction_mae": round(rec_mae, 6)
+                }
+                job.evaluation = evaluation_results
+
+            else:
+                # Standard Classification / Regression Pipeline
+                if y is None:
+                    y = X.copy()
+                    task_type = "regression"
+
+                if val_split > 0.0 and len(X) > 4:
+                    X_train, X_val, y_train, y_val = train_test_split(
+                        X, y, test_size=val_split, shuffle=shuffle, random_state=seed
+                    )
+                    validation_data = (X_val, y_val)
+                else:
+                    X_train, y_train = X, y
+                    validation_data = None
+
+                if job.config.get("early_stopping", False):
+                    patience = int(job.config.get("patience", 5))
+                    monitor = "val_loss" if validation_data is not None else "loss"
+                    callbacks.append(keras.callbacks.EarlyStopping(
+                        monitor=monitor,
+                        patience=patience,
+                        restore_best_weights=True
+                    ))
+
+                # Ensure model is compiled
+                if not model.optimizer:
+                    loss_name = job.config.get("loss") or ("mse" if task_type == "regression" else "sparse_categorical_crossentropy")
+                    metrics = job.config.get("metrics") or (["mae"] if task_type == "regression" else ["accuracy"])
+                    model.compile(
+                        optimizer=keras.optimizers.get({"class_name": opt_name, "config": {"learning_rate": lr}}),
+                        loss=loss_name,
+                        metrics=metrics
+                    )
+
+                model.fit(
+                    X_train,
+                    y_train,
+                    batch_size=batch_size,
+                    epochs=epochs,
+                    validation_data=validation_data,
+                    callbacks=callbacks,
+                    verbose=0
+                )
+
+                if job.status == "failed":
+                    return
+
+                # Run evaluation on validation set or training set
+                eval_X = X_val if validation_data is not None else X_train
+                eval_y = y_val if validation_data is not None else y_train
+
+                y_pred = model.predict(eval_X, verbose=0)
+                evaluation_results = cls._compute_evaluation_metrics(eval_y, y_pred, task_type)
+                job.evaluation = evaluation_results
 
             # Save updated trained model weights ONLY if weights are finite and job succeeded
             has_nan_weights = any(

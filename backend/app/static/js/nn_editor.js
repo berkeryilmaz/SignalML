@@ -96,6 +96,10 @@ class NNEditor {
         registerLayer("add", "Add", [{ name: "in1", type: "Tensor" }, { name: "in2", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {});
         registerLayer("multiply", "Multiply", [{ name: "in1", type: "Tensor" }, { name: "in2", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {});
         registerLayer("activation", "Activation", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { activation: "relu" });
+
+        // 8. IDEC Clustering & Custom Layers
+        registerLayer("clustering", "ClusteringLayer (IDEC)", [{ name: "in", type: "Tensor" }], [{ name: "prob", type: "Tensor" }], { n_clusters: 8, alpha: 1.0 }, ["clusteringlayer"]);
+        registerLayer("custom_layer", "Custom Layer", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { class_name: "CustomSignalLayer", units: 32, activation: "relu", code: "" }, ["customlayer", "customsignallayer"]);
     }
 
     setupDefaultGraph() {
@@ -181,12 +185,24 @@ class NNEditor {
         if (node.properties && Object.keys(node.properties).length > 0) {
             html += `<div style="font-weight: 600; font-size: 13px; margin-bottom: 0.5rem;">Parameters</div>`;
             for (let [k, v] of Object.entries(node.properties)) {
-                html += `
-                    <div class="form-group">
-                        <label class="form-label">${k}</label>
-                        <input class="form-control prop-input" data-prop="${k}" type="${typeof v === 'number' ? 'number' : 'text'}" value="${v}">
-                    </div>
-                `;
+                if (k === "code") {
+                    html += `
+                        <div class="form-group">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                <label class="form-label" style="margin: 0;">Katman Kodu (Code)</label>
+                                <button class="btn btn-secondary btn-sm" onclick="openCustomLayerModal()" style="font-size: 10px; padding: 2px 6px;">Studio'da Aç</button>
+                            </div>
+                            <textarea class="form-control prop-input" data-prop="code" rows="5" style="font-family: var(--font-mono); font-size: 11px;">${SignalML.escapeHtml(v || "")}</textarea>
+                        </div>
+                    `;
+                } else {
+                    html += `
+                        <div class="form-group">
+                            <label class="form-label">${k}</label>
+                            <input class="form-control prop-input" data-prop="${k}" type="${typeof v === 'number' ? 'number' : 'text'}" value="${v}">
+                        </div>
+                    `;
+                }
             }
         } else {
             html += `<div style="color: var(--text-muted); font-size: 13px;">No configurable parameters for this layer.</div>`;
@@ -335,6 +351,8 @@ class NNEditor {
                 else if (t === "keras/globalaveragepooling1d" || t === "keras/globalavgpooling1d") t = "keras/global_averagepooling1d";
                 else if (t === "keras/multiheadattention") t = "keras/multihead_attention";
                 else if (t === "keras/positionalencoding") t = "keras/positional_encoding";
+                else if (t === "keras/clusteringlayer") t = "keras/clustering";
+                else if (t === "keras/customsignallayer" || t === "keras/customlayer") t = "keras/custom_layer";
                 n.type = t;
 
                 if (!n.pos || !Array.isArray(n.pos)) {
@@ -849,6 +867,346 @@ class NNEditor {
             nNorm.connect(0, nPool, 0);
             nPool.connect(0, nOut, 0);
             nOut.connect(0, nOutput, 0);
+
+        } else if (type === "idec_cnn") {
+            // 1D-CNN IDEC with editable Encoder, Decoder, and ClusteringLayer branch
+            const nInput = LiteGraph.createNode("keras/input");
+            nInput.pos = [80, 220];
+            nInput.title = "Signal Input";
+            nInput.properties.shape = `${seqLen}, 1`;
+            this.graph.add(nInput);
+
+            // Encoder
+            const nEnc1 = LiteGraph.createNode("keras/conv1d");
+            nEnc1.pos = [300, 220];
+            nEnc1.title = "Encoder Conv1";
+            nEnc1.properties.filters = baseFilters;
+            nEnc1.properties.kernel_size = 7;
+            nEnc1.properties.activation = act;
+            this.graph.add(nEnc1);
+
+            const nPool1 = LiteGraph.createNode("keras/maxpooling1d");
+            nPool1.pos = [520, 220];
+            nPool1.properties.pool_size = 2;
+            this.graph.add(nPool1);
+
+            const nEnc2 = LiteGraph.createNode("keras/conv1d");
+            nEnc2.pos = [740, 220];
+            nEnc2.title = "Encoder Conv2";
+            nEnc2.properties.filters = baseFilters * 2;
+            nEnc2.properties.kernel_size = 5;
+            nEnc2.properties.activation = act;
+            this.graph.add(nEnc2);
+
+            const nPool2 = LiteGraph.createNode("keras/maxpooling1d");
+            nPool2.pos = [960, 220];
+            nPool2.properties.pool_size = 2;
+            this.graph.add(nPool2);
+
+            const nFlat = LiteGraph.createNode("keras/flatten");
+            nFlat.pos = [1180, 220];
+            this.graph.add(nFlat);
+
+            const nBottle = LiteGraph.createNode("keras/dense");
+            nBottle.pos = [1400, 220];
+            nBottle.title = "Bottleneck Latent (Z)";
+            nBottle.properties.units = latentDim;
+            nBottle.properties.activation = "linear";
+            this.graph.add(nBottle);
+
+            // Branch A: ClusteringLayer
+            const nClust = LiteGraph.createNode("keras/clustering");
+            nClust.pos = [1640, 100];
+            nClust.title = "IDEC ClusteringLayer";
+            nClust.properties.n_clusters = numClasses || 8;
+            nClust.properties.alpha = 1.0;
+            this.graph.add(nClust);
+
+            const nClustOut = LiteGraph.createNode("keras/output");
+            nClustOut.pos = [1880, 100];
+            nClustOut.title = "Cluster Probabilities (Q)";
+            nClustOut.properties.activation = "linear";
+            this.graph.add(nClustOut);
+
+            // Branch B: Decoder (Signal Reconstruction)
+            const nDecDense = LiteGraph.createNode("keras/dense");
+            nDecDense.pos = [1640, 340];
+            nDecDense.title = "Decoder Expand";
+            nDecDense.properties.units = Math.floor(seqLen / 4) * baseFilters;
+            nDecDense.properties.activation = act;
+            this.graph.add(nDecDense);
+
+            const nReshape = LiteGraph.createNode("keras/reshape");
+            nReshape.pos = [1860, 340];
+            nReshape.properties.target_shape = `${Math.floor(seqLen / 4)}, ${baseFilters}`;
+            this.graph.add(nReshape);
+
+            const nUp1 = LiteGraph.createNode("keras/upsampling1d");
+            nUp1.pos = [2080, 340];
+            nUp1.properties.size = 2;
+            this.graph.add(nUp1);
+
+            const nDec1 = LiteGraph.createNode("keras/conv1d");
+            nDec1.pos = [2300, 340];
+            nDec1.title = "Decoder Conv1";
+            nDec1.properties.filters = baseFilters;
+            nDec1.properties.kernel_size = 5;
+            nDec1.properties.activation = act;
+            this.graph.add(nDec1);
+
+            const nUp2 = LiteGraph.createNode("keras/upsampling1d");
+            nUp2.pos = [2520, 340];
+            nUp2.properties.size = 2;
+            this.graph.add(nUp2);
+
+            const nDec2 = LiteGraph.createNode("keras/conv1d");
+            nDec2.pos = [2740, 340];
+            nDec2.title = "Reconstructed Waveform";
+            nDec2.properties.filters = 1;
+            nDec2.properties.kernel_size = 7;
+            nDec2.properties.activation = "linear";
+            this.graph.add(nDec2);
+
+            const nReconOut = LiteGraph.createNode("keras/output");
+            nReconOut.pos = [2960, 340];
+            nReconOut.title = "Reconstruction Output";
+            nReconOut.properties.activation = "linear";
+            this.graph.add(nReconOut);
+
+            // Connections
+            nInput.connect(0, nEnc1, 0);
+            nEnc1.connect(0, nPool1, 0);
+            nPool1.connect(0, nEnc2, 0);
+            nEnc2.connect(0, nPool2, 0);
+            nPool2.connect(0, nFlat, 0);
+            nFlat.connect(0, nBottle, 0);
+
+            // Latent to Clustering branch
+            nBottle.connect(0, nClust, 0);
+            nClust.connect(0, nClustOut, 0);
+
+            // Latent to Decoder branch
+            nBottle.connect(0, nDecDense, 0);
+            nDecDense.connect(0, nReshape, 0);
+            nReshape.connect(0, nUp1, 0);
+            nUp1.connect(0, nDec1, 0);
+            nDec1.connect(0, nUp2, 0);
+            nUp2.connect(0, nDec2, 0);
+            nDec2.connect(0, nReconOut, 0);
+
+        } else if (type === "idec_dense") {
+            // Dense IDEC with editable Encoder, Decoder, and ClusteringLayer branch
+            const nInput = LiteGraph.createNode("keras/input");
+            nInput.pos = [80, 200];
+            nInput.properties.shape = `${seqLen}, 1`;
+            this.graph.add(nInput);
+
+            const nFlat = LiteGraph.createNode("keras/flatten");
+            nFlat.pos = [300, 200];
+            this.graph.add(nFlat);
+
+            const nEnc1 = LiteGraph.createNode("keras/dense");
+            nEnc1.pos = [520, 200];
+            nEnc1.title = "Dense Encoder 1";
+            nEnc1.properties.units = 128;
+            nEnc1.properties.activation = act;
+            this.graph.add(nEnc1);
+
+            const nEnc2 = LiteGraph.createNode("keras/dense");
+            nEnc2.pos = [740, 200];
+            nEnc2.title = "Dense Encoder 2";
+            nEnc2.properties.units = 64;
+            nEnc2.properties.activation = act;
+            this.graph.add(nEnc2);
+
+            const nBottle = LiteGraph.createNode("keras/dense");
+            nBottle.pos = [960, 200];
+            nBottle.title = "Bottleneck Latent (Z)";
+            nBottle.properties.units = latentDim;
+            nBottle.properties.activation = "linear";
+            this.graph.add(nBottle);
+
+            // Branch A: Clustering branch
+            const nClust = LiteGraph.createNode("keras/clustering");
+            nClust.pos = [1200, 100];
+            nClust.title = "IDEC ClusteringLayer";
+            nClust.properties.n_clusters = numClasses || 8;
+            nClust.properties.alpha = 1.0;
+            this.graph.add(nClust);
+
+            const nClustOut = LiteGraph.createNode("keras/output");
+            nClustOut.pos = [1440, 100];
+            nClustOut.title = "Cluster Probabilities (Q)";
+            nClustOut.properties.activation = "linear";
+            this.graph.add(nClustOut);
+
+            // Branch B: Decoder branch
+            const nDec1 = LiteGraph.createNode("keras/dense");
+            nDec1.pos = [1200, 320];
+            nDec1.title = "Dense Decoder 1";
+            nDec1.properties.units = 64;
+            nDec1.properties.activation = act;
+            this.graph.add(nDec1);
+
+            const nDec2 = LiteGraph.createNode("keras/dense");
+            nDec2.pos = [1420, 320];
+            nDec2.title = "Dense Decoder 2";
+            nDec2.properties.units = 128;
+            nDec2.properties.activation = act;
+            this.graph.add(nDec2);
+
+            const nDecOut = LiteGraph.createNode("keras/dense");
+            nDecOut.pos = [1640, 320];
+            nDecOut.title = "Reconstructed Dense";
+            nDecOut.properties.units = seqLen;
+            nDecOut.properties.activation = "linear";
+            this.graph.add(nDecOut);
+
+            const nReshape = LiteGraph.createNode("keras/reshape");
+            nReshape.pos = [1860, 320];
+            nReshape.properties.target_shape = `${seqLen}, 1`;
+            this.graph.add(nReshape);
+
+            const nReconOut = LiteGraph.createNode("keras/output");
+            nReconOut.pos = [2080, 320];
+            nReconOut.title = "Reconstruction Output";
+            nReconOut.properties.activation = "linear";
+            this.graph.add(nReconOut);
+
+            // Connections
+            nInput.connect(0, nFlat, 0);
+            nFlat.connect(0, nEnc1, 0);
+            nEnc1.connect(0, nEnc2, 0);
+            nEnc2.connect(0, nBottle, 0);
+
+            nBottle.connect(0, nClust, 0);
+            nClust.connect(0, nClustOut, 0);
+
+            nBottle.connect(0, nDec1, 0);
+            nDec1.connect(0, nDec2, 0);
+            nDec2.connect(0, nDecOut, 0);
+            nDecOut.connect(0, nReshape, 0);
+            nReshape.connect(0, nReconOut, 0);
+
+        } else if (type === "hybrid_cnn_tabular") {
+            // Multi-Branch 1D-CNN + Tabular Input merging via Concatenate
+            const nSigIn = LiteGraph.createNode("keras/input");
+            nSigIn.pos = [80, 140];
+            nSigIn.title = "Signal Waveform Input";
+            nSigIn.properties.shape = `${seqLen}, 1`;
+            this.graph.add(nSigIn);
+
+            const nConv1 = LiteGraph.createNode("keras/conv1d");
+            nConv1.pos = [300, 140];
+            nConv1.title = "Signal Conv1D";
+            nConv1.properties.filters = baseFilters;
+            nConv1.properties.kernel_size = 5;
+            nConv1.properties.activation = act;
+            this.graph.add(nConv1);
+
+            const nPool1 = LiteGraph.createNode("keras/maxpooling1d");
+            nPool1.pos = [520, 140];
+            nPool1.properties.pool_size = 2;
+            this.graph.add(nPool1);
+
+            const nConv2 = LiteGraph.createNode("keras/conv1d");
+            nConv2.pos = [740, 140];
+            nConv2.title = "Signal Conv1D 2";
+            nConv2.properties.filters = baseFilters * 2;
+            nConv2.properties.kernel_size = 3;
+            nConv2.properties.activation = act;
+            this.graph.add(nConv2);
+
+            const nPool2 = LiteGraph.createNode("keras/global_averagepooling1d");
+            nPool2.pos = [960, 140];
+            this.graph.add(nPool2);
+
+            const nSigDense = LiteGraph.createNode("keras/dense");
+            nSigDense.pos = [1180, 140];
+            nSigDense.title = "Signal Embeddings";
+            nSigDense.properties.units = 32;
+            nSigDense.properties.activation = act;
+            this.graph.add(nSigDense);
+
+            // Tabular Stream
+            const nTabIn = LiteGraph.createNode("keras/input");
+            nTabIn.pos = [80, 360];
+            nTabIn.title = "Tabular Features Input";
+            nTabIn.properties.shape = "16";
+            this.graph.add(nTabIn);
+
+            const nTabDense1 = LiteGraph.createNode("keras/dense");
+            nTabDense1.pos = [320, 360];
+            nTabDense1.title = "Tabular Dense 1";
+            nTabDense1.properties.units = 32;
+            nTabDense1.properties.activation = act;
+            this.graph.add(nTabDense1);
+
+            const nTabDrop = LiteGraph.createNode("keras/dropout");
+            nTabDrop.pos = [540, 360];
+            nTabDrop.properties.rate = 0.2;
+            this.graph.add(nTabDrop);
+
+            const nTabDense2 = LiteGraph.createNode("keras/dense");
+            nTabDense2.pos = [760, 360];
+            nTabDense2.title = "Tabular Embeddings";
+            nTabDense2.properties.units = 16;
+            nTabDense2.properties.activation = act;
+            this.graph.add(nTabDense2);
+
+            // Merge Stream
+            const nConcat = LiteGraph.createNode("keras/concatenate");
+            nConcat.pos = [1420, 240];
+            nConcat.title = "Merge (Signal + Tabular)";
+            nConcat.properties.axis = -1;
+            this.graph.add(nConcat);
+
+            const nFusion = LiteGraph.createNode("keras/dense");
+            nFusion.pos = [1640, 240];
+            nFusion.title = "Fusion Dense";
+            nFusion.properties.units = 64;
+            nFusion.properties.activation = act;
+            this.graph.add(nFusion);
+
+            const nDropFinal = LiteGraph.createNode("keras/dropout");
+            nDropFinal.pos = [1860, 240];
+            nDropFinal.properties.rate = 0.3;
+            this.graph.add(nDropFinal);
+
+            const nFinal = LiteGraph.createNode("keras/dense");
+            nFinal.pos = [2080, 240];
+            nFinal.title = "Classifier Head";
+            nFinal.properties.units = numClasses || 4;
+            nFinal.properties.activation = "softmax";
+            this.graph.add(nFinal);
+
+            const nOutput = LiteGraph.createNode("keras/output");
+            nOutput.pos = [2300, 240];
+            nOutput.title = "Classification Output";
+            nOutput.properties.activation = "softmax";
+            this.graph.add(nOutput);
+
+            // Connect Signal Stream
+            nSigIn.connect(0, nConv1, 0);
+            nConv1.connect(0, nPool1, 0);
+            nPool1.connect(0, nConv2, 0);
+            nConv2.connect(0, nPool2, 0);
+            nPool2.connect(0, nSigDense, 0);
+
+            // Connect Tabular Stream
+            nTabIn.connect(0, nTabDense1, 0);
+            nTabDense1.connect(0, nTabDrop, 0);
+            nTabDrop.connect(0, nTabDense2, 0);
+
+            // Connect into Merge Concatenate
+            nSigDense.connect(0, nConcat, 0);
+            nTabDense2.connect(0, nConcat, 1);
+
+            // Connect Head
+            nConcat.connect(0, nFusion, 0);
+            nFusion.connect(0, nDropFinal, 0);
+            nDropFinal.connect(0, nFinal, 0);
+            nFinal.connect(0, nOutput, 0);
         }
 
         setTimeout(() => {
