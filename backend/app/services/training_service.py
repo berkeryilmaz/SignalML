@@ -84,10 +84,18 @@ class PreparedDataset(tuple):
 
 
 class CancelCallback(keras.callbacks.Callback):
-    def __init__(self, job: TrainingJob, epoch_offset: int = 0):
+    def __init__(
+        self,
+        job: TrainingJob,
+        epoch_offset: int = 0,
+        y_train_var: Optional[float] = None,
+        y_val_var: Optional[float] = None
+    ):
         super().__init__()
         self.job = job
         self.epoch_offset = epoch_offset
+        self.y_train_var = y_train_var
+        self.y_val_var = y_val_var
 
     def on_epoch_end(self, epoch, logs=None):
         logs = logs or {}
@@ -95,6 +103,20 @@ class CancelCallback(keras.callbacks.Callback):
         self.job.current_epoch = actual_epoch
         self.job.elapsed_seconds = time.time() - self.job.start_time
         
+        # In reconstruction / regression models where native classification accuracy doesn't exist,
+        # compute Explained Variance (R^2 reconstruction accuracy) bounded between 0.0 and 1.0 (0% - 100%)
+        # so the accuracy curve reflects true reconstruction fidelity instead of an error metric.
+        if "accuracy" not in logs and "acc" not in logs:
+            train_mse = logs.get("loss")
+            if train_mse is not None and self.y_train_var is not None and self.y_train_var > 1e-9:
+                recon_acc = float(np.clip(1.0 - (train_mse / self.y_train_var), 0.0, 1.0))
+                logs["accuracy"] = round(recon_acc, 4)
+
+            val_mse = logs.get("val_loss")
+            if val_mse is not None and self.y_val_var is not None and self.y_val_var > 1e-9:
+                val_recon_acc = float(np.clip(1.0 - (val_mse / self.y_val_var), 0.0, 1.0))
+                logs["val_accuracy"] = round(val_recon_acc, 4)
+
         has_diverged = False
         for k, v in logs.items():
             if k not in self.job.history:
@@ -529,6 +551,11 @@ class TrainingService:
                 recon_target = X_train[0] if isinstance(X_train, list) else X_train
                 recon_val_target = (X_val[0] if isinstance(X_val, list) else X_val) if X_val is not None else None
 
+                if isinstance(recon_target, np.ndarray) and recon_target.size > 0:
+                    callbacks[0].y_train_var = float(np.var(recon_target))
+                if isinstance(recon_val_target, np.ndarray) and recon_val_target.size > 0:
+                    callbacks[0].y_val_var = float(np.var(recon_val_target))
+
                 # 1. Pre-training phase for Autoencoder submodel
                 if pretrain_epochs > 0 and not is_resumed:
                     try:
@@ -729,6 +756,15 @@ class TrainingService:
                 else:
                     X_train, y_train = X, y
                     validation_data = None
+
+                if y_train is not None:
+                    y_tr_arr = y_train[0] if isinstance(y_train, list) else y_train
+                    if isinstance(y_tr_arr, np.ndarray) and y_tr_arr.size > 0:
+                        callbacks[0].y_train_var = float(np.var(y_tr_arr))
+                if y_val is not None:
+                    y_vl_arr = y_val[0] if isinstance(y_val, list) else y_val
+                    if isinstance(y_vl_arr, np.ndarray) and y_vl_arr.size > 0:
+                        callbacks[0].y_val_var = float(np.var(y_vl_arr))
 
                 if job.config.get("early_stopping", False):
                     patience = int(job.config.get("patience", 5))

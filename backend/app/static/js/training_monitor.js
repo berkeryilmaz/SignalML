@@ -20,13 +20,38 @@ class TrainingMonitor {
             xAxis: {
                 title: { text: "Epoch", style: { color: "#94a3b8" } },
                 labels: { style: { color: "#94a3b8" } },
-                gridLineColor: "#1e293b"
+                gridLineColor: "#1e293b",
+                allowDecimals: false
             },
-            yAxis: {
-                title: { text: "Metric Value", style: { color: "#94a3b8" } },
-                labels: { style: { color: "#94a3b8" } },
-                gridLineColor: "#1e293b"
-            },
+            yAxis: [
+                {
+                    // yAxis 0 (Left): Loss
+                    title: { text: "Loss (Kayıp)", style: { color: "#38bdf8" } },
+                    labels: {
+                        style: { color: "#94a3b8" },
+                        formatter: function () {
+                            return (typeof this.value === "number") ? this.value.toFixed(4) : this.value;
+                        }
+                    },
+                    gridLineColor: "#1e293b",
+                    min: 0
+                },
+                {
+                    // yAxis 1 (Right): Accuracy
+                    title: { text: "Accuracy (Doğruluk)", style: { color: "#34d399" } },
+                    labels: {
+                        style: { color: "#34d399" },
+                        formatter: function () {
+                            if (typeof this.value !== "number") return this.value;
+                            return (this.value <= 1.0) ? (this.value * 100).toFixed(0) + "%" : this.value.toFixed(2);
+                        }
+                    },
+                    opposite: true,
+                    min: 0,
+                    max: 1.0,
+                    gridLineWidth: 0
+                }
+            ],
             legend: {
                 itemStyle: { color: "#f1f5f9" }
             },
@@ -35,14 +60,56 @@ class TrainingMonitor {
                 backgroundColor: "#191f2e",
                 borderColor: "#334155",
                 style: { color: "#f8fafc" },
-                valueDecimals: 4
+                valueDecimals: 4,
+                pointFormatter: function () {
+                    const isAcc = this.series.name.toLowerCase().includes("accur") || this.series.name.toLowerCase().includes("doğruluk");
+                    let valStr = (typeof this.y === "number") ? this.y.toFixed(4) : this.y;
+                    if (isAcc && typeof this.y === "number" && this.y <= 1.0) {
+                        valStr += ` (${(this.y * 100).toFixed(2)}%)`;
+                    }
+                    return `<span style="color:${this.color}">●</span> ${this.series.name}: <b>${valStr}</b><br/>`;
+                }
             },
             series: [
-                { name: "Training Loss", data: [], color: "#38bdf8" },
-                { name: "Validation Loss", data: [], color: "#f43f5e" },
-                { name: "Accuracy / Metric", data: [], color: "#34d399" }
+                { name: "Training Loss", data: [], color: "#38bdf8", yAxis: 0 },
+                { name: "Validation Loss", data: [], color: "#f43f5e", dashStyle: "ShortDash", yAxis: 0 },
+                { name: "Training Accuracy", data: [], color: "#34d399", yAxis: 1 },
+                { name: "Validation Accuracy", data: [], color: "#a78bfa", dashStyle: "ShortDash", yAxis: 1 }
             ]
         });
+    }
+
+    extractAccuracySeries(hist, isVal = false) {
+        if (!hist || typeof hist !== "object") return [];
+
+        // 1. Direct standard keys
+        const primaryKeys = isVal
+            ? ["val_accuracy", "val_acc", "val_categorical_accuracy", "val_sparse_categorical_accuracy", "val_recon_accuracy"]
+            : ["accuracy", "acc", "categorical_accuracy", "sparse_categorical_accuracy", "recon_accuracy"];
+
+        for (const k of primaryKeys) {
+            if (Array.isArray(hist[k]) && hist[k].length > 0) {
+                return hist[k];
+            }
+        }
+
+        // 2. Multi-output search: Look strictly for accuracy keys and strictly EXCLUDE any loss/mae/mse/error
+        for (const [key, val] of Object.entries(hist)) {
+            if (!Array.isArray(val) || val.length === 0) continue;
+            const lk = key.toLowerCase();
+
+            // Strict exclusion: NEVER allow loss, mae, mse, or error metrics to be matched as accuracy
+            if (lk.includes("loss") || lk.includes("mae") || lk.includes("mse") || lk.includes("error")) {
+                continue;
+            }
+
+            const prefixMatch = isVal ? lk.startsWith("val_") : !lk.startsWith("val_");
+            if (prefixMatch && (lk.includes("accuracy") || lk.includes("acc"))) {
+                return val;
+            }
+        }
+
+        return [];
     }
 
     async startJob(config) {
@@ -145,8 +212,57 @@ class TrainingMonitor {
         const hist = status.history || {};
         const lossData = hist.loss || [];
         const valLossData = hist.val_loss || [];
-        const accData = hist.accuracy || hist.acc || hist.mae || Object.entries(hist).find(([k]) => !k.startsWith("val_") && (k.includes("acc") || k.includes("mae")))?.[1] || [];
-        const valAccData = hist.val_accuracy || hist.val_acc || hist.val_mae || Object.entries(hist).find(([k]) => k.startsWith("val_") && (k.includes("acc") || k.includes("mae")))?.[1] || [];
+
+        let accData = this.extractAccuracySeries(hist, false);
+        let valAccData = this.extractAccuracySeries(hist, true);
+        const hasAccuracy = accData.length > 0;
+
+        let metricLabel = "Model Accuracy";
+        let metricDisplayVal = "—";
+
+        if (hasAccuracy) {
+            // Configure series for actual Accuracy (0 to 1.0 / 0% to 100%)
+            if (this.chart.series[2] && this.chart.series[2].name !== "Training Accuracy") {
+                this.chart.series[2].update({ name: "Training Accuracy" }, false);
+            }
+            if (this.chart.series[3] && this.chart.series[3].name !== "Validation Accuracy") {
+                this.chart.series[3].update({ name: "Validation Accuracy" }, false);
+            }
+            if (this.chart.yAxis[1]) {
+                this.chart.yAxis[1].update({ title: { text: "Accuracy (Doğruluk)" }, max: 1.0 }, false);
+            }
+
+            const lastAcc = accData[accData.length - 1];
+            if (typeof lastAcc === "number" && isFinite(lastAcc)) {
+                metricDisplayVal = (lastAcc <= 1.0) ? `${(lastAcc * 100).toFixed(2)}%` : lastAcc.toFixed(4);
+            }
+        } else if (Array.isArray(hist.mae) && hist.mae.length > 0) {
+            // Regression fallback: Do NOT disguise error as accuracy!
+            // Explicitly label as MAE (Error)
+            accData = hist.mae;
+            valAccData = hist.val_mae || [];
+            if (this.chart.series[2] && this.chart.series[2].name !== "Training MAE (Error)") {
+                this.chart.series[2].update({ name: "Training MAE (Error)" }, false);
+            }
+            if (this.chart.series[3] && this.chart.series[3].name !== "Validation MAE (Error)") {
+                this.chart.series[3].update({ name: "Validation MAE (Error)" }, false);
+            }
+            if (this.chart.yAxis[1]) {
+                this.chart.yAxis[1].update({ title: { text: "MAE (Hata)" }, max: null }, false);
+            }
+
+            metricLabel = "Mean Absolute Error";
+            const lastMae = accData[accData.length - 1];
+            if (typeof lastMae === "number" && isFinite(lastMae)) {
+                metricDisplayVal = lastMae.toFixed(4);
+            }
+        } else {
+            accData = [];
+            valAccData = [];
+        }
+
+        setVal("train-stat-accuracy", metricDisplayVal);
+        setVal("train-stat-acc-label", metricLabel);
 
         const sanitizeNum = (v) => (typeof v === "number" && !isNaN(v) && isFinite(v)) ? v : null;
 
@@ -159,10 +275,11 @@ class TrainingMonitor {
             setVal("train-stat-val-loss", (typeof lastVL === "number" && isFinite(lastVL)) ? lastVL.toFixed(4) : "—");
         }
 
-        // Update Highcharts Series safely
-        this.chart.series[0].setData(lossData.map((v, i) => [i + 1, sanitizeNum(v)]), false);
-        this.chart.series[1].setData(valLossData.map((v, i) => [i + 1, sanitizeNum(v)]), false);
-        this.chart.series[2].setData(accData.map((v, i) => [i + 1, sanitizeNum(v)]), false);
+        // Update Highcharts Series safely (all 4 series)
+        if (this.chart.series[0]) this.chart.series[0].setData(lossData.map((v, i) => [i + 1, sanitizeNum(v)]), false);
+        if (this.chart.series[1]) this.chart.series[1].setData(valLossData.map((v, i) => [i + 1, sanitizeNum(v)]), false);
+        if (this.chart.series[2]) this.chart.series[2].setData(accData.map((v, i) => [i + 1, sanitizeNum(v)]), false);
+        if (this.chart.series[3]) this.chart.series[3].setData(valAccData.map((v, i) => [i + 1, sanitizeNum(v)]), false);
         this.chart.redraw();
 
         // Render evaluation results if finished

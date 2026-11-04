@@ -6,6 +6,10 @@ const SignalML = {
     activeDataset: null,
     activeModel: null,
 
+    getProjectId: function() {
+        return this.currentProjectId || localStorage.getItem("signalml_active_project") || "default-project";
+    },
+
     init: async function() {
         await this.loadProjects();
         this.setupProjectSwitcher();
@@ -207,6 +211,10 @@ const SignalML = {
         }
     }
 };
+
+if (typeof window !== "undefined") {
+    window.SignalML = SignalML;
+}
 
 document.addEventListener("DOMContentLoaded", () => {
     SignalML.init();

@@ -28,6 +28,28 @@ class NNEditor {
         this.graph.start();
     }
 
+    toast(message, type = "info") {
+        const sml = (typeof window !== "undefined" && window.SignalML) || (typeof SignalML !== "undefined" ? SignalML : null);
+        if (sml && typeof sml.toast === "function") {
+            sml.toast(message, type);
+        } else {
+            console.log(`[${type}] ${message}`);
+        }
+    }
+
+    getActiveProjectId() {
+        const sml = (typeof window !== "undefined" && window.SignalML) || (typeof SignalML !== "undefined" ? SignalML : null);
+        if (sml) {
+            if (typeof sml.getProjectId === "function") return sml.getProjectId();
+            if (sml.currentProjectId) return sml.currentProjectId;
+        }
+        if (typeof localStorage !== "undefined") {
+            const saved = localStorage.getItem("signalml_active_project");
+            if (saved) return saved;
+        }
+        return "default-project";
+    }
+
     registerKerasNodes() {
         const registerLayer = (type, title, inputs, outputs, properties, aliases = []) => {
             function KerasNode() {
@@ -201,7 +223,8 @@ class NNEditor {
             `;
         }
 
-        const safeCustomName = (window.SignalML && typeof window.SignalML.escapeHtml === "function") ? window.SignalML.escapeHtml(currentCustomName) : currentCustomName;
+        const sml = (typeof window !== "undefined" && window.SignalML) || (typeof SignalML !== "undefined" ? SignalML : null);
+        const safeCustomName = (sml && typeof sml.escapeHtml === "function") ? sml.escapeHtml(currentCustomName) : currentCustomName;
 
         let html = `
             <div style="margin-bottom: 1rem;">
@@ -221,7 +244,7 @@ class NNEditor {
             for (let [k, v] of Object.entries(node.properties)) {
                 if (k === "custom_name") continue;
                 if (k === "code") {
-                    const safeCode = (window.SignalML && typeof window.SignalML.escapeHtml === "function") ? window.SignalML.escapeHtml(v || "") : (v || "");
+                    const safeCode = (sml && typeof sml.escapeHtml === "function") ? sml.escapeHtml(v || "") : (v || "");
                     html += `
                         <div class="form-group">
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
@@ -307,9 +330,7 @@ class NNEditor {
 
     autoLayout() {
         if (!this.graph || !this.graph._nodes || this.graph._nodes.length === 0) {
-            if (window.SignalML && typeof window.SignalML.toast === "function") {
-                window.SignalML.toast("Hizalanacak düğüm bulunamadı!", "warning");
-            }
+            this.toast("Hizalanacak düğüm bulunamadı!", "warning");
             return;
         }
 
@@ -433,9 +454,7 @@ class NNEditor {
             this.canvas.setDirty(true, true);
         }
 
-        if (window.SignalML && typeof window.SignalML.toast === "function") {
-            window.SignalML.toast("Mimari düğümleri otomatik hizalandı!", "success");
-        }
+        this.toast("Mimari düğümleri otomatik hizalandı!", "success");
     }
 
     convertKerasConfigToLiteGraph(kerasConfig) {
@@ -611,9 +630,7 @@ class NNEditor {
                 graphData = JSON.parse(graphData);
             } catch (e) {
                 console.error("Failed to parse graphData string", e);
-                if (window.SignalML && typeof window.SignalML.toast === "function") {
-                    window.SignalML.toast("Geçersiz JSON formatı: " + e.message, "error");
-                }
+                this.toast("Geçersiz JSON formatı: " + e.message, "error");
                 return;
             }
         }
@@ -688,10 +705,10 @@ class NNEditor {
 
     async validateGraph() {
         const payload = { graph: this.serializeGraph() };
-        const SML = window.SignalML || {
-            toast: (m) => console.log(m),
+        const SML = (typeof window !== "undefined" && window.SignalML) || (typeof SignalML !== "undefined" ? SignalML : {
+            toast: (m, t) => this.toast(m, t),
             safeJson: async (r) => { try { return await r.json(); } catch (_) { return {}; } }
-        };
+        });
         try {
             const res = await fetch("/api/models/validate", {
                 method: "POST",
@@ -700,7 +717,7 @@ class NNEditor {
             });
             const data = await SML.safeJson(res);
             if (data.valid) {
-                SML.toast(`Valid Keras Architecture! Total params: ${data.summary.total_params.toLocaleString()}`, "success");
+                this.toast(`Valid Keras Architecture! Total params: ${data.summary.total_params.toLocaleString()}`, "success");
                 
                 if (data.summary && Array.isArray(data.summary.layers) && this.graph) {
                     data.summary.layers.forEach(l => {
@@ -758,13 +775,14 @@ class NNEditor {
 
     async buildAndSave(name = "Keras Signal Model", taskType = "classification", optimizer = "adam") {
         const graphData = this.serializeGraph();
-        const SML = window.SignalML || {
-            currentProjectId: "default-project",
-            toast: (m) => console.log(m),
+        const activeProjectId = this.getActiveProjectId();
+        const SML = (typeof window !== "undefined" && window.SignalML) || (typeof SignalML !== "undefined" ? SignalML : {
+            currentProjectId: activeProjectId,
+            toast: (m, t) => this.toast(m, t),
             safeJson: async (r) => { try { return await r.json(); } catch (_) { return {}; } }
-        };
+        });
         const payload = {
-            project_id: SML.currentProjectId,
+            project_id: activeProjectId,
             name: name,
             task_type: taskType,
             optimizer: optimizer,
@@ -779,7 +797,7 @@ class NNEditor {
             });
             if (res.ok) {
                 const data = await SML.safeJson(res);
-                SML.toast(`Model '${name}' compiled and saved successfully!`, "success");
+                this.toast(`Model '${name}' compiled and saved successfully!`, "success");
                 SML.activeModel = data.model_id;
                 if (typeof window.populateSavedModelsDropdown === "function") {
                     await window.populateSavedModelsDropdown();
@@ -795,10 +813,10 @@ class NNEditor {
                 return data;
             } else {
                 const err = await SML.safeJson(res);
-                SML.toast(`Build Failed: ${err.detail || "Validation Error"}`, "error");
+                this.toast(`Build Failed: ${err.detail || "Validation Error"}`, "error");
             }
         } catch (e) {
-            SML.toast(`Network Error: ${e.message}`, "error");
+            this.toast(`Network Error: ${e.message}`, "error");
         }
     }
 

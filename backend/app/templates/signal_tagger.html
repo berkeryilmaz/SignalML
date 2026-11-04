@@ -61,10 +61,17 @@
 <script>
     let viewer = null;
 
+    function getActiveProjectId() {
+        return (window.SignalML && typeof window.SignalML.getProjectId === "function" ? window.SignalML.getProjectId() : (window.SignalML && window.SignalML.currentProjectId))
+            || (typeof SignalML !== "undefined" && (typeof SignalML.getProjectId === "function" ? SignalML.getProjectId() : SignalML.currentProjectId))
+            || localStorage.getItem("signalml_active_project")
+            || "default-project";
+    }
+
     async function reloadDatasetSelector(selectedId = null) {
         const sel = document.getElementById("dataset-selector");
         try {
-            const res = await fetch(`/api/data/list/${SignalML.currentProjectId}`);
+            const res = await fetch(`/api/data/list/${getActiveProjectId()}`);
             if (res.ok) {
                 const data = await SignalML.safeJson(res);
                 const datasets = Array.isArray(data) ? data : [];
@@ -87,7 +94,7 @@
     async function handleTaggerFileUpload(file) {
         SignalML.toast(`Uploading ${file.name}...`, "info");
         const fd = new FormData();
-        fd.append("project_id", SignalML.currentProjectId);
+        fd.append("project_id", getActiveProjectId());
         fd.append("file", file);
 
         try {
@@ -105,7 +112,7 @@
             const dsName = file.name.replace(/\.[^/.]+$/, "");
 
             const regFd = new FormData();
-            regFd.append("project_id", SignalML.currentProjectId);
+            regFd.append("project_id", getActiveProjectId());
             regFd.append("name", dsName);
             regFd.append("file_path", data.temp_path);
             regFd.append("delimiter", delim);

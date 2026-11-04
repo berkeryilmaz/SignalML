@@ -708,6 +708,13 @@
         window.SignalML.escapeHtml = escapeHtml;
     }
 
+    function getActiveProjectId() {
+        return (window.SignalML && typeof window.SignalML.getProjectId === "function" ? window.SignalML.getProjectId() : (window.SignalML && window.SignalML.currentProjectId))
+            || (typeof SignalML !== "undefined" && (typeof SignalML.getProjectId === "function" ? SignalML.getProjectId() : SignalML.currentProjectId))
+            || localStorage.getItem("signalml_active_project")
+            || "default-project";
+    }
+
     let nnEditorInstance = null;
     let selectedWizardTemplate = "conv_ae";
 
@@ -806,7 +813,7 @@
             SignalML.toast(`'${file.name}' yükleniyor ve çözümleniyor...`, "info");
             const formData = new FormData();
             formData.append("file", file);
-            formData.append("project_id", SignalML.currentProjectId || "default-project");
+            formData.append("project_id", getActiveProjectId());
             const res = await fetch("/api/models/import", {
                 method: "POST",
                 body: formData
@@ -839,7 +846,7 @@
         const sel = document.getElementById("load-saved-model-select");
         if (!sel) return;
         try {
-            const res = await fetch(`/api/models/list/${SignalML.currentProjectId}`);
+            const res = await fetch(`/api/models/list/${getActiveProjectId()}`);
             if (res.ok) {
                 const models = await SignalML.safeJson(res);
                 if (Array.isArray(models)) {
@@ -993,7 +1000,7 @@
 
         // Auto-detect seq-len from active dataset if available
         try {
-            const projectId = SignalML.currentProjectId || "default-project";
+            const projectId = getActiveProjectId();
             const res = await fetch(`/api/data/list/${projectId}`);
             if (res.ok) {
                 const datasets = await SignalML.safeJson(res);
@@ -1147,7 +1154,7 @@
     }
 
     async function loadCustomLayersList() {
-        const projectId = SignalML.currentProjectId || "default-project";
+        const projectId = getActiveProjectId();
         const container = document.getElementById("custom-layers-list-container");
         try {
             const res = await fetch(`/api/models/custom_layers/${projectId}`);
@@ -1218,7 +1225,7 @@
         const className = document.getElementById("cl-class-name").value.trim();
         const desc = document.getElementById("cl-desc").value.trim();
         const code = document.getElementById("cl-code").value;
-        const projectId = SignalML.currentProjectId || "default-project";
+        const projectId = getActiveProjectId();
 
         if (!name || !className || !code) {
             SignalML.toast("Katman adı, sınıf adı ve Python kodu gereklidir", "error");
@@ -1393,7 +1400,7 @@
     }
 
     async function populateIdecSelectors() {
-        const projectId = SignalML.currentProjectId || "default-project";
+        const projectId = getActiveProjectId();
         const modelSelect = document.getElementById("idec-model-select");
         const datasetSelect = document.getElementById("idec-dataset-select");
         if (!modelSelect || !datasetSelect) return;
@@ -1503,7 +1510,7 @@
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({
-                            project_id: SignalML.currentProjectId || "default-project",
+                            project_id: getActiveProjectId(),
                             source_type: "dataset",
                             source_id: datasetId,
                             algorithm: "idec",

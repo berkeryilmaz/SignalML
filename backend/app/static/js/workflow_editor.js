@@ -238,8 +238,12 @@ class WorkflowEditor {
 
     async executeWorkflow() {
         const graphData = this.serializeGraph();
+        const activeProjectId = (window.SignalML && typeof window.SignalML.getProjectId === "function" ? window.SignalML.getProjectId() : (window.SignalML && window.SignalML.currentProjectId))
+            || (typeof SignalML !== "undefined" && (typeof SignalML.getProjectId === "function" ? SignalML.getProjectId() : SignalML.currentProjectId))
+            || localStorage.getItem("signalml_active_project")
+            || "default-project";
         const payload = {
-            project_id: SignalML.currentProjectId,
+            project_id: activeProjectId,
             name: "Automated Signal Workflow",
             graph: graphData
         };
