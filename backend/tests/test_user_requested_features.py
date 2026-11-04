@@ -202,3 +202,158 @@ def test_waveform_internal_normalization():
     assert np.allclose(minmax_internal[0], minmax_internal[1], atol=1e-5)
     assert np.isclose(np.min(minmax_internal[0]), 0.0)
     assert np.isclose(np.max(minmax_internal[0]), 1.0)
+
+
+def test_get_model_by_id_and_validate_shapes():
+    graph = {
+        "nodes": [
+            {"id": 1, "type": "keras/input", "properties": {"shape": "32, 1"}},
+            {"id": 2, "type": "keras/conv1d", "properties": {"filters": 8, "kernel_size": 3, "padding": "same", "activation": "relu"}},
+            {"id": 3, "type": "keras/flatten", "properties": {}},
+            {"id": 4, "type": "keras/dense", "properties": {"units": 4, "activation": "relu"}},
+            {"id": 5, "type": "keras/dense", "properties": {"units": 32, "activation": "linear"}},
+            {"id": 6, "type": "keras/reshape", "properties": {"target_shape": "32, 1"}},
+            {"id": 7, "type": "keras/output", "properties": {"activation": "linear"}},
+        ],
+        "links": [
+            [1, 1, 0, 2, 0, "Tensor"],
+            [2, 2, 0, 3, 0, "Tensor"],
+            [3, 3, 0, 4, 0, "Tensor"],
+            [4, 4, 0, 5, 0, "Tensor"],
+            [5, 5, 0, 6, 0, "Tensor"],
+            [6, 6, 0, 7, 0, "Tensor"],
+        ]
+    }
+    # 1. Validate & infer shapes
+    val_res = client.post("/api/models/validate", json={"graph": graph})
+    assert val_res.status_code == 200
+    val_data = val_res.json()
+    assert val_data["valid"] is True
+    assert len(val_data["summary"]["layers"]) == 7
+
+    # 2. Build & Save model
+    build_res = client.post("/api/models/build", json={
+        "project_id": "default-project",
+        "name": "Test AE Model",
+        "task_type": "reconstruction",
+        "optimizer": "adam",
+        "graph": graph
+    })
+    assert build_res.status_code == 200
+    model_id = build_res.json()["model_id"]
+
+    # 3. GET /api/models/{model_id} (must return 200, not 405!)
+    get_res = client.get(f"/api/models/{model_id}")
+    assert get_res.status_code == 200
+    get_data = get_res.json()
+    assert get_data["id"] == model_id
+    assert "nodes" in get_data["graph"]
+    assert get_data["summary"]["total_params"] > 0
+
+
+def test_idec_training_and_clustering_on_autoencoder(tmp_path):
+    # Create synthetic dataset with 2 distinct signal clusters of length 24 (testing pad/truncate to 32!)
+    rng = np.random.default_rng(42)
+    c1 = np.sin(np.linspace(0, 3.14, 24)) + rng.normal(0, 0.05, (12, 24))
+    c2 = np.cos(np.linspace(0, 3.14, 24)) + rng.normal(0, 0.05, (12, 24))
+    signals = np.vstack([c1, c2]).astype(np.float32)
+
+    csv_file = tmp_path / "idec_signals.csv"
+    pd.DataFrame(signals).to_csv(csv_file, index=False)
+
+    reg = DataManager.register_dataset(
+        project_id="default-project",
+        name="IDEC Test Signals",
+        source_path=csv_file,
+        has_header=True
+    )
+    dataset_id = reg["id"]
+
+    # Build a 1-output Autoencoder with input shape (32, 1) and bottleneck Dense(3)
+    graph = {
+        "nodes": [
+            {"id": 1, "type": "keras/input", "properties": {"shape": "32, 1"}},
+            {"id": 2, "type": "keras/flatten", "properties": {}},
+            {"id": 3, "type": "keras/dense", "properties": {"units": 8, "activation": "relu"}},
+            {"id": 4, "type": "keras/dense", "properties": {"units": 3, "activation": "relu"}},
+            {"id": 5, "type": "keras/dense", "properties": {"units": 32, "activation": "linear"}},
+            {"id": 6, "type": "keras/reshape", "properties": {"target_shape": "32, 1"}},
+            {"id": 7, "type": "keras/output", "properties": {"activation": "linear"}},
+        ],
+        "links": [
+            [1, 1, 0, 2, 0, "Tensor"],
+            [2, 2, 0, 3, 0, "Tensor"],
+            [3, 3, 0, 4, 0, "Tensor"],
+            [4, 4, 0, 5, 0, "Tensor"],
+            [5, 5, 0, 6, 0, "Tensor"],
+            [6, 6, 0, 7, 0, "Tensor"],
+        ]
+    }
+    build_res = client.post("/api/models/build", json={
+        "project_id": "default-project",
+        "name": "AE for IDEC",
+        "task_type": "reconstruction",
+        "graph": graph
+    })
+    assert build_res.status_code == 200
+    model_id = build_res.json()["model_id"]
+
+    # 1. Run IDEC Clustering via /api/clustering/run
+    clus_res = client.post("/api/clustering/run", json={
+        "project_id": "default-project",
+        "source_type": "dataset",
+        "source_id": dataset_id,
+        "algorithm": "idec",
+        "n_clusters": 2,
+        "model_id": model_id,
+        "epochs": 2,
+        "pretrain_epochs": 1,
+        "gamma": 0.1
+    })
+    assert clus_res.status_code == 200
+    clus_data = clus_res.json()
+    assert clus_data["algorithm"] == "idec"
+    assert len(clus_data["points"]) == 24
+    assert "mean_cluster_confidence" in clus_data["metrics"]
+
+    # 2. Run IDEC Probabilities endpoint on the model
+    prob_res = client.get(f"/api/models/{model_id}/idec_probabilities/{dataset_id}")
+    assert prob_res.status_code == 200
+    prob_data = prob_res.json()
+    assert prob_data["n_clusters"] >= 2
+    assert prob_data["total_samples"] == 24
+
+    # 3. Run IDEC Training via /api/training/start (idec_mode=True)
+    import time
+    train_res = client.post("/api/training/start", json={
+        "project_id": "default-project",
+        "model_id": model_id,
+        "dataset_id": dataset_id,
+        "epochs": 2,
+        "batch_size": 8,
+        "learning_rate": 0.001,
+        "optimizer": "adam",
+        "idec_mode": True,
+        "n_clusters": 2,
+        "gamma": 0.1,
+        "pretrain_epochs": 1,
+        "update_interval": 1
+    })
+    assert train_res.status_code == 200
+    job_id = train_res.json()["job_id"]
+
+    # Poll until completed
+    for _ in range(60):
+        st_res = client.get(f"/api/training/status/{job_id}")
+        assert st_res.status_code == 200
+        st = st_res.json()
+        if st["status"] in ("completed", "failed"):
+            break
+        time.sleep(0.25)
+
+    assert st["status"] == "completed", f"IDEC training failed: {st.get('error_message')}"
+    assert st["evaluation"]["task_type"] == "idec_clustering"
+    assert st["evaluation"]["n_clusters"] == 2
+    assert len(st["history"]["loss"]) >= 2
+
+

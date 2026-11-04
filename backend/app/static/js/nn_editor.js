@@ -64,7 +64,8 @@ class NNEditor {
 
         // 3. CNN (1D & Transposed Deconvolution)
         registerLayer("conv1d", "Conv1D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { filters: 32, kernel_size: 5, strides: 1, padding: "same", activation: "relu" });
-        registerLayer("conv1dtranspose", "Conv1DTranspose", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { filters: 32, kernel_size: 5, strides: 2, padding: "same", activation: "relu" });
+        registerLayer("conv1dtranspose", "Conv1DTranspose", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { filters: 32, kernel_size: 5, strides: 2, padding: "same", activation: "relu" }, ["deconv1d", "conv1d_transpose"]);
+        registerLayer("deconv1d", "Deconv1D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { filters: 32, kernel_size: 5, strides: 2, padding: "same", activation: "relu" }, ["conv1dtranspose"]);
         registerLayer("upsampling1d", "UpSampling1D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { size: 2 });
         registerLayer("separable_conv1d", "SeparableConv1D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { filters: 32, kernel_size: 5, padding: "same", activation: "relu" });
         registerLayer("conv2d", "Conv2D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { filters: 32, kernel_size: 3, padding: "same", activation: "relu" });
@@ -73,11 +74,12 @@ class NNEditor {
         registerLayer("global_maxpooling1d", "GlobalMaxPooling1D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {}, ["globalmaxpooling1d"]);
         registerLayer("global_averagepooling1d", "GlobalAveragePooling1D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {}, ["globalaveragepooling1d", "globalavgpooling1d"]);
 
-        // 4. Recurrent
+        // 4. Recurrent & TimeDistributed
         registerLayer("lstm", "LSTM", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { units: 64, return_sequences: false, dropout: 0.0 });
         registerLayer("gru", "GRU", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { units: 64, return_sequences: false });
         registerLayer("simplernn", "SimpleRNN", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { units: 64, return_sequences: false, activation: "tanh" });
         registerLayer("bidirectional", "Bidirectional", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { units: 64, recurrent_type: "lstm", return_sequences: false });
+        registerLayer("timedistributed", "TimeDistributed", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { layer_type: "Dense", units: 32 }, ["time_distributed"]);
 
         // 5. Attention & Transformer
         registerLayer("multihead_attention", "MultiHeadAttention", [{ name: "query", type: "Tensor" }, { name: "value", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { num_heads: 4, key_dim: 32, dropout: 0.1 }, ["multiheadattention"]);
@@ -95,6 +97,8 @@ class NNEditor {
         registerLayer("concatenate", "Concatenate", [{ name: "in1", type: "Tensor" }, { name: "in2", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { axis: -1 });
         registerLayer("add", "Add", [{ name: "in1", type: "Tensor" }, { name: "in2", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {});
         registerLayer("multiply", "Multiply", [{ name: "in1", type: "Tensor" }, { name: "in2", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {});
+        registerLayer("average", "Average", [{ name: "in1", type: "Tensor" }, { name: "in2", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {});
+        registerLayer("dot", "Dot", [{ name: "in1", type: "Tensor" }, { name: "in2", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { axes: -1, normalize: false });
         registerLayer("activation", "Activation", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { activation: "relu" });
 
         // 8. IDEC Clustering & Custom Layers
@@ -176,6 +180,29 @@ class NNEditor {
 
         const currentCustomName = (node.properties && node.properties.custom_name) !== undefined ? node.properties.custom_name : (node.title || "");
 
+        let shapeBadgeHtml = "";
+        if (node._inferredShape !== undefined || node._paramCount !== undefined) {
+            const shapeStr = Array.isArray(node._inferredShape)
+                ? "(" + node._inferredShape.map(d => (d === null || d === -1) ? "?" : d).join(", ") + ")"
+                : (node._inferredShape !== undefined ? JSON.stringify(node._inferredShape) : "N/A");
+            const paramStr = node._paramCount !== undefined ? Number(node._paramCount).toLocaleString() : "0";
+            shapeBadgeHtml = `
+                <div style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 8px; padding: 10px; margin-bottom: 1rem;">
+                    <div style="font-size: 11px; font-weight: 700; color: #34d399; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">📐 Çıktı Boyutu & Parametre</div>
+                    <div style="display: flex; justify-content: space-between; align-items: center; font-size: 12px; margin-bottom: 4px;">
+                        <span style="color: var(--text-muted);">Output Shape:</span>
+                        <span class="shape-badge" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-weight: 600;">${shapeStr}</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; align-items: center; font-size: 12px;">
+                        <span style="color: var(--text-muted);">Parametreler:</span>
+                        <span class="shape-badge" style="background: rgba(16, 185, 129, 0.15); color: #34d399; font-weight: 600;">${paramStr}</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        const safeCustomName = (window.SignalML && typeof window.SignalML.escapeHtml === "function") ? window.SignalML.escapeHtml(currentCustomName) : currentCustomName;
+
         let html = `
             <div style="margin-bottom: 1rem;">
                 <div style="font-size: 16px; font-weight: 700; color: #fff;">${node.title}</div>
@@ -183,29 +210,42 @@ class NNEditor {
             </div>
             <div class="form-group" style="background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 8px; padding: 10px; margin-bottom: 1rem;">
                 <label class="form-label" style="font-weight: 700; color: #38bdf8; margin-bottom: 4px;">Özel Düğüm / Katman Adı (Custom Node Name)</label>
-                <input class="form-control" id="inspector-custom-name" type="text" value="${currentCustomName}" placeholder="örn: Conv1D_Ozellik_Cikarici">
+                <input class="form-control" id="inspector-custom-name" type="text" value="${safeCustomName}" placeholder="örn: Conv1D_Ozellik_Cikarici">
             </div>
+            ${shapeBadgeHtml}
             <hr style="border: none; border-top: 1px solid var(--border-color); margin-bottom: 1rem;">
         `;
 
         if (node.properties && Object.keys(node.properties).length > 0) {
             html += `<div style="font-weight: 600; font-size: 13px; margin-bottom: 0.5rem;">Parameters</div>`;
             for (let [k, v] of Object.entries(node.properties)) {
+                if (k === "custom_name") continue;
                 if (k === "code") {
+                    const safeCode = (window.SignalML && typeof window.SignalML.escapeHtml === "function") ? window.SignalML.escapeHtml(v || "") : (v || "");
                     html += `
                         <div class="form-group">
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
                                 <label class="form-label" style="margin: 0;">Katman Kodu (Code)</label>
                                 <button class="btn btn-secondary btn-sm" onclick="openCustomLayerModal()" style="font-size: 10px; padding: 2px 6px;">Studio'da Aç</button>
                             </div>
-                            <textarea class="form-control prop-input" data-prop="code" rows="5" style="font-family: var(--font-mono); font-size: 11px;">${SignalML.escapeHtml(v || "")}</textarea>
+                            <textarea class="form-control prop-input" data-prop="code" rows="5" style="font-family: var(--font-mono); font-size: 11px;">${safeCode}</textarea>
+                        </div>
+                    `;
+                } else if (typeof v === "boolean") {
+                    html += `
+                        <div class="form-group">
+                            <label class="form-label">${k}</label>
+                            <select class="form-control prop-input-bool" data-prop="${k}">
+                                <option value="true" ${v === true ? "selected" : ""}>true</option>
+                                <option value="false" ${v === false ? "selected" : ""}>false</option>
+                            </select>
                         </div>
                     `;
                 } else {
                     html += `
                         <div class="form-group">
                             <label class="form-label">${k}</label>
-                            <input class="form-control prop-input" data-prop="${k}" type="${typeof v === 'number' ? 'number' : 'text'}" value="${v}">
+                            <input class="form-control prop-input" data-prop="${k}" type="${typeof v === 'number' ? 'number' : 'text'}" value="${v !== undefined && v !== null ? v : ''}">
                         </div>
                     `;
                 }
@@ -229,13 +269,27 @@ class NNEditor {
             });
         }
 
-        // Bind input events
+        // Bind boolean select change events
+        body.querySelectorAll(".prop-input-bool").forEach(sel => {
+            sel.addEventListener("change", (e) => {
+                const prop = e.target.dataset.prop;
+                node.properties[prop] = (e.target.value === "true");
+                if (this.canvas) {
+                    this.canvas.setDirty(true, true);
+                }
+            });
+        });
+
+        // Bind generic input events
         body.querySelectorAll(".prop-input").forEach(input => {
             input.addEventListener("input", (e) => {
                 const prop = e.target.dataset.prop;
                 let val = e.target.value;
-                if (e.target.type === "number") val = Number(val);
+                if (e.target.type === "number") val = val === "" ? 0 : Number(val);
                 node.properties[prop] = val;
+                if (this.canvas) {
+                    this.canvas.setDirty(true, true);
+                }
             });
         });
     }
@@ -391,11 +445,18 @@ class NNEditor {
         const nameToNodeId = {};
 
         layersList.forEach((layer, idx) => {
+            nameToNodeId[layer.name] = idx + 1;
+        });
+
+        layersList.forEach((layer, idx) => {
             const nodeId = idx + 1;
-            nameToNodeId[layer.name] = nodeId;
             const cname = (layer.class_name || "").toLowerCase();
             let mappedType = cname;
             if (cname === "inputlayer") mappedType = "input";
+            else if (cname === "timedistributed" || cname === "time_distributed") mappedType = "timedistributed";
+            else if (cname === "conv1dtranspose" || cname === "deconv1d") mappedType = "conv1dtranspose";
+            else if (cname === "average") mappedType = "average";
+            else if (cname === "dot") mappedType = "dot";
             else if (cname === "batchnormalization") mappedType = "batchnorm";
             else if (cname === "layernormalization") mappedType = "layernorm";
             else if (cname === "unitnormalization") mappedType = "unitnorm";
@@ -403,10 +464,11 @@ class NNEditor {
             else if (cname === "averagepooling1d" || cname === "avgpooling1d") mappedType = "averagepooling1d";
             else if (cname === "globalmaxpooling1d" || cname === "global_maxpooling1d") mappedType = "global_maxpooling1d";
             else if (cname === "globalaveragepooling1d" || cname === "global_averagepooling1d") mappedType = "global_averagepooling1d";
-            else if (cname === "conv1dtranspose") mappedType = "conv1dtranspose";
             else if (cname === "upsampling1d") mappedType = "upsampling1d";
             else if (cname === "multiheadattention") mappedType = "multihead_attention";
             else if (cname === "positionalencoding") mappedType = "positional_encoding";
+            else if (cname === "clusteringlayer") mappedType = "clustering";
+            else if (cname === "customsignallayer" || cname === "customlayer") mappedType = "custom_layer";
 
             const props = {};
             const cfg = layer.config || {};
@@ -420,6 +482,8 @@ class NNEditor {
             if (cfg.size !== undefined) props.size = Array.isArray(cfg.size) ? cfg.size[0] : Number(cfg.size);
             if (cfg.rate !== undefined) props.rate = Number(cfg.rate);
             if (cfg.return_sequences !== undefined) props.return_sequences = Boolean(cfg.return_sequences);
+            if (cfg.n_clusters !== undefined) props.n_clusters = Number(cfg.n_clusters);
+            if (cfg.alpha !== undefined) props.alpha = Number(cfg.alpha);
             if (mappedType === "input") {
                 const shape = cfg.batch_shape || cfg.input_shape || cfg.shape;
                 if (Array.isArray(shape)) {
@@ -432,6 +496,20 @@ class NNEditor {
             const row = Math.floor(idx / 4);
             const pos = [120 + col * 260, 100 + row * 180];
 
+            const isMultiInput = ["concatenate", "add", "multiply", "average", "dot", "multihead_attention"].includes(mappedType);
+            let nodeInputs = [];
+            if (mappedType === "input") {
+                nodeInputs = [];
+            } else if (mappedType === "multihead_attention") {
+                nodeInputs = [{ name: "query", type: "Tensor" }, { name: "value", type: "Tensor" }];
+            } else if (isMultiInput) {
+                nodeInputs = [{ name: "in1", type: "Tensor" }, { name: "in2", type: "Tensor" }];
+            } else {
+                nodeInputs = [{ name: "in", type: "Tensor" }];
+            }
+
+            const nodeOutputs = (mappedType === "output" ? [] : [{ name: "out", type: "Tensor", links: [] }]);
+
             nodes.push({
                 id: nodeId,
                 type: `keras/${mappedType}`,
@@ -439,12 +517,82 @@ class NNEditor {
                 pos: pos,
                 size: [200, 90],
                 properties: props,
-                inputs: idx > 0 ? [{ name: "in", type: "Tensor", link: idx }] : [],
-                outputs: idx < layersList.length - 1 ? [{ name: "out", type: "Tensor", links: [idx + 1] }] : []
+                inputs: nodeInputs,
+                outputs: nodeOutputs
+            });
+        });
+
+        // Reconstruct links from inbound_nodes or fallback to sequential
+        let linkIdCounter = 1;
+        let hasInboundLinks = false;
+
+        function findInboundLayerNames(obj, list = []) {
+            if (!obj) return list;
+            if (typeof obj === "string") {
+                if (nameToNodeId[obj] !== undefined) list.push(obj);
+                return list;
+            }
+            if (Array.isArray(obj)) {
+                if (obj.length >= 1 && typeof obj[0] === "string" && nameToNodeId[obj[0]] !== undefined) {
+                    list.push(obj[0]);
+                } else {
+                    for (let item of obj) {
+                        findInboundLayerNames(item, list);
+                    }
+                }
+            } else if (typeof obj === "object") {
+                if (obj.keras_history && Array.isArray(obj.keras_history) && typeof obj.keras_history[0] === "string" && nameToNodeId[obj.keras_history[0]] !== undefined) {
+                    list.push(obj.keras_history[0]);
+                } else if (obj.history && Array.isArray(obj.history) && typeof obj.history[0] === "string" && nameToNodeId[obj.history[0]] !== undefined) {
+                    list.push(obj.history[0]);
+                } else {
+                    for (let v of Object.values(obj)) {
+                        findInboundLayerNames(v, list);
+                    }
+                }
+            }
+            return list;
+        }
+
+        layersList.forEach((layer, idx) => {
+            const targetId = idx + 1;
+            if (layer.inbound_nodes && Array.isArray(layer.inbound_nodes) && layer.inbound_nodes.length > 0) {
+                const inbounds = findInboundLayerNames(layer.inbound_nodes);
+                if (inbounds.length > 0) {
+                    inbounds.forEach((originName, slotIdx) => {
+                        const originId = nameToNodeId[originName];
+                        if (originId && originId !== targetId) {
+                            links.push([linkIdCounter++, originId, 0, targetId, slotIdx, "Tensor"]);
+                            hasInboundLinks = true;
+                        }
+                    });
+                }
+            }
+        });
+
+        if (!hasInboundLinks && layersList.length > 1) {
+            for (let i = 1; i < layersList.length; i++) {
+                links.push([linkIdCounter++, i, 0, i + 1, 0, "Tensor"]);
+            }
+        }
+
+        // Connect node input and output slots to link IDs
+        nodes.forEach(node => {
+            const nodeInLinks = links.filter(l => l[3] === node.id);
+            const nodeOutLinks = links.filter(l => l[1] === node.id);
+
+            while (node.inputs.length < nodeInLinks.length) {
+                node.inputs.push({ name: `in${node.inputs.length + 1}`, type: "Tensor" });
+            }
+            nodeInLinks.forEach(l => {
+                const slot = l[4];
+                if (node.inputs[slot]) {
+                    node.inputs[slot].link = l[0];
+                }
             });
 
-            if (idx > 0) {
-                links.push([idx, idx, 0, nodeId, 0, "Tensor"]);
+            if (node.outputs && node.outputs.length > 0) {
+                node.outputs[0].links = nodeOutLinks.map(l => l[0]);
             }
         });
 
@@ -463,7 +611,9 @@ class NNEditor {
                 graphData = JSON.parse(graphData);
             } catch (e) {
                 console.error("Failed to parse graphData string", e);
-                SignalML.toast("Geçersiz JSON formatı: " + e.message, "error");
+                if (window.SignalML && typeof window.SignalML.toast === "function") {
+                    window.SignalML.toast("Geçersiz JSON formatı: " + e.message, "error");
+                }
                 return;
             }
         }
@@ -490,6 +640,8 @@ class NNEditor {
                 // Handle aliases
                 if (t === "keras/inputlayer") t = "keras/input";
                 else if (t === "keras/modeloutput") t = "keras/output";
+                else if (t === "keras/deconv1d") t = "keras/conv1dtranspose";
+                else if (t === "keras/time_distributed") t = "keras/timedistributed";
                 else if (t === "keras/batchnormalization" || t === "keras/bn") t = "keras/batchnorm";
                 else if (t === "keras/layernormalization" || t === "keras/ln") t = "keras/layernorm";
                 else if (t === "keras/unitnormalization") t = "keras/unitnorm";
@@ -520,23 +672,63 @@ class NNEditor {
         this.validateGraph();
     }
 
+    serializeGraph() {
+        if (!this.graph) return { nodes: [], links: [] };
+        const serialized = this.graph.serialize();
+        if (serialized && serialized.nodes && this.graph._nodes) {
+            serialized.nodes.forEach(n => {
+                const actualNode = this.graph.getNodeById(n.id);
+                if (actualNode && actualNode.title) {
+                    n.title = actualNode.title;
+                }
+            });
+        }
+        return serialized;
+    }
+
     async validateGraph() {
         const payload = { graph: this.serializeGraph() };
+        const SML = window.SignalML || {
+            toast: (m) => console.log(m),
+            safeJson: async (r) => { try { return await r.json(); } catch (_) { return {}; } }
+        };
         try {
             const res = await fetch("/api/models/validate", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload)
             });
-            const data = await SignalML.safeJson(res);
+            const data = await SML.safeJson(res);
             if (data.valid) {
-                SignalML.toast(`Valid Keras Architecture! Total params: ${data.summary.total_params.toLocaleString()}`, "success");
+                SML.toast(`Valid Keras Architecture! Total params: ${data.summary.total_params.toLocaleString()}`, "success");
+                
+                if (data.summary && Array.isArray(data.summary.layers) && this.graph) {
+                    data.summary.layers.forEach(l => {
+                        const node = this.graph.getNodeById(Number(l.node_id)) || this.graph.getNodeById(l.node_id);
+                        if (node) {
+                            node._inferredShape = l.output_shape;
+                            node._paramCount = l.params;
+                            const shapeStr = Array.isArray(l.output_shape)
+                                ? "(" + l.output_shape.map(d => (d === null || d === -1) ? "?" : d).join(", ") + ")"
+                                : "";
+                            if (node.outputs && node.outputs.length > 0 && shapeStr) {
+                                node.outputs[0].label = shapeStr;
+                            }
+                        }
+                    });
+                    if (this.canvas) this.canvas.setDirty(true, true);
+                }
+
+                if (this.selectedNode) {
+                    this.updateInspector(this.selectedNode);
+                }
+
                 this.renderShapesSummary(data.summary);
             } else {
-                SignalML.toast(`Validation Error: ${data.error || data.detail || "Validation Error"}`, "error");
+                SML.toast(`Validation Error: ${data.error || data.detail || "Validation Error"}`, "error");
             }
         } catch (e) {
-            SignalML.toast(`Network Error: ${e.message}`, "error");
+            SML.toast(`Network Error: ${e.message}`, "error");
         }
     }
 
@@ -564,12 +756,18 @@ class NNEditor {
         container.innerHTML = html;
     }
 
-    async buildAndSave(name = "Keras Signal Model", taskType = "classification") {
+    async buildAndSave(name = "Keras Signal Model", taskType = "classification", optimizer = "adam") {
         const graphData = this.serializeGraph();
+        const SML = window.SignalML || {
+            currentProjectId: "default-project",
+            toast: (m) => console.log(m),
+            safeJson: async (r) => { try { return await r.json(); } catch (_) { return {}; } }
+        };
         const payload = {
-            project_id: SignalML.currentProjectId,
+            project_id: SML.currentProjectId,
             name: name,
             task_type: taskType,
+            optimizer: optimizer,
             graph: graphData
         };
 
@@ -580,15 +778,27 @@ class NNEditor {
                 body: JSON.stringify(payload)
             });
             if (res.ok) {
-                const data = await SignalML.safeJson(res);
-                SignalML.toast(`Model '${name}' compiled and saved successfully!`, "success");
-                SignalML.activeModel = data.model_id;
+                const data = await SML.safeJson(res);
+                SML.toast(`Model '${name}' compiled and saved successfully!`, "success");
+                SML.activeModel = data.model_id;
+                if (typeof window.populateSavedModelsDropdown === "function") {
+                    await window.populateSavedModelsDropdown();
+                    const sel = document.getElementById("load-saved-model-select");
+                    if (sel && data.model_id) {
+                        sel.value = data.model_id;
+                        const updateBtn = document.getElementById("update-saved-model-btn");
+                        const deleteBtn = document.getElementById("delete-saved-model-btn");
+                        if (updateBtn) updateBtn.style.display = "inline-flex";
+                        if (deleteBtn) deleteBtn.style.display = "inline-flex";
+                    }
+                }
+                return data;
             } else {
-                const err = await SignalML.safeJson(res);
-                SignalML.toast(`Build Failed: ${err.detail || "Validation Error"}`, "error");
+                const err = await SML.safeJson(res);
+                SML.toast(`Build Failed: ${err.detail || "Validation Error"}`, "error");
             }
         } catch (e) {
-            SignalML.toast(`Network Error: ${e.message}`, "error");
+            SML.toast(`Network Error: ${e.message}`, "error");
         }
     }
 
@@ -680,7 +890,7 @@ class NNEditor {
             this.graph.add(nFinal);
 
             const nOutput = LiteGraph.createNode("keras/output");
-            nOutput.pos = [80, 560];
+            nOutput.pos = [80, (seqLen % 4 === 0) ? 560 : 740];
             nOutput.title = "AE Output";
             nOutput.properties.activation = "linear";
             this.graph.add(nOutput);
@@ -695,8 +905,35 @@ class NNEditor {
             nUp1.connect(0, nDec1, 0);
             nDec1.connect(0, nUp2, 0);
             nUp2.connect(0, nDec2, 0);
-            nDec2.connect(0, nFinal, 0);
-            nFinal.connect(0, nOutput, 0);
+
+            if (seqLen % 4 !== 0) {
+                const nAdjFlat = LiteGraph.createNode("keras/flatten");
+                nAdjFlat.pos = [80, 500];
+                nAdjFlat.title = "Shape Adjust Flatten";
+                this.graph.add(nAdjFlat);
+
+                const nAdjDense = LiteGraph.createNode("keras/dense");
+                nAdjDense.pos = [80, 580];
+                nAdjDense.title = "Target Dimension Dense";
+                nAdjDense.properties.units = seqLen;
+                nAdjDense.properties.activation = "linear";
+                this.graph.add(nAdjDense);
+
+                const nAdjReshape = LiteGraph.createNode("keras/reshape");
+                nAdjReshape.pos = [80, 660];
+                nAdjReshape.title = "Target Shape Reshape";
+                nAdjReshape.properties.target_shape = `${seqLen}, 1`;
+                this.graph.add(nAdjReshape);
+
+                nDec2.connect(0, nFinal, 0);
+                nFinal.connect(0, nAdjFlat, 0);
+                nAdjFlat.connect(0, nAdjDense, 0);
+                nAdjDense.connect(0, nAdjReshape, 0);
+                nAdjReshape.connect(0, nOutput, 0);
+            } else {
+                nDec2.connect(0, nFinal, 0);
+                nFinal.connect(0, nOutput, 0);
+            }
 
         } else if (type === "unet_1d") {
             // 1D U-Net with Skip Connections
@@ -1116,7 +1353,7 @@ class NNEditor {
             this.graph.add(nDec2);
 
             const nReconOut = LiteGraph.createNode("keras/output");
-            nReconOut.pos = [2960, 340];
+            nReconOut.pos = [(seqLen % 4 === 0) ? 2960 : 3620, 340];
             nReconOut.title = "Reconstruction Output";
             nReconOut.properties.activation = "linear";
             this.graph.add(nReconOut);
@@ -1140,7 +1377,33 @@ class NNEditor {
             nUp1.connect(0, nDec1, 0);
             nDec1.connect(0, nUp2, 0);
             nUp2.connect(0, nDec2, 0);
-            nDec2.connect(0, nReconOut, 0);
+
+            if (seqLen % 4 !== 0) {
+                const nAdjFlat = LiteGraph.createNode("keras/flatten");
+                nAdjFlat.pos = [2960, 340];
+                nAdjFlat.title = "Shape Adjust Flatten";
+                this.graph.add(nAdjFlat);
+
+                const nAdjDense = LiteGraph.createNode("keras/dense");
+                nAdjDense.pos = [3180, 340];
+                nAdjDense.title = "Target Dimension Dense";
+                nAdjDense.properties.units = seqLen;
+                nAdjDense.properties.activation = "linear";
+                this.graph.add(nAdjDense);
+
+                const nAdjReshape = LiteGraph.createNode("keras/reshape");
+                nAdjReshape.pos = [3400, 340];
+                nAdjReshape.title = "Target Shape Reshape";
+                nAdjReshape.properties.target_shape = `${seqLen}, 1`;
+                this.graph.add(nAdjReshape);
+
+                nDec2.connect(0, nAdjFlat, 0);
+                nAdjFlat.connect(0, nAdjDense, 0);
+                nAdjDense.connect(0, nAdjReshape, 0);
+                nAdjReshape.connect(0, nReconOut, 0);
+            } else {
+                nDec2.connect(0, nReconOut, 0);
+            }
 
         } else if (type === "idec_dense") {
             // Dense IDEC with editable Encoder, Decoder, and ClusteringLayer branch

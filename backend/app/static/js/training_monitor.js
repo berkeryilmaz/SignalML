@@ -116,6 +116,10 @@ class TrainingMonitor {
         }
     }
 
+    updateCharts(statusData) {
+        this.updateUI(statusData);
+    }
+
     updateUI(status) {
         // Update pills
         const setVal = (id, val) => {
@@ -141,7 +145,8 @@ class TrainingMonitor {
         const hist = status.history || {};
         const lossData = hist.loss || [];
         const valLossData = hist.val_loss || [];
-        const accData = hist.accuracy || hist.acc || hist.mae || [];
+        const accData = hist.accuracy || hist.acc || hist.mae || Object.entries(hist).find(([k]) => !k.startsWith("val_") && (k.includes("acc") || k.includes("mae")))?.[1] || [];
+        const valAccData = hist.val_accuracy || hist.val_acc || hist.val_mae || Object.entries(hist).find(([k]) => k.startsWith("val_") && (k.includes("acc") || k.includes("mae")))?.[1] || [];
 
         const sanitizeNum = (v) => (typeof v === "number" && !isNaN(v) && isFinite(v)) ? v : null;
 
@@ -183,7 +188,94 @@ class TrainingMonitor {
             `;
         }
 
-        if (evalData.accuracy !== undefined && evalData.accuracy !== null) {
+        // Check if IDEC Clustering evaluation
+        if (evalData.task_type === "idec_clustering" || evalData.n_clusters !== undefined) {
+            const confStr = evalData.mean_cluster_confidence != null 
+                ? (evalData.mean_cluster_confidence * 100).toFixed(1) + "%" 
+                : "—";
+
+            html += `
+                <div class="grid-cards" style="margin-bottom: 1.25rem;">
+                    <div class="card">
+                        <div class="card-title">Küme Sayısı (K)</div>
+                        <div class="stat-val" style="color: var(--accent-cyan, #38bdf8);">${evalData.n_clusters}</div>
+                        <div class="stat-desc">Learned Clusters</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Ortalama Küme Güveni</div>
+                        <div class="stat-val" style="color: var(--accent-green, #4ade80);">${confStr}</div>
+                        <div class="stat-desc">Mean Confidence (max Q)</div>
+                    </div>
+                    ${evalData.silhouette_score != null ? `
+                    <div class="card">
+                        <div class="card-title">Silhouette Skoru</div>
+                        <div class="stat-val" style="color: #a78bfa;">${typeof evalData.silhouette_score === "number" ? evalData.silhouette_score.toFixed(4) : evalData.silhouette_score}</div>
+                        <div class="stat-desc">Separation (-1 to +1)</div>
+                    </div>` : ""}
+                    <div class="card">
+                        <div class="card-title">Rekonstrüksiyon MSE</div>
+                        <div class="stat-val" style="font-size: 20px; font-family: var(--font-mono); color: #f59e0b;">${evalData.reconstruction_mse !== undefined ? evalData.reconstruction_mse : "—"}</div>
+                        <div class="stat-desc">AE Reconstruction Loss</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-title">Rekonstrüksiyon MAE</div>
+                        <div class="stat-val" style="font-size: 20px; font-family: var(--font-mono); color: #f59e0b;">${evalData.reconstruction_mae !== undefined ? evalData.reconstruction_mae : "—"}</div>
+                        <div class="stat-desc">AE Reconstruction MAE</div>
+                    </div>
+                </div>
+            `;
+
+            // Cluster Distribution
+            const dist = evalData.cluster_distribution || {};
+            const clusterEntries = Object.entries(dist);
+            const totalSamples = clusterEntries.reduce((sum, [, count]) => sum + (Number(count) || 0), 0);
+
+            if (clusterEntries.length > 0) {
+                const palette = ["#38bdf8", "#818cf8", "#c084fc", "#f472b6", "#fb7185", "#fb923c", "#facc15", "#4ade80", "#2dd4bf", "#94a3b8"];
+                html += `
+                    <div style="margin-bottom: 1.25rem; background: rgba(15, 23, 42, 0.4); border: 1px solid #1e293b; border-radius: 8px; padding: 1rem;">
+                        <div style="font-weight: 600; font-size: 14px; margin-bottom: 0.75rem; display: flex; justify-content: space-between; align-items: center;">
+                            <span>📊 Küme Dağılımı (Cluster Distribution)</span>
+                            <span style="font-size: 12px; color: var(--text-muted);">Toplam: ${totalSamples.toLocaleString()} örnek</span>
+                        </div>
+                        <div style="display: flex; flex-direction: column; gap: 8px;">
+                `;
+
+                clusterEntries.forEach(([cLabel, count], idx) => {
+                    const cnt = Number(count) || 0;
+                    const pct = totalSamples > 0 ? ((cnt / totalSamples) * 100).toFixed(1) : "0.0";
+                    const color = palette[idx % palette.length];
+                    html += `
+                        <div>
+                            <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 3px;">
+                                <span><strong style="color: ${color};">Cluster ${cLabel}</strong></span>
+                                <span><span style="font-family: var(--font-mono); font-weight: 600;">${cnt.toLocaleString()}</span> örnek (${pct}%)</span>
+                            </div>
+                            <div style="background: rgba(255,255,255,0.06); height: 8px; border-radius: 4px; overflow: hidden;">
+                                <div style="background: ${color}; width: ${pct}%; height: 100%; border-radius: 4px; transition: width 0.4s ease;"></div>
+                            </div>
+                        </div>
+                    `;
+                });
+
+                html += `
+                        </div>
+                    </div>
+                `;
+            }
+
+            // Action Buttons to Clustering and NN Builder
+            html += `
+                <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 1rem;">
+                    <a href="/clustering" class="btn btn-primary" style="text-decoration: none; display: inline-flex; align-items: center; gap: 6px;">
+                        🌐 Clustering & 3D PCA Sayfasında İncele
+                    </a>
+                    <a href="/nn-builder" class="btn btn-secondary" style="text-decoration: none; display: inline-flex; align-items: center; gap: 6px;">
+                        🪄 NN Model Sihirbazı
+                    </a>
+                </div>
+            `;
+        } else if (evalData.accuracy !== undefined && evalData.accuracy !== null) {
             html += `
                 <div class="grid-cards" style="margin-bottom: 1rem;">
                     <div class="card">

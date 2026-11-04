@@ -41,6 +41,7 @@
                 <option value="dbscan">DBSCAN</option>
                 <option value="hdbscan">HDBSCAN (Hierarchical Density)</option>
                 <option value="optics">OPTICS (Ordering Points To Identify Structure)</option>
+                <option value="idec">IDEC (Deep Embedded Clustering - Sinir Ağı)</option>
             </select>
         </div>
 
@@ -104,6 +105,35 @@
             <div class="form-group">
                 <label class="form-label">Xi (Cluster Steepness)</label>
                 <input type="number" id="optics-xi" class="form-control" value="0.05" step="0.01" min="0.01" max="0.99">
+            </div>
+        </div>
+
+        <!-- IDEC Params -->
+        <div id="params-idec" class="algo-params" style="display: none;">
+            <div class="form-group">
+                <label class="form-label">Target Neural Network Model</label>
+                <select id="idec-model-select" class="form-control"></select>
+                <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">
+                    IDEC çift çıkışlı veya Autoencoder rekonstrüksiyon modeli
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Number of Clusters (K)</label>
+                <input type="number" id="idec-n-clusters" class="form-control" value="5" min="2" max="50">
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                <div class="form-group">
+                    <label class="form-label">Training Epochs</label>
+                    <input type="number" id="idec-epochs" class="form-control" value="15" min="0" max="200" title="0 = inference only using current weights; >0 = run iterative IDEC training">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Pre-train Epochs</label>
+                    <input type="number" id="idec-pretrain-epochs" class="form-control" value="5" min="0" max="100">
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Clustering Loss Weight (&gamma;)</label>
+                <input type="number" id="idec-gamma" class="form-control" value="0.1" step="0.05" min="0.01">
             </div>
         </div>
 
@@ -311,6 +341,50 @@
     let inspectorCurrentPage = 1;
     let inspectorPageSize = 50;
 
+    let idecModelsLoaded = false;
+    async function populateIdecModels() {
+        const sel = document.getElementById("idec-model-select");
+        if (!sel) return;
+        try {
+            const res = await fetch(`/api/models/list/${SignalML.currentProjectId}`);
+            const models = await SignalML.safeJson(res);
+            const mList = Array.isArray(models) ? models : [];
+            if (mList.length === 0) {
+                sel.innerHTML = `<option value="">Model bulunamadı (NN Builder ile oluşturun)</option>`;
+                return;
+            }
+            sel.innerHTML = mList.map(m => {
+                const isIdec = m.task_type === "idec_clustering" || (m.name || "").toLowerCase().includes("idec");
+                const isAe = m.task_type === "autoencoder" || (m.name || "").toLowerCase().includes("autoencoder");
+                const badge = isIdec ? " [IDEC Modeli]" : (isAe ? " [Autoencoder]" : "");
+                return `<option value="${m.id}">${m.name}${badge} (${(m.trainable_params || 0).toLocaleString()} p)</option>`;
+            }).join("");
+            idecModelsLoaded = true;
+        } catch (e) {
+            console.error("Failed to populate IDEC models", e);
+        }
+    }
+    window.populateIdecModels = populateIdecModels;
+
+    function toggleAlgoParams(algo) {
+        const elKmeans = document.getElementById("kmeans-params-block");
+        const elDbscan = document.getElementById("dbscan-params-block");
+        const elHdbscan = document.getElementById("hdbscan-params-block");
+        const elOptics = document.getElementById("optics-params-block");
+        const elIdec = document.getElementById("params-idec");
+
+        if (elKmeans) elKmeans.style.display = algo === "kmeans" ? "block" : "none";
+        if (elDbscan) elDbscan.style.display = algo === "dbscan" ? "block" : "none";
+        if (elHdbscan) elHdbscan.style.display = algo === "hdbscan" ? "block" : "none";
+        if (elOptics) elOptics.style.display = algo === "optics" ? "block" : "none";
+        if (elIdec) elIdec.style.display = algo === "idec" ? "block" : "none";
+
+        if (algo === "idec") {
+            populateIdecModels();
+        }
+    }
+    window.toggleAlgoParams = toggleAlgoParams;
+
     async function initClusteringView() {
         pcaVis = new PCAVisualizer("pca-vis-container");
         pcaVis.onClusterClick = (cId) => {
@@ -320,12 +394,9 @@
 
         const algoSel = document.getElementById("cluster-algo");
         algoSel.onchange = (e) => {
-            const algo = e.target.value;
-            document.getElementById("kmeans-params-block").style.display = algo === "kmeans" ? "block" : "none";
-            document.getElementById("dbscan-params-block").style.display = algo === "dbscan" ? "block" : "none";
-            document.getElementById("hdbscan-params-block").style.display = algo === "hdbscan" ? "block" : "none";
-            document.getElementById("optics-params-block").style.display = algo === "optics" ? "block" : "none";
+            toggleAlgoParams(e.target.value);
         };
+        toggleAlgoParams(algoSel.value);
 
         const srcTypeSel = document.getElementById("cluster-source-type");
         srcTypeSel.onchange = () => loadSourceOptions();
@@ -435,6 +506,12 @@
             const maxEpsVal = document.getElementById("optics-max-eps").value;
             payload.max_eps = maxEpsVal ? Number(maxEpsVal) : null;
             payload.xi = Number(document.getElementById("optics-xi").value);
+        } else if (algo === "idec") {
+            payload.model_id = document.getElementById("idec-model-select")?.value || null;
+            payload.n_clusters = Number(document.getElementById("idec-n-clusters")?.value || 5);
+            payload.epochs = Number(document.getElementById("idec-epochs")?.value || 15);
+            payload.pretrain_epochs = Number(document.getElementById("idec-pretrain-epochs")?.value || 5);
+            payload.gamma = Number(document.getElementById("idec-gamma")?.value || 0.1);
         }
 
         SignalML.toast(`Running ${algo.toUpperCase()} and 3D PCA...`, "info");

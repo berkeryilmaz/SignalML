@@ -41,6 +41,16 @@ const SignalML = {
         }
     },
 
+    escapeHtml: function(str) {
+        if (str === null || str === undefined) return "";
+        return String(str)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;");
+    },
+
     loadProjects: async function() {
         try {
             const res = await fetch("/api/projects");

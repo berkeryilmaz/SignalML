@@ -20,6 +20,11 @@ class NodePort(BaseModel):
     name: str
     type: str = "Any"
     label: Optional[str] = None
+    link: Optional[Union[int, str]] = None
+    links: Optional[List[Union[int, str]]] = None
+
+    class Config:
+        extra = "ignore"
 
 
 class NodeDefinition(BaseModel):

@@ -14,7 +14,8 @@ from sklearn.metrics import (
     confusion_matrix,
     mean_squared_error,
     mean_absolute_error,
-    r2_score
+    r2_score,
+    silhouette_score
 )
 
 from app.core.config import MODELS_DIR, CHECKPOINTS_DIR, DATASETS_DIR, resolve_storage_path
@@ -178,24 +179,46 @@ class TrainingService:
     @classmethod
     def prepare_model_inputs(
         cls,
-        model: keras.Model,
-        dataset_id: str
+        arg1: Any,
+        arg2: Any
     ) -> PreparedDataset:
         """
         Loads dataset (.npz) containing data, X_seq, X_tabular, y, labels, sample_ids.
         Adapts shapes and ranks to match single or multi-input Keras models.
+        Accepts (model, dataset_id_or_path) or (dataset_id_or_path, model).
         """
-        record = DataManager.get_dataset(dataset_id)
-        if not record:
-            raise ValueError(f"Dataset {dataset_id} not found")
+        if isinstance(arg1, keras.Model):
+            model = arg1
+            dataset_ref = arg2
+        else:
+            model = arg2
+            dataset_ref = arg1
 
-        file_path = resolve_storage_path(record["file_path"])
-        if not file_path or not file_path.exists():
-            cand = DATASETS_DIR / record.get("project_id", "") / f"{dataset_id}.npz"
-            if cand.exists():
-                file_path = cand
-            else:
-                raise FileNotFoundError(f"Dataset file missing on disk: {record['file_path']}")
+        record = None
+        file_path = None
+
+        if isinstance(dataset_ref, (str, Path)) and (str(dataset_ref).endswith(".npz") or Path(dataset_ref).exists()):
+            resolved = resolve_storage_path(str(dataset_ref))
+            if resolved and resolved.exists():
+                file_path = resolved
+            elif Path(dataset_ref).exists():
+                file_path = Path(dataset_ref)
+
+        if file_path is None:
+            dataset_id = str(dataset_ref)
+            record = DataManager.get_dataset(dataset_id)
+            if not record:
+                raise ValueError(f"Dataset {dataset_id} not found")
+
+            file_path = resolve_storage_path(record["file_path"])
+            if not file_path or not file_path.exists():
+                cand = DATASETS_DIR / record.get("project_id", "") / f"{dataset_id}.npz"
+                if cand.exists():
+                    file_path = cand
+                else:
+                    raise FileNotFoundError(f"Dataset file missing on disk: {record.get('file_path')}")
+        else:
+            record = {"file_path": str(file_path), "name": Path(file_path).stem}
 
         with np.load(str(file_path), allow_pickle=False) as npz:
             data = npz["data"] if "data" in npz else None
@@ -298,12 +321,39 @@ class TrainingService:
             if arr is None:
                 raise ValueError("No input array found in dataset .npz")
             arr = np.array(arr, dtype=np.float32)
-            if len(in_shape) == 3 and arr.ndim == 2:
-                arr = np.expand_dims(arr, axis=-1)
-            elif len(in_shape) == 2 and arr.ndim > 2:
-                arr = arr.reshape(len(arr), -1)
-            elif len(in_shape) == 2 and arr.ndim == 1:
-                arr = arr.reshape(-1, 1)
+
+            if len(in_shape) == 3:
+                if arr.ndim == 2:
+                    arr = np.expand_dims(arr, axis=-1)
+                elif arr.ndim == 1:
+                    arr = arr.reshape(-1, 1, 1)
+
+                expected_len = in_shape[1]
+                if expected_len is not None and arr.shape[1] != expected_len:
+                    if arr.shape[1] > expected_len:
+                        arr = arr[:, :expected_len, :]
+                    else:
+                        arr = np.pad(arr, ((0, 0), (0, expected_len - arr.shape[1]), (0, 0)))
+
+                expected_ch = in_shape[2]
+                if expected_ch is not None and arr.shape[2] != expected_ch:
+                    if arr.shape[2] > expected_ch:
+                        arr = arr[:, :, :expected_ch]
+                    elif arr.shape[2] == 1 and expected_ch > 1:
+                        arr = np.repeat(arr, expected_ch, axis=-1)
+
+            elif len(in_shape) == 2:
+                if arr.ndim > 2:
+                    arr = arr.reshape(len(arr), -1)
+                elif arr.ndim == 1:
+                    arr = arr.reshape(-1, 1)
+
+                expected_dim = in_shape[1]
+                if expected_dim is not None and arr.shape[1] != expected_dim:
+                    if arr.shape[1] > expected_dim:
+                        arr = arr[:, :expected_dim]
+                    else:
+                        arr = np.pad(arr, ((0, 0), (0, expected_dim - arr.shape[1])))
 
             X = np.nan_to_num(arr, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
 
@@ -327,7 +377,7 @@ class TrainingService:
             if not weights_path or not weights_path.exists():
                 raise FileNotFoundError(f"Model file not found: {model_record.get('weights_path')}")
 
-            model = keras.models.load_model(str(weights_path))
+            model = keras.models.load_model(str(weights_path), custom_objects={"ClusteringLayer": ClusteringLayer})
 
             is_resumed = bool(job.config.get("resume", False))
             epoch_offset = 0
@@ -378,11 +428,11 @@ class TrainingService:
 
             # Determine task type and targets
             task_type = model_record.get("task_type", "classification")
+            idec_mode = bool(job.config.get("idec_mode", False))
+            n_clusters = int(job.config.get("n_clusters", 5))
 
-            # Check if model contains ClusteringLayer or is a 2-output IDEC model
             clustering_layer = None
             clustering_out_idx = 0
-            is_idec = False
 
             outputs = model.outputs if isinstance(model.outputs, list) else [model.output]
             for layer in model.layers:
@@ -390,7 +440,49 @@ class TrainingService:
                     clustering_layer = layer
                     break
 
-            if clustering_layer is not None or len(outputs) == 2:
+            # Crucial Feature: Autoencoder-to-IDEC conversion
+            # If idec_mode is True or task_type is idec_clustering, and no ClusteringLayer exists yet:
+            if (idec_mode or task_type == "idec_clustering") and clustering_layer is None:
+                bottleneck_layer = None
+                dense_candidates = [
+                    l for l in model.layers[:-1]
+                    if isinstance(l, keras.layers.Dense) or l.__class__.__name__ == "Dense"
+                ]
+                if dense_candidates:
+                    bottleneck_layer = min(dense_candidates, key=lambda l: getattr(l, "units", 999999))
+                else:
+                    pool_candidates = [
+                        l for l in model.layers[:-1]
+                        if any(k in l.__class__.__name__.lower() for k in ("flatten", "globalaveragepooling", "globalmaxpooling", "latent", "bottleneck", "embedding"))
+                    ]
+                    if pool_candidates:
+                        bottleneck_layer = pool_candidates[-1]
+                    else:
+                        mid_idx = max(0, (len(model.layers) - 1) // 2)
+                        bottleneck_layer = model.layers[mid_idx]
+
+                bn_tensor = bottleneck_layer.output
+                if len(bn_tensor.shape) > 2:
+                    bn_tensor = keras.layers.Flatten(name="flatten_idec_bottleneck")(bn_tensor)
+
+                clustering_layer = ClusteringLayer(n_clusters=n_clusters, name="clustering_idec")(bn_tensor)
+                recon_output = model.outputs[0]
+                model = keras.Model(inputs=model.inputs, outputs=[clustering_layer, recon_output], name=model.name)
+                task_type = "idec_clustering"
+                model_record["task_type"] = "idec_clustering"
+                clustering_out_idx = 0
+                outputs = model.outputs
+
+                try:
+                    with get_db_connection() as conn:
+                        conn.execute("UPDATE models SET task_type = ? WHERE id = ?", ("idec_clustering", job.model_id))
+                        conn.commit()
+                    model.save(str(weights_path))
+                except Exception:
+                    pass
+
+            is_idec = False
+            if clustering_layer is not None or idec_mode or task_type == "idec_clustering":
                 is_idec = True
                 for idx, out_tensor in enumerate(outputs):
                     layer = None
@@ -402,10 +494,6 @@ class TrainingService:
                             clustering_out_idx = idx
                             clustering_layer = layer
                             break
-                if clustering_out_idx == 0 and len(outputs) == 2:
-                    output_shapes = model.output_shape if isinstance(model.output_shape, list) else [model.output_shape]
-                    if len(output_shapes[1]) == 2 and len(output_shapes[0]) > 2:
-                        clustering_out_idx = 1
 
             val_split = float(job.config.get("val_split", 0.2))
             shuffle = bool(job.config.get("shuffle", True))
@@ -418,33 +506,11 @@ class TrainingService:
             callbacks = [CancelCallback(job, epoch_offset=epoch_offset)]
 
             if is_idec:
-                # Automated IDEC Training:
-                # 1. Initialize cluster centers with KMeans on bottleneck layer embeddings
-                if clustering_layer is not None and hasattr(clustering_layer, "input"):
-                    try:
-                        encoder = keras.Model(inputs=model.inputs, outputs=clustering_layer.input)
-                        bottleneck_features = encoder.predict(X, verbose=0)
-                        n_clusters = getattr(clustering_layer, "n_clusters", 8)
-                        kmeans = KMeans(n_clusters=n_clusters, n_init=20, random_state=seed)
-                        kmeans.fit(bottleneck_features)
-                        clustering_layer.set_weights([kmeans.cluster_centers_])
-                    except Exception:
-                        pass
-
-                # 2. Compute initial high-confidence target distribution P
-                def compute_target_distribution(q: np.ndarray) -> np.ndarray:
-                    weight = q ** 2 / np.maximum(q.sum(axis=0), 1e-10)
-                    return (weight.T / np.maximum(weight.sum(axis=1), 1e-10)).T
-
-                initial_preds = model.predict(X, verbose=0)
-                q_initial = initial_preds[clustering_out_idx] if isinstance(initial_preds, list) else initial_preds
-                P_target = compute_target_distribution(q_initial)
-
-                recon_target = X[0] if isinstance(X, list) else X
-                if clustering_out_idx == 0:
-                    targets = [P_target, recon_target]
-                else:
-                    targets = [recon_target, P_target]
+                recon_out_idx = 1 - clustering_out_idx
+                gamma = float(job.config.get("gamma", 0.1))
+                pretrain_epochs = int(job.config.get("pretrain_epochs", 5))
+                update_interval = int(job.config.get("update_interval", 1))
+                k = getattr(clustering_layer, "n_clusters", n_clusters)
 
                 n_samples = len(X[0]) if isinstance(X, list) else len(X)
                 if val_split > 0.0 and n_samples > 4:
@@ -456,52 +522,157 @@ class TrainingService:
                         X_val = [arr[idx_val] for arr in X]
                     else:
                         X_train, X_val = X[idx_train], X[idx_val]
-                    y_train = [t[idx_train] for t in targets]
-                    y_val = [t[idx_val] for t in targets]
-                    validation_data = (X_val, y_val)
                 else:
                     X_train = X
-                    y_train = targets
-                    validation_data = None
+                    X_val = None
 
-                # Compile with IDEC losses & loss weights
+                recon_target = X_train[0] if isinstance(X_train, list) else X_train
+                recon_val_target = (X_val[0] if isinstance(X_val, list) else X_val) if X_val is not None else None
+
+                # 1. Pre-training phase for Autoencoder submodel
+                if pretrain_epochs > 0 and not is_resumed:
+                    try:
+                        ae_model = keras.Model(inputs=model.inputs, outputs=model.outputs[recon_out_idx])
+                        ae_opt = keras.optimizers.get({"class_name": opt_name, "config": {"learning_rate": lr}})
+                        ae_model.compile(optimizer=ae_opt, loss="mse", metrics=["mae"])
+                        ae_val = (X_val, recon_val_target) if X_val is not None else None
+                        ae_model.fit(
+                            X_train,
+                            recon_target,
+                            batch_size=batch_size,
+                            epochs=pretrain_epochs,
+                            validation_data=ae_val,
+                            verbose=0
+                        )
+                    except Exception:
+                        pass
+
+                # 2. KMeans initialization on Bottleneck embeddings
+                try:
+                    bn_tensor = getattr(clustering_layer, "input", None)
+                    if bn_tensor is None:
+                        for l in model.layers:
+                            if isinstance(l, ClusteringLayer) or l.__class__.__name__ == "ClusteringLayer" or "clustering" in getattr(l, "name", "").lower():
+                                bn_tensor = l.input
+                                break
+                    encoder = keras.Model(inputs=model.inputs, outputs=bn_tensor)
+                    bottleneck_features = encoder.predict(X_train, verbose=0)
+                    if bottleneck_features.ndim > 2:
+                        bottleneck_features = bottleneck_features.reshape(len(bottleneck_features), -1)
+                    kmeans = KMeans(n_clusters=k, n_init=20, random_state=seed)
+                    kmeans.fit(bottleneck_features)
+                    clustering_layer.set_weights([kmeans.cluster_centers_.astype(np.float32)])
+                except Exception:
+                    pass
+
+                # 3. Compile IDEC model with dual losses & weights
                 losses = ["kld", "mse"] if clustering_out_idx == 0 else ["mse", "kld"]
-                loss_weights = [0.1, 1.0] if clustering_out_idx == 0 else [1.0, 0.1]
+                loss_weights = [gamma, 1.0] if clustering_out_idx == 0 else [1.0, gamma]
+                metrics = [["accuracy"], ["mae"]] if clustering_out_idx == 0 else [["mae"], ["accuracy"]]
                 model = KerasModelBuilder.compile_model(
                     model,
                     optimizer=opt_name,
                     learning_rate=lr,
                     loss=losses,
-                    loss_weights=loss_weights
+                    loss_weights=loss_weights,
+                    metrics=metrics
                 )
 
-                if job.config.get("early_stopping", False):
-                    patience = int(job.config.get("patience", 5))
-                    callbacks.append(keras.callbacks.EarlyStopping(
-                        monitor="val_loss" if validation_data is not None else "loss",
-                        patience=patience,
-                        restore_best_weights=True
-                    ))
+                def compute_target_distribution(q: np.ndarray) -> np.ndarray:
+                    weight = q ** 2 / np.maximum(q.sum(axis=0), 1e-10)
+                    return (weight.T / np.maximum(weight.sum(axis=1), 1e-10)).T
 
-                # Train IDEC model
-                model.fit(
-                    X_train,
-                    y_train,
-                    batch_size=batch_size,
-                    epochs=epochs,
-                    validation_data=validation_data,
-                    callbacks=callbacks,
-                    verbose=0
-                )
+                # 4. Iterative Training Loop with periodic P updates
+                early_stopping = bool(job.config.get("early_stopping", False))
+                patience = int(job.config.get("patience", 5))
+                best_monitor_loss = float("inf")
+                wait_patience = 0
+                best_weights = None
+
+                current_epoch = epoch_offset
+                target_total_epochs = epoch_offset + epochs
+
+                while current_epoch < target_total_epochs:
+                    if job.cancel_requested.is_set() or job.status in ("failed", "stopped"):
+                        break
+
+                    preds_train = model.predict(X_train, verbose=0)
+                    q_train = preds_train[clustering_out_idx] if isinstance(preds_train, list) else preds_train
+                    P_train = compute_target_distribution(q_train)
+
+                    if clustering_out_idx == 0:
+                        y_train = [P_train, recon_target]
+                    else:
+                        y_train = [recon_target, P_train]
+
+                    val_data = None
+                    q_val = None
+                    if X_val is not None:
+                        preds_val = model.predict(X_val, verbose=0)
+                        q_val = preds_val[clustering_out_idx] if isinstance(preds_val, list) else preds_val
+                        P_val = compute_target_distribution(q_val)
+                        if clustering_out_idx == 0:
+                            y_val = [P_val, recon_val_target]
+                        else:
+                            y_val = [recon_val_target, P_val]
+                        val_data = (X_val, y_val)
+
+                    step = min(update_interval, target_total_epochs - current_epoch)
+                    next_epoch = current_epoch + step
+
+                    hist = model.fit(
+                        X_train,
+                        y_train,
+                        batch_size=batch_size,
+                        epochs=next_epoch,
+                        initial_epoch=current_epoch,
+                        validation_data=val_data,
+                        callbacks=callbacks,
+                        verbose=0
+                    )
+
+                    # Ensure standard keys for frontend Training Monitor
+                    cl_conf_train = float(np.mean(np.max(q_train, axis=1)))
+                    cl_conf_val = float(np.mean(np.max(q_val, axis=1))) if q_val is not None else None
+
+                    if "accuracy" not in job.history or len(job.history["accuracy"]) < job.current_epoch:
+                        if "accuracy" not in job.history:
+                            job.history["accuracy"] = []
+                        job.history["accuracy"].append(round(cl_conf_train, 4))
+                    if val_data is not None and ("val_accuracy" not in job.history or len(job.history["val_accuracy"]) < job.current_epoch):
+                        if "val_accuracy" not in job.history:
+                            job.history["val_accuracy"] = []
+                        job.history["val_accuracy"].append(round(cl_conf_val, 4) if cl_conf_val is not None else None)
+
+                    # Early stopping check
+                    current_loss = None
+                    if val_data is not None and "val_loss" in job.history and job.history["val_loss"]:
+                        current_loss = job.history["val_loss"][-1]
+                    elif "loss" in job.history and job.history["loss"]:
+                        current_loss = job.history["loss"][-1]
+
+                    if early_stopping and current_loss is not None and np.isfinite(current_loss):
+                        if current_loss < best_monitor_loss - 1e-4:
+                            best_monitor_loss = current_loss
+                            wait_patience = 0
+                            best_weights = model.get_weights()
+                        else:
+                            wait_patience += step
+                            if wait_patience >= patience:
+                                if best_weights is not None:
+                                    model.set_weights(best_weights)
+                                break
+
+                    current_epoch = next_epoch
 
                 if job.status == "failed":
                     return
 
-                # Evaluation for IDEC
-                eval_X = X_val if validation_data is not None else X_train
+                # 5. Rich IDEC Evaluation Metrics
+                eval_X = X_val if X_val is not None else X_train
                 y_pred = model.predict(eval_X, verbose=0)
                 q_eval = y_pred[clustering_out_idx] if isinstance(y_pred, list) else y_pred
-                recon_eval = y_pred[1 - clustering_out_idx] if isinstance(y_pred, list) else y_pred
+                recon_eval = y_pred[recon_out_idx] if isinstance(y_pred, list) else y_pred
 
                 pred_clusters = np.argmax(q_eval, axis=1)
                 cluster_conf = float(np.mean(np.max(q_eval, axis=1)))
@@ -509,6 +680,20 @@ class TrainingService:
                 eval_X_arr = eval_X[0] if isinstance(eval_X, list) else eval_X
                 rec_mse = float(mean_squared_error(eval_X_arr.flatten(), recon_eval.flatten()))
                 rec_mae = float(mean_absolute_error(eval_X_arr.flatten(), recon_eval.flatten()))
+
+                # Silhouette score
+                sil_score = None
+                try:
+                    if len(np.unique(pred_clusters)) > 1 and len(eval_X_arr) >= len(np.unique(pred_clusters)) + 1:
+                        lat_tensor = clustering_layer.input if hasattr(clustering_layer, "input") else bn_tensor
+                        lat_encoder = keras.Model(inputs=model.inputs, outputs=lat_tensor)
+                        lat_feats = lat_encoder.predict(eval_X, verbose=0)
+                        if lat_feats.ndim > 2:
+                            lat_feats = lat_feats.reshape(len(lat_feats), -1)
+                        n_eval = min(1000, len(lat_feats))
+                        sil_score = float(silhouette_score(lat_feats[:n_eval], pred_clusters[:n_eval]))
+                except Exception:
+                    sil_score = None
 
                 evaluation_results = {
                     "task_type": "idec_clustering",
@@ -518,6 +703,8 @@ class TrainingService:
                     "reconstruction_mse": round(rec_mse, 6),
                     "reconstruction_mae": round(rec_mae, 6)
                 }
+                if sil_score is not None:
+                    evaluation_results["silhouette_score"] = round(sil_score, 4)
                 job.evaluation = evaluation_results
 
             else:

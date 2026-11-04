@@ -70,6 +70,44 @@
                 </select>
             </div>
         </div>
+
+        <!-- IDEC Derin Kümeleme Ayarları -->
+        <div style="margin-top: 1rem; border-top: 1px solid var(--border-color, #1e293b); padding-top: 0.75rem;">
+            <div style="display: flex; align-items: flex-start; gap: 8px;">
+                <input type="checkbox" id="train-idec-mode" onchange="toggleIdecParamsSection()" style="margin-top: 3px; cursor: pointer;">
+                <div>
+                    <label for="train-idec-mode" style="font-size: 13px; font-weight: 600; cursor: pointer; color: var(--accent-cyan, #38bdf8);">
+                        IDEC Kümeleme Eğitimi Aktif (Autoencoder / IDEC)
+                    </label>
+                    <div style="font-size: 11px; color: var(--text-muted, #94a3b8); margin-top: 2px; line-height: 1.4;">
+                        Herhangi bir Autoencoder veya IDEC modeli yinelemeli hedef dağılım ($P$) güncellemeleri, KLD kümeleme ve MSE rekonstrüksiyon kaybı ile eğitilebilir.
+                    </div>
+                </div>
+            </div>
+
+            <div id="idec-params-section" style="display: none; background: rgba(15, 23, 42, 0.4); border: 1px solid #1e293b; border-radius: 6px; padding: 10px; margin-top: 10px;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label class="form-label" style="font-size: 11px;">Küme Sayısı (K)</label>
+                        <input type="number" id="train-idec-clusters" class="form-control" value="5" min="2" max="50">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label class="form-label" style="font-size: 11px;">Kümeleme Ağırlığı (&gamma;)</label>
+                        <input type="number" id="train-idec-gamma" class="form-control" value="0.1" step="0.05" min="0.01">
+                    </div>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label class="form-label" style="font-size: 11px;">AE Ön-Eğitim Epoch</label>
+                        <input type="number" id="train-idec-pretrain" class="form-control" value="5" min="0" max="200">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label class="form-label" style="font-size: 11px;">Hedef Güncelleme (Epoch)</label>
+                        <input type="number" id="train-idec-update" class="form-control" value="1" min="1">
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Katman Dondurma ve Seçimli Eğitim Card -->
@@ -138,6 +176,15 @@
 <script>
     let monitor = null;
 
+    function toggleIdecParamsSection() {
+        const cb = document.getElementById("train-idec-mode");
+        const sec = document.getElementById("idec-params-section");
+        if (sec) {
+            sec.style.display = cb && cb.checked ? "block" : "none";
+        }
+    }
+    window.toggleIdecParamsSection = toggleIdecParamsSection;
+
     async function initTrainingView() {
         monitor = new TrainingMonitor("training-curves-chart");
 
@@ -202,6 +249,40 @@
                         }
                     };
                 });
+
+                // Auto-detect IDEC / Clustering model and configure parameters
+                const isIdecModel = currentModelData.task_type === "idec_clustering" ||
+                    layers.some(l => {
+                        const lType = (l.layer_type || "").toLowerCase();
+                        const lName = (l.layer_name || l.name || "").toLowerCase();
+                        return lType === "keras/clustering" || lType.includes("clustering") || lName.includes("clustering");
+                    });
+
+                const idecCheckbox = document.getElementById("train-idec-mode");
+                if (idecCheckbox) {
+                    idecCheckbox.checked = isIdecModel;
+                    toggleIdecParamsSection();
+                }
+
+                if (isIdecModel) {
+                    const cLayer = layers.find(l => {
+                        const lType = (l.layer_type || "").toLowerCase();
+                        const lName = (l.layer_name || l.name || "").toLowerCase();
+                        return lType === "keras/clustering" || lType.includes("clustering") || lName.includes("clustering");
+                    });
+                    let clusterK = null;
+                    if (cLayer) {
+                        if (cLayer.config && cLayer.config.n_clusters) {
+                            clusterK = cLayer.config.n_clusters;
+                        } else if (Array.isArray(cLayer.output_shape) && cLayer.output_shape.length >= 2 && cLayer.output_shape[1]) {
+                            clusterK = cLayer.output_shape[1];
+                        }
+                    }
+                    if (clusterK) {
+                        const kInput = document.getElementById("train-idec-clusters");
+                        if (kInput) kInput.value = clusterK;
+                    }
+                }
             } catch (e) {
                 console.error("Failed to load model layers", e);
             }
@@ -313,6 +394,12 @@
                 return null;
             }
 
+            const idecMode = document.getElementById("train-idec-mode")?.checked || false;
+            const nClusters = parseInt(document.getElementById("train-idec-clusters")?.value || "5", 10);
+            const gamma = parseFloat(document.getElementById("train-idec-gamma")?.value || "0.1");
+            const pretrainEpochs = parseInt(document.getElementById("train-idec-pretrain")?.value || "5", 10);
+            const updateInterval = parseInt(document.getElementById("train-idec-update")?.value || "1", 10);
+
             return {
                 model_id: modelId,
                 dataset_id: datasetId,
@@ -324,14 +411,22 @@
                 early_stopping: document.getElementById("train-es").value === "true",
                 patience: 5,
                 resume: Boolean(isResume),
-                frozen_layers: getFrozenLayers()
+                frozen_layers: getFrozenLayers(),
+                idec_mode: idecMode,
+                n_clusters: nClusters,
+                gamma: gamma,
+                pretrain_epochs: pretrainEpochs,
+                update_interval: updateInterval
             };
         }
 
-        document.getElementById("start-train-btn").onclick = () => {
+        function startTraining() {
             const config = buildTrainingConfig(false);
             if (config) monitor.startJob(config);
-        };
+        }
+        window.startTraining = startTraining;
+
+        document.getElementById("start-train-btn").onclick = startTraining;
 
         document.getElementById("resume-train-btn").onclick = () => {
             const config = buildTrainingConfig(true);

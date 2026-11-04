@@ -45,7 +45,13 @@ def run_clustering(payload: ClusteringRequest):
             xi=payload.xi,
             standardize=payload.standardize,
             random_state=payload.random_state,
-            compute_pca=payload.compute_pca
+            compute_pca=payload.compute_pca,
+            model_id=payload.model_id,
+            epochs=payload.epochs,
+            pretrain_epochs=payload.pretrain_epochs,
+            gamma=payload.gamma,
+            update_interval=payload.update_interval,
+            params=payload.model_dump() if hasattr(payload, "model_dump") else payload.dict()
         )
         return results
     except HTTPException:

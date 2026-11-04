@@ -73,7 +73,8 @@ class ClusteringLayer(layers.Layer):
 
         q = 1.0 / (1.0 + (dist_sq / self.alpha))
         q = ops.power(q, (self.alpha + 1.0) / 2.0)
-        q = q / ops.sum(q, axis=-1, keepdims=True)
+        q = q / ops.maximum(ops.sum(q, axis=-1, keepdims=True), 1e-10)
+        q = ops.clip(q, 1e-7, 1.0 - 1e-7)
         return q
 
     def compute_output_shape(self, input_shape):
@@ -189,15 +190,42 @@ class CustomSignalLayer(layers.Layer):
 
 class KerasModelBuilder:
     @staticmethod
+    def coerce_bool(val: Any, default: bool = False) -> bool:
+        """Robust boolean coercion handling strings like 'false', '0', 'no', 'true', etc."""
+        if val is None:
+            return default
+        if isinstance(val, bool):
+            return val
+        if isinstance(val, (int, float)):
+            return bool(val)
+        if isinstance(val, str):
+            s = val.strip().lower()
+            if s in ("false", "0", "no", "off", "none", ""):
+                return False
+            if s in ("true", "1", "yes", "on"):
+                return True
+        return bool(val)
+
+    @staticmethod
     def parse_graph(graph_data: Dict[str, Any]) -> Tuple[Dict[str, Dict[str, Any]], List[Dict[str, Any]]]:
         """Parses and normalizes nodes and links from graph payload."""
+        if not isinstance(graph_data, dict):
+            return {}, []
         raw_nodes = graph_data.get("nodes", [])
-        raw_links = graph_data.get("links", [])
+        if isinstance(raw_nodes, dict):
+            raw_nodes = list(raw_nodes.values())
+
+        raw_links = graph_data.get("links")
+        if raw_links is None:
+            raw_links = graph_data.get("edges", [])
+        if isinstance(raw_links, dict):
+            raw_links = list(raw_links.values())
 
         nodes_by_id = {}
         for n in raw_nodes:
-            nid = str(n.get("id"))
-            nodes_by_id[nid] = n
+            if isinstance(n, dict):
+                nid = str(n.get("id"))
+                nodes_by_id[nid] = n
 
         links = []
         for l in raw_links:
@@ -211,12 +239,16 @@ class KerasModelBuilder:
                     "target_slot": int(l[4]),
                 })
             elif isinstance(l, dict):
+                orig_id = l.get("origin_id", l.get("source", l.get("source_id", l.get("from"))))
+                orig_slot = l.get("origin_slot", l.get("source_slot", l.get("from_slot", 0)))
+                targ_id = l.get("target_id", l.get("target", l.get("target_id", l.get("to"))))
+                targ_slot = l.get("target_slot", l.get("to_slot", 0))
                 links.append({
                     "id": str(l.get("id", "")),
-                    "origin_id": str(l.get("origin_id")),
-                    "origin_slot": int(l.get("origin_slot", 0)),
-                    "target_id": str(l.get("target_id")),
-                    "target_slot": int(l.get("target_slot", 0)),
+                    "origin_id": str(orig_id),
+                    "origin_slot": int(orig_slot) if orig_slot is not None else 0,
+                    "target_id": str(targ_id),
+                    "target_slot": int(targ_slot) if targ_slot is not None else 0,
                 })
 
         return nodes_by_id, links
@@ -397,26 +429,26 @@ class KerasModelBuilder:
         # 3. Recurrent Layers
         elif t == "simplernn":
             units = int(props.get("units", 64))
-            ret_seq = bool(props.get("return_sequences", False))
+            ret_seq = KerasModelBuilder.coerce_bool(props.get("return_sequences", False), False)
             act = props.get("activation", "tanh")
             return layers.SimpleRNN(units=units, return_sequences=ret_seq, activation=act, name=name)
 
         elif t == "lstm":
             units = int(props.get("units", 64))
-            ret_seq = bool(props.get("return_sequences", False))
+            ret_seq = KerasModelBuilder.coerce_bool(props.get("return_sequences", False), False)
             drop = float(props.get("dropout", 0.0))
             rec_drop = float(props.get("recurrent_dropout", 0.0))
             return layers.LSTM(units=units, return_sequences=ret_seq, dropout=drop, recurrent_dropout=rec_drop, name=name)
 
         elif t == "gru":
             units = int(props.get("units", 64))
-            ret_seq = bool(props.get("return_sequences", False))
+            ret_seq = KerasModelBuilder.coerce_bool(props.get("return_sequences", False), False)
             return layers.GRU(units=units, return_sequences=ret_seq, name=name)
 
         elif t == "bidirectional":
             sub_type = props.get("recurrent_type", "lstm").lower()
             units = int(props.get("units", 64))
-            ret_seq = bool(props.get("return_sequences", False))
+            ret_seq = KerasModelBuilder.coerce_bool(props.get("return_sequences", False), False)
             if sub_type == "gru":
                 rec_layer = layers.GRU(units, return_sequences=ret_seq)
             else:
@@ -616,7 +648,7 @@ class KerasModelBuilder:
                 layer_obj = cls._create_keras_layer(ntype, props, nid, name=layer_name)
                 # Honor trainable property
                 if hasattr(layer_obj, "trainable"):
-                    layer_obj.trainable = bool(props.get("trainable", True))
+                    layer_obj.trainable = cls.coerce_bool(props.get("trainable", True), True)
 
                 # Connect layer
                 if clean_ntype in ("concatenate", "add", "multiply", "average"):
@@ -947,7 +979,7 @@ class KerasModelBuilder:
             if isinstance(w_vals, list) and len(w_vals) > 0 and not props:
                 props = {"units": w_vals[0]}
             var_name = var_names[nid]
-            trainable = props.get("trainable", True)
+            trainable = cls.coerce_bool(props.get("trainable", True), True)
 
             # Case 1: Input Layer
             if clean_ntype in ("input", "inputlayer"):
@@ -1037,24 +1069,24 @@ class KerasModelBuilder:
 
             elif clean_ntype == "lstm":
                 units = int(props.get("units", 64))
-                ret_seq = bool(props.get("return_sequences", False))
+                ret_seq = cls.coerce_bool(props.get("return_sequences", False), False)
                 drop = float(props.get("dropout", 0.0))
                 layer_lines.append(f"    {var_name} = layers.LSTM(units={units}, return_sequences={ret_seq}, dropout={drop}, name='{var_name}', trainable={trainable})({p_in})")
 
             elif clean_ntype == "gru":
                 units = int(props.get("units", 64))
-                ret_seq = bool(props.get("return_sequences", False))
+                ret_seq = cls.coerce_bool(props.get("return_sequences", False), False)
                 layer_lines.append(f"    {var_name} = layers.GRU(units={units}, return_sequences={ret_seq}, name='{var_name}', trainable={trainable})({p_in})")
 
             elif clean_ntype == "simplernn":
                 units = int(props.get("units", 64))
-                ret_seq = bool(props.get("return_sequences", False))
+                ret_seq = cls.coerce_bool(props.get("return_sequences", False), False)
                 act = props.get("activation", "tanh")
                 layer_lines.append(f"    {var_name} = layers.SimpleRNN(units={units}, return_sequences={ret_seq}, activation='{act}', name='{var_name}', trainable={trainable})({p_in})")
 
             elif clean_ntype == "bidirectional":
                 units = int(props.get("units", 64))
-                ret_seq = bool(props.get("return_sequences", False))
+                ret_seq = cls.coerce_bool(props.get("return_sequences", False), False)
                 sub_type = props.get("recurrent_type", "lstm").lower()
                 sub_cls = "GRU" if sub_type == "gru" else "LSTM"
                 layer_lines.append(f"    {var_name} = layers.Bidirectional(layers.{sub_cls}({units}, return_sequences={ret_seq}), name='{var_name}', trainable={trainable})({p_in})")
@@ -1141,7 +1173,8 @@ class ClusteringLayer(layers.Layer):
         dist_sq = ops.sum(ops.square(expanded_inputs - expanded_clusters), axis=-1)
         q = 1.0 / (1.0 + (dist_sq / self.alpha))
         q = ops.power(q, (self.alpha + 1.0) / 2.0)
-        q = q / ops.sum(q, axis=-1, keepdims=True)
+        q = q / ops.maximum(ops.sum(q, axis=-1, keepdims=True), 1e-10)
+        q = ops.clip(q, 1e-7, 1.0 - 1e-7)
         return q
 
     def compute_output_shape(self, input_shape):

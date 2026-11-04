@@ -379,13 +379,15 @@ table.data-table tr:hover {
     top: 12px;
     left: 12px;
     display: flex;
+    align-items: center;
     gap: 6px;
-    background: rgba(19, 23, 34, 0.85);
+    background: rgba(19, 23, 34, 0.9);
     backdrop-filter: blur(8px);
     border: 1px solid var(--border-color);
     padding: 6px;
     border-radius: 8px;
     z-index: 10;
+    flex-wrap: wrap;
 }
 
 .sidebar-panel {
