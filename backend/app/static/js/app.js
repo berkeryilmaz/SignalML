@@ -6,6 +6,10 @@ const SignalML = {
     activeDataset: null,
     activeModel: null,
 
+    getProjectId: function() {
+        return this.currentProjectId || localStorage.getItem("signalml_active_project") || "default-project";
+    },
+
     init: async function() {
         await this.loadProjects();
         this.setupProjectSwitcher();
@@ -39,6 +43,16 @@ const SignalML = {
         } catch (_) {
             return { detail: text || res.statusText || `HTTP ${res.status}` };
         }
+    },
+
+    escapeHtml: function(str) {
+        if (str === null || str === undefined) return "";
+        return String(str)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;");
     },
 
     loadProjects: async function() {
@@ -155,6 +169,27 @@ const SignalML = {
         }
     },
 
+    duplicateProject: async function(id) {
+        try {
+            const res = await fetch(`/api/projects/${id}/duplicate`, {
+                method: "POST"
+            });
+            if (res.ok) {
+                const proj = await this.safeJson(res);
+                this.toast(`Project duplicated as '${proj.name}'`, "success");
+                await this.loadProjects();
+                return proj;
+            } else {
+                const err = await this.safeJson(res);
+                this.toast(`Error: ${err.detail || "Could not duplicate project"}`, "error");
+                return null;
+            }
+        } catch (e) {
+            this.toast(`Error: ${e.message}`, "error");
+            return null;
+        }
+    },
+
     checkSystemHealth: async function() {
         try {
             const res = await fetch("/health");
@@ -176,6 +211,10 @@ const SignalML = {
         }
     }
 };
+
+if (typeof window !== "undefined") {
+    window.SignalML = SignalML;
+}
 
 document.addEventListener("DOMContentLoaded", () => {
     SignalML.init();

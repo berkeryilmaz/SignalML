@@ -1,7 +1,14 @@
+import csv
+import io
+import json
+import numpy as np
+import keras
 from typing import Dict, Any, List, Optional
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
+from app.core.config import resolve_storage_path
 from app.core.database import get_db_connection
 from app.services.training_service import TrainingService, TrainingJob
+from app.services.keras_model_builder import ClusteringLayer
 from app.schemas.training import TrainingConfig, TrainingJobStatus
 
 router = APIRouter(prefix="/api/training", tags=["Model Training"])
@@ -120,3 +127,175 @@ def get_model_training_history(model_id: str):
             d["evaluation"] = json.loads(d.get("evaluation_json", "{}"))
             runs.append(d)
         return runs
+
+
+@router.delete("/runs/{run_id}")
+def delete_training_run(run_id: str):
+    """Deletes a training run record from the database."""
+    with get_db_connection() as conn:
+        row = conn.execute("SELECT id FROM training_runs WHERE id = ?", (run_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Training run not found")
+        conn.execute("DELETE FROM training_runs WHERE id = ?", (run_id,))
+        conn.commit()
+    return {"message": "Training run deleted successfully", "id": run_id}
+
+
+@router.get("/predict_csv/{model_id}/{dataset_id}")
+def export_predictions_csv(model_id: str, dataset_id: str):
+    """
+    Runs batch inference on the target dataset using the specified model,
+    and returns a downloadable CSV containing input_id (from sample_ids),
+    predicted labels/values, class probabilities (for classification),
+    and ground truth labels (if available in dataset).
+    """
+    with get_db_connection() as conn:
+        model_row = conn.execute("SELECT * FROM models WHERE id = ?", (model_id,)).fetchone()
+        if not model_row:
+            raise HTTPException(status_code=404, detail="Model not found")
+        model_record = dict(model_row)
+
+    weights_path = resolve_storage_path(model_record.get("weights_path"))
+    if not weights_path or not weights_path.exists():
+        raise HTTPException(status_code=404, detail=f"Model weights file not found on disk: {model_record.get('weights_path')}")
+
+    try:
+        model = keras.models.load_model(str(weights_path), custom_objects={"ClusteringLayer": ClusteringLayer})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load model: {str(e)}")
+
+    try:
+        X, y, dataset_record = TrainingService.prepare_model_inputs(model, dataset_id)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to prepare dataset inputs: {str(e)}")
+
+    sample_ids = dataset_record.get("sample_ids")
+    n_samples = len(X[0]) if isinstance(X, list) else len(X)
+    if not sample_ids or len(sample_ids) != n_samples:
+        sample_ids = [f"sample_{i}" for i in range(n_samples)]
+
+    try:
+        preds = model.predict(X, verbose=0)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Model prediction failed: {str(e)}")
+
+    task_type = model_record.get("task_type", "classification")
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    # Check if preds is from a multi-output model or IDEC model
+    q_preds = None
+    if isinstance(preds, list):
+        outputs = model.outputs if isinstance(model.outputs, list) else [model.output]
+        for idx, out_tensor in enumerate(outputs):
+            hist = getattr(out_tensor, "_keras_history", None)
+            l = hist[0] if isinstance(hist, tuple) else getattr(hist, "operation", None)
+            if isinstance(l, ClusteringLayer) or (l and "clustering" in getattr(l, "name", "").lower()):
+                if idx < len(preds):
+                    q_preds = preds[idx]
+                    break
+        if q_preds is None:
+            # Fallback heuristic: find 2D output with shape (n_samples, n_clusters)
+            for p in preds:
+                if hasattr(p, "ndim") and p.ndim == 2 and p.shape[1] >= 2 and p.shape[0] == n_samples:
+                    if np.all(p >= 0.0) and np.all(p <= 1.001):
+                        q_preds = p
+                        break
+
+    if q_preds is not None or task_type == "idec_clustering":
+        if q_preds is None:
+            q_preds = preds[0] if isinstance(preds, list) else preds
+        if q_preds.ndim != 2:
+            q_preds = q_preds.reshape(n_samples, -1)
+
+        n_clusters = q_preds.shape[1]
+        pred_clusters = np.argmax(q_preds, axis=1)
+        confidences = np.max(q_preds, axis=1)
+
+        header = ["input_id", "predicted_cluster", "confidence"]
+        if y is not None:
+            header.append("ground_truth")
+        for c in range(n_clusters):
+            header.append(f"cluster_{c}_prob")
+        writer.writerow(header)
+
+        y_flat = y.flatten() if y is not None else None
+        for i in range(n_samples):
+            row = [sample_ids[i], int(pred_clusters[i]), float(round(confidences[i], 4))]
+            if y is not None:
+                row.append(int(y_flat[i]) if (y_flat is not None and i < len(y_flat)) else "")
+            for c in range(n_clusters):
+                row.append(float(round(q_preds[i, c], 4)))
+            writer.writerow(row)
+
+    elif task_type == "classification":
+        p_arr = preds[0] if isinstance(preds, list) else preds
+        if p_arr.ndim > 1 and p_arr.shape[1] > 1:
+            n_classes = p_arr.shape[1]
+            header = ["input_id", "predicted_class"]
+            if y is not None:
+                header.append("ground_truth")
+            for c in range(n_classes):
+                header.append(f"prob_class_{c}")
+            writer.writerow(header)
+
+            pred_classes = np.argmax(p_arr, axis=1)
+            y_flat = y.flatten() if (y is not None and y.ndim == 1) else (np.argmax(y, axis=1) if (y is not None and y.ndim > 1 and y.shape[1] > 1) else y)
+
+            for i in range(n_samples):
+                row = [sample_ids[i], int(pred_classes[i])]
+                if y is not None:
+                    row.append(int(y_flat[i]) if (y_flat is not None and i < len(y_flat)) else "")
+                for c in range(n_classes):
+                    row.append(float(round(p_arr[i, c], 6)))
+                writer.writerow(row)
+        else:
+            preds_flat = p_arr.flatten()
+            pred_classes = (preds_flat >= 0.5).astype(int)
+            y_flat = y.flatten() if y is not None else None
+
+            header = ["input_id", "predicted_class"]
+            if y is not None:
+                header.append("ground_truth")
+            header.append("probability")
+            writer.writerow(header)
+
+            for i in range(n_samples):
+                row = [sample_ids[i], int(pred_classes[i])]
+                if y is not None:
+                    row.append(int(y_flat[i]) if (y_flat is not None and i < len(y_flat)) else "")
+                row.append(float(round(preds_flat[i], 6)))
+                writer.writerow(row)
+    else:
+        p_arr = preds[0] if isinstance(preds, list) else preds
+        preds_flat = p_arr.reshape(n_samples, -1)
+        y_flat = y.reshape(n_samples, -1) if y is not None else None
+        n_out = preds_flat.shape[1]
+
+        header = ["input_id"]
+        for c in range(n_out):
+            header.append(f"pred_{c}" if n_out > 1 else "prediction")
+        if y is not None:
+            for c in range(n_out):
+                header.append(f"ground_truth_{c}" if n_out > 1 else "ground_truth")
+        writer.writerow(header)
+
+        for i in range(n_samples):
+            row = [sample_ids[i]]
+            for c in range(n_out):
+                row.append(float(round(preds_flat[i, c], 6)))
+            if y is not None and y_flat is not None:
+                for c in range(min(n_out, y_flat.shape[1])):
+                    row.append(float(round(y_flat[i, c], 6)))
+            writer.writerow(row)
+
+    csv_content = output.getvalue()
+    filename = f"predictions_{model_id[:8]}_{dataset_id[:8]}.csv"
+
+    return Response(
+        content=csv_content,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+

@@ -10,6 +10,7 @@
     </div>
     <div style="display: flex; gap: 8px;">
         <button class="btn btn-danger" id="cancel-train-btn">Stop Training</button>
+        <button class="btn btn-secondary" id="resume-train-btn" style="background: rgba(56, 189, 248, 0.15); border: 1px solid var(--accent-cyan); color: var(--accent-cyan); font-weight: 600;">⏯ Kaldığı Yerden Devam Et (Resume Training)</button>
         <button class="btn btn-primary" id="start-train-btn">▶ Launch Training Job</button>
     </div>
 </div>
@@ -69,6 +70,68 @@
                 </select>
             </div>
         </div>
+
+        <!-- IDEC Derin Kümeleme Ayarları -->
+        <div style="margin-top: 1rem; border-top: 1px solid var(--border-color, #1e293b); padding-top: 0.75rem;">
+            <div style="display: flex; align-items: flex-start; gap: 8px;">
+                <input type="checkbox" id="train-idec-mode" onchange="toggleIdecParamsSection()" style="margin-top: 3px; cursor: pointer;">
+                <div>
+                    <label for="train-idec-mode" style="font-size: 13px; font-weight: 600; cursor: pointer; color: var(--accent-cyan, #38bdf8);">
+                        IDEC Kümeleme Eğitimi Aktif (Autoencoder / IDEC)
+                    </label>
+                    <div style="font-size: 11px; color: var(--text-muted, #94a3b8); margin-top: 2px; line-height: 1.4;">
+                        Herhangi bir Autoencoder veya IDEC modeli yinelemeli hedef dağılım ($P$) güncellemeleri, KLD kümeleme ve MSE rekonstrüksiyon kaybı ile eğitilebilir.
+                    </div>
+                </div>
+            </div>
+
+            <div id="idec-params-section" style="display: none; background: rgba(15, 23, 42, 0.4); border: 1px solid #1e293b; border-radius: 6px; padding: 10px; margin-top: 10px;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label class="form-label" style="font-size: 11px;">Küme Sayısı (K)</label>
+                        <input type="number" id="train-idec-clusters" class="form-control" value="5" min="2" max="50">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label class="form-label" style="font-size: 11px;">Kümeleme Ağırlığı (&gamma;)</label>
+                        <input type="number" id="train-idec-gamma" class="form-control" value="0.1" step="0.05" min="0.01">
+                    </div>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label class="form-label" style="font-size: 11px;">AE Ön-Eğitim Epoch</label>
+                        <input type="number" id="train-idec-pretrain" class="form-control" value="5" min="0" max="200">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label class="form-label" style="font-size: 11px;">Hedef Güncelleme (Epoch)</label>
+                        <input type="number" id="train-idec-update" class="form-control" value="1" min="1">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Katman Dondurma ve Seçimli Eğitim Card -->
+    <div class="card" style="margin-top: 1rem;" id="layer-freeze-card">
+        <div class="card-title" style="display: flex; justify-content: space-between; align-items: center;">
+            <span>❄️ Katman Dondurma ve Seçimli Eğitim (Layer Freezing)</span>
+        </div>
+        <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 0.75rem;">
+            Katmanları dondurarak (Freeze) transfer öğrenme ve selective training yapın.
+        </p>
+
+        <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 0.75rem;">
+            <button type="button" class="btn btn-secondary btn-sm" id="freeze-cnn-btn" style="font-size: 11px; padding: 4px 8px;">1D-CNN Kolunu Dondur</button>
+            <button type="button" class="btn btn-secondary btn-sm" id="unfreeze-all-btn" style="font-size: 11px; padding: 4px 8px;">Tümünü Aç</button>
+            <button type="button" class="btn btn-primary btn-sm" id="save-freeze-btn" style="font-size: 11px; padding: 4px 8px; background: var(--accent-cyan); color: #000; border: none; font-weight: 600;">Dondurma Ayarlarını Kaydet</button>
+        </div>
+
+        <div id="freeze-params-badge" style="font-size: 12px; margin-bottom: 0.5rem; color: #94a3b8;">
+            Eğitilebilir: <strong id="freeze-trainable-count" style="color: var(--accent-green);">—</strong> / Dondurulmuş: <strong id="freeze-nontrainable-count" style="color: var(--accent-rose);">—</strong>
+        </div>
+
+        <div id="layers-freeze-list" style="max-height: 240px; overflow-y: auto; border: 1px solid #1e293b; border-radius: 6px; padding: 6px; background: rgba(15, 23, 42, 0.6);">
+            <div style="font-size: 12px; color: var(--text-muted); text-align: center; padding: 1rem;">Model seçildiğinde katmanlar burada listelenecektir.</div>
+        </div>
     </div>
 
     <!-- Live Monitor & Chart -->
@@ -88,6 +151,11 @@
                 <div class="card-title">Validation Loss</div>
                 <div class="stat-val" id="train-stat-val-loss">0.0000</div>
                 <div class="stat-desc">Generalization Loss</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Accuracy / Quality</div>
+                <div class="stat-val" style="color: var(--accent-green, #34d399);" id="train-stat-accuracy">—</div>
+                <div class="stat-desc" id="train-stat-acc-label">Model Accuracy</div>
             </div>
             <div class="card">
                 <div class="card-title">Elapsed Time</div>
@@ -113,8 +181,117 @@
 <script>
     let monitor = null;
 
+    function toggleIdecParamsSection() {
+        const cb = document.getElementById("train-idec-mode");
+        const sec = document.getElementById("idec-params-section");
+        if (sec) {
+            sec.style.display = cb && cb.checked ? "block" : "none";
+        }
+    }
+    window.toggleIdecParamsSection = toggleIdecParamsSection;
+
     async function initTrainingView() {
         monitor = new TrainingMonitor("training-curves-chart");
+
+        async function loadModelLayers(modelId) {
+            if (!modelId) return;
+            try {
+                const res = await fetch(`/api/models/${modelId}`);
+                if (!res.ok) return;
+                const currentModelData = await SignalML.safeJson(res);
+                const summary = currentModelData.summary || {};
+                const layers = summary.layers || [];
+
+                document.getElementById("freeze-trainable-count").textContent = (summary.trainable_params || 0).toLocaleString();
+                document.getElementById("freeze-nontrainable-count").textContent = (summary.non_trainable_params || 0).toLocaleString();
+
+                const container = document.getElementById("layers-freeze-list");
+                if (layers.length === 0) {
+                    container.innerHTML = `<div style="font-size: 12px; color: var(--text-muted); text-align: center; padding: 1rem;">Katman bilgisi bulunamadı.</div>`;
+                    return;
+                }
+
+                container.innerHTML = layers.map((l, idx) => {
+                    const lName = l.layer_name || l.name || `layer_${idx}`;
+                    const customName = l.custom_name || lName;
+                    const lType = l.layer_type || "";
+                    const isInput = lType.toLowerCase().includes("input");
+                    const isTrainable = l.trainable !== false && !isInput;
+                    const params = (l.params || 0).toLocaleString();
+
+                    return `
+                        <div style="display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 12px;">
+                            <div style="display: flex; align-items: center; gap: 8px; overflow: hidden;">
+                                <input type="checkbox" class="layer-trainable-toggle" data-layer-name="${lName}" data-layer-type="${lType}" ${isTrainable ? "checked" : ""} ${isInput ? "disabled" : ""} style="cursor: pointer;">
+                                <div style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                                    <strong>${customName}</strong>
+                                    <span style="color: var(--text-muted); font-size: 11px;">(${lType})</span>
+                                </div>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 6px; font-size: 11px;">
+                                <span class="layer-status-pill" style="padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; ${isTrainable ? 'background: rgba(34, 197, 94, 0.2); color: #4ade80;' : 'background: rgba(239, 68, 68, 0.2); color: #f87171;'}">
+                                    ${isTrainable ? 'Trainable' : 'Frozen 🔒'}
+                                </span>
+                                <span style="color: #64748b; font-family: var(--font-mono);">${params} p</span>
+                            </div>
+                        </div>
+                    `;
+                }).join("");
+
+                container.querySelectorAll(".layer-trainable-toggle").forEach(cb => {
+                    cb.onchange = (e) => {
+                        const pill = e.target.closest("div[style*='display: flex']").parentElement.querySelector(".layer-status-pill");
+                        if (pill) {
+                            if (e.target.checked) {
+                                pill.textContent = "Trainable";
+                                pill.style.background = "rgba(34, 197, 94, 0.2)";
+                                pill.style.color = "#4ade80";
+                            } else {
+                                pill.textContent = "Frozen 🔒";
+                                pill.style.background = "rgba(239, 68, 68, 0.2)";
+                                pill.style.color = "#f87171";
+                            }
+                        }
+                    };
+                });
+
+                // Auto-detect IDEC / Clustering model and configure parameters
+                const isIdecModel = currentModelData.task_type === "idec_clustering" ||
+                    layers.some(l => {
+                        const lType = (l.layer_type || "").toLowerCase();
+                        const lName = (l.layer_name || l.name || "").toLowerCase();
+                        return lType === "keras/clustering" || lType.includes("clustering") || lName.includes("clustering");
+                    });
+
+                const idecCheckbox = document.getElementById("train-idec-mode");
+                if (idecCheckbox) {
+                    idecCheckbox.checked = isIdecModel;
+                    toggleIdecParamsSection();
+                }
+
+                if (isIdecModel) {
+                    const cLayer = layers.find(l => {
+                        const lType = (l.layer_type || "").toLowerCase();
+                        const lName = (l.layer_name || l.name || "").toLowerCase();
+                        return lType === "keras/clustering" || lType.includes("clustering") || lName.includes("clustering");
+                    });
+                    let clusterK = null;
+                    if (cLayer) {
+                        if (cLayer.config && cLayer.config.n_clusters) {
+                            clusterK = cLayer.config.n_clusters;
+                        } else if (Array.isArray(cLayer.output_shape) && cLayer.output_shape.length >= 2 && cLayer.output_shape[1]) {
+                            clusterK = cLayer.output_shape[1];
+                        }
+                    }
+                    if (clusterK) {
+                        const kInput = document.getElementById("train-idec-clusters");
+                        if (kInput) kInput.value = clusterK;
+                    }
+                }
+            } catch (e) {
+                console.error("Failed to load model layers", e);
+            }
+        }
 
         // Load models & datasets
         try {
@@ -135,19 +312,100 @@
             document.getElementById("train-dataset-select").innerHTML = dList.map(d => `
                 <option value="${d.id}">${d.name} (${d.row_count} samples)</option>
             `).join("");
+
+            if (mList.length > 0) {
+                loadModelLayers(mList[0].id);
+            }
         } catch (e) {
             console.error(e);
         }
 
-        document.getElementById("start-train-btn").onclick = () => {
+        document.getElementById("train-model-select").onchange = (e) => {
+            loadModelLayers(e.target.value);
+        };
+
+        // Quick buttons for freezing
+        document.getElementById("freeze-cnn-btn").onclick = () => {
+            document.querySelectorAll("#layers-freeze-list .layer-trainable-toggle").forEach(cb => {
+                const t = (cb.dataset.layerType || "").toLowerCase();
+                const n = (cb.dataset.layerName || "").toLowerCase();
+                if (t.includes("conv") || t.includes("pool") || t.includes("separable") || n.includes("conv") || n.includes("pool")) {
+                    cb.checked = false;
+                    cb.dispatchEvent(new Event("change"));
+                }
+            });
+            SignalML.toast("1D-CNN ve Pooling katmanları donduruldu.", "info");
+        };
+
+        document.getElementById("unfreeze-all-btn").onclick = () => {
+            document.querySelectorAll("#layers-freeze-list .layer-trainable-toggle").forEach(cb => {
+                if (!cb.disabled) {
+                    cb.checked = true;
+                    cb.dispatchEvent(new Event("change"));
+                }
+            });
+            SignalML.toast("Tüm katmanlar eğitilebilir yapıldı.", "info");
+        };
+
+        document.getElementById("save-freeze-btn").onclick = async () => {
+            const modelId = document.getElementById("train-model-select").value;
+            if (!modelId) {
+                SignalML.toast("Lütfen model seçin", "error");
+                return;
+            }
+            const frozenLayers = [];
+            document.querySelectorAll("#layers-freeze-list .layer-trainable-toggle").forEach(cb => {
+                if (!cb.disabled && !cb.checked) {
+                    frozenLayers.push(cb.dataset.layerName);
+                }
+            });
+
+            try {
+                const lr = Number(document.getElementById("train-lr").value) || 0.001;
+                const opt = document.getElementById("train-opt").value || "adam";
+                const res = await fetch(`/api/models/${modelId}/freeze`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ frozen_layers: frozenLayers, learning_rate: lr, optimizer: opt })
+                });
+                const data = await SignalML.safeJson(res);
+                if (res.ok) {
+                    SignalML.toast(`Dondurma ayarları kaydedildi! Eğitilebilir: ${data.trainable_params.toLocaleString()}`, "success");
+                    document.getElementById("freeze-trainable-count").textContent = (data.trainable_params || 0).toLocaleString();
+                    document.getElementById("freeze-nontrainable-count").textContent = (data.non_trainable_params || 0).toLocaleString();
+                } else {
+                    SignalML.toast(`Kayıt hatası: ${data.detail || "Hata oluştu"}`, "error");
+                }
+            } catch (e) {
+                SignalML.toast(`Hata: ${e.message}`, "error");
+            }
+        };
+
+        function getFrozenLayers() {
+            const frozen = [];
+            document.querySelectorAll("#layers-freeze-list .layer-trainable-toggle").forEach(cb => {
+                if (!cb.disabled && !cb.checked) {
+                    frozen.push(cb.dataset.layerName);
+                }
+            });
+            return frozen;
+        }
+
+        function buildTrainingConfig(isResume) {
             const modelId = document.getElementById("train-model-select").value;
             const datasetId = document.getElementById("train-dataset-select").value;
             if (!modelId || !datasetId) {
                 SignalML.toast("Please select a model and dataset first", "error");
-                return;
+                return null;
             }
 
-            const config = {
+            const idecMode = document.getElementById("train-idec-mode")?.checked || false;
+            const nClusters = parseInt(document.getElementById("train-idec-clusters")?.value || "5", 10);
+            const gamma = parseFloat(document.getElementById("train-idec-gamma")?.value || "0.1");
+            const pretrainEpochs = parseInt(document.getElementById("train-idec-pretrain")?.value || "5", 10);
+            const updateInterval = parseInt(document.getElementById("train-idec-update")?.value || "1", 10);
+
+            return {
                 model_id: modelId,
                 dataset_id: datasetId,
                 epochs: Number(document.getElementById("train-epochs").value),
@@ -156,10 +414,28 @@
                 optimizer: document.getElementById("train-opt").value,
                 val_split: Number(document.getElementById("train-val-split").value),
                 early_stopping: document.getElementById("train-es").value === "true",
-                patience: 5
+                patience: 5,
+                resume: Boolean(isResume),
+                frozen_layers: getFrozenLayers(),
+                idec_mode: idecMode,
+                n_clusters: nClusters,
+                gamma: gamma,
+                pretrain_epochs: pretrainEpochs,
+                update_interval: updateInterval
             };
+        }
 
-            monitor.startJob(config);
+        function startTraining() {
+            const config = buildTrainingConfig(false);
+            if (config) monitor.startJob(config);
+        }
+        window.startTraining = startTraining;
+
+        document.getElementById("start-train-btn").onclick = startTraining;
+
+        document.getElementById("resume-train-btn").onclick = () => {
+            const config = buildTrainingConfig(true);
+            if (config) monitor.startJob(config);
         };
 
         document.getElementById("cancel-train-btn").onclick = () => {

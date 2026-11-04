@@ -21,6 +21,15 @@ _TEST_DATA.mkdir(parents=True, exist_ok=True)
 os.environ["SIGNALML_STORAGE_DIR"] = str(_TEST_STORAGE)
 os.environ["SIGNALML_DATA_DIR"] = str(_TEST_DATA)
 
+import pytest
+from app.core.database import init_database, ensure_default_project
+
+@pytest.fixture(autouse=True)
+def setup_db():
+    init_database()
+    ensure_default_project()
+
+
 
 @atexit.register
 def _cleanup_test_root():

@@ -99,6 +99,7 @@
                             <div style="display: flex; gap: 6px; align-items: center;">
                                 ${!isActive ? `<button class="btn btn-secondary btn-sm" onclick="SignalML.switchProject('${p.id}')">Switch</button>` : '<span style="font-size: 11px; color: var(--accent-cyan); font-weight: 600; margin-right: 4px;">Active</span>'}
                                 <button class="btn btn-secondary btn-sm" onclick="openEditModal('${p.id}', '${safeName}', '${safeDesc}')" title="Edit Name & Description">✏️ Edit</button>
+                                <button class="btn btn-secondary btn-sm" onclick="duplicateProjectRow('${p.id}')" title="Clone Project">📋 Duplicate</button>
                                 <button class="btn btn-secondary btn-sm" style="color: var(--accent-rose);" onclick="openDeleteModal('${p.id}', '${safeName}')" title="Delete Project">🗑️ Delete</button>
                             </div>
                         </td>
@@ -155,6 +156,13 @@
         const success = await SignalML.deleteProject(id);
         if (success) {
             closeDeleteModal();
+            loadProjectsTable();
+        }
+    }
+
+    async function duplicateProjectRow(id) {
+        const proj = await SignalML.duplicateProject(id);
+        if (proj) {
             loadProjectsTable();
         }
     }

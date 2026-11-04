@@ -50,8 +50,9 @@
                     <div class="stat-val" id="feat-stat-dims">0</div>
                 </div>
             </div>
-            <div style="display: flex; gap: 8px;">
+            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
                 <a id="feat-to-clustering-btn" href="/clustering" class="btn btn-primary">Analyze with Clustering & PCA &rarr;</a>
+                <a id="feat-export-csv-btn" href="#" class="btn btn-secondary">📥 CSV Olarak İndir (Input ID ile)</a>
             </div>
         </div>
 
@@ -73,12 +74,110 @@
                 </table>
             </div>
         </div>
+
+        <div class="card" style="margin-top: 1.5rem;">
+            <div class="card-title">Kayıtlı Özellik Çıkarımları (Saved Feature Extractions)</div>
+            <div class="table-responsive">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Feature ID / Layer</th>
+                            <th>Samples</th>
+                            <th>Dimensions</th>
+                            <th>Shape</th>
+                            <th>Created At</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="saved-features-tbody">
+                        <tr><td colspan="6" style="text-align: center; color: var(--text-muted);">Loading saved features...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
     </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
+    async function loadSavedFeatureExtractions() {
+        const tbody = document.getElementById("saved-features-tbody");
+        if (!tbody) return;
+        try {
+            const res = await fetch(`/api/features/list/${SignalML.currentProjectId}`);
+            if (res.ok) {
+                const feats = await SignalML.safeJson(res);
+                if (Array.isArray(feats) && feats.length > 0) {
+                    tbody.innerHTML = feats.map(f => `
+                        <tr>
+                            <td><strong style="font-family: var(--font-mono);">${f.layer_id || f.id.substring(0, 8)}</strong><br><span style="font-size: 10px; color: var(--text-muted);">${f.id}</span></td>
+                            <td>${f.sample_count}</td>
+                            <td>${f.feature_dim}</td>
+                            <td style="font-family: var(--font-mono);">${JSON.stringify(f.shape)}</td>
+                            <td>${f.created_at ? new Date(f.created_at).toLocaleString() : '-'}</td>
+                            <td>
+                                <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                                    <a href="/api/features/${f.id}/export_csv" class="btn btn-secondary btn-sm" title="CSV İndir">📥 CSV İndir</a>
+                                    <a href="/clustering?feature_id=${f.id}" class="btn btn-primary btn-sm" title="Kümeleme Analizi">🔬 Kümele</a>
+                                    <button class="btn btn-secondary btn-sm" onclick="promptRenameFeature('${f.id}', '${f.layer_id || ''}')" title="Özellik Adını Düzenle">✏️ Adlandır</button>
+                                    <button class="btn btn-secondary btn-sm" onclick="deleteFeatureExtraction('${f.id}')" title="Sil" style="color: #f87171; border-color: rgba(239, 68, 68, 0.3);">🗑️ Sil</button>
+                                </div>
+                            </td>
+                        </tr>
+                    `).join("");
+                } else {
+                    tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-muted);">Henüz kayıtlı özellik çıkarımı bulunmuyor. Sol panelden çalıştırabilirsiniz.</td></tr>`;
+                }
+            }
+        } catch (e) {
+            console.error("Failed to load saved feature extractions", e);
+        }
+    }
+
+    async function promptRenameFeature(featureId, currentName) {
+        const newName = prompt("Yeni Özellik / Katman Adını Girin:", currentName);
+        if (!newName || !newName.trim()) return;
+
+        try {
+            const res = await fetch(`/api/features/${featureId}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name: newName.trim() })
+            });
+
+            if (!res.ok) {
+                const err = await SignalML.safeJson(res);
+                throw new Error(err.detail || "Adlandırma başarısız");
+            }
+
+            SignalML.toast("Özellik adı başarıyla güncellendi!", "success");
+            loadSavedFeatureExtractions();
+        } catch (e) {
+            SignalML.toast(`Hata: ${e.message}`, "error");
+        }
+    }
+
+    async function deleteFeatureExtraction(featureId) {
+        if (!confirm("Bu kayıtlı özellik çıkarımını silmek istediğinize emin misiniz?")) return;
+
+        try {
+            const res = await fetch(`/api/features/${featureId}`, {
+                method: "DELETE"
+            });
+
+            if (!res.ok) {
+                const err = await SignalML.safeJson(res);
+                throw new Error(err.detail || "Silme başarısız");
+            }
+
+            SignalML.toast("Özellik çıkarımı başarıyla silindi!", "success");
+            loadSavedFeatureExtractions();
+        } catch (e) {
+            SignalML.toast(`Hata: ${e.message}`, "error");
+        }
+    }
+
     async function loadModelsAndDatasets() {
         try {
             const [mRes, dRes] = await Promise.all([
@@ -97,6 +196,7 @@
             if (Array.isArray(models) && models.length > 0) loadModelLayers(models[0].id);
 
             mSel.onchange = (e) => loadModelLayers(e.target.value);
+            loadSavedFeatureExtractions();
         } catch (e) {
             console.error(e);
         }
@@ -109,17 +209,23 @@
                 const data = await SignalML.safeJson(res);
                 const lSel = document.getElementById("feat-layer-select");
                 const layers = data.layers || [];
-                lSel.innerHTML = layers.map(l => `<option value="${l.name}">${l.name} (${l.class_name}) &rarr; ${JSON.stringify(l.output_shape)}</option>`).join("");
+                lSel.innerHTML = layers.map(l => {
+                    const displayName = l.custom_name || l.name;
+                    return `<option value="${l.name}">${displayName} (${l.class_name}) &rarr; ${JSON.stringify(l.output_shape)}</option>`;
+                }).join("");
 
                 const tbody = document.getElementById("feat-layers-tbody");
-                tbody.innerHTML = layers.map(l => `
-                    <tr>
-                        <td>${l.index}</td>
-                        <td><strong>${l.name}</strong></td>
-                        <td><span class="shape-badge">${l.class_name}</span></td>
-                        <td style="font-family: var(--font-mono);">${JSON.stringify(l.output_shape)}</td>
-                    </tr>
-                `).join("");
+                tbody.innerHTML = layers.map(l => {
+                    const displayName = l.custom_name || l.name;
+                    return `
+                        <tr>
+                            <td>${l.index}</td>
+                            <td><strong>${displayName}</strong> ${l.custom_name ? `<span style="font-size:10px; color:#38bdf8; margin-left:4px;">(${l.name})</span>` : ''}</td>
+                            <td><span class="shape-badge">${l.class_name}</span></td>
+                            <td style="font-family: var(--font-mono);">${JSON.stringify(l.output_shape)}</td>
+                        </tr>
+                    `;
+                }).join("");
             }
         } catch (e) {
             console.error(e);
@@ -159,6 +265,9 @@
                 document.getElementById("feat-stat-samples").textContent = data.sample_count;
                 document.getElementById("feat-stat-dims").textContent = data.feature_dim;
                 document.getElementById("feat-to-clustering-btn").href = `/clustering?feature_id=${data.feature_id}`;
+                const exportCsvBtn = document.getElementById("feat-export-csv-btn");
+                if (exportCsvBtn) exportCsvBtn.href = `/api/features/${data.feature_id}/export_csv`;
+                loadSavedFeatureExtractions();
             } else {
                 const err = await SignalML.safeJson(res);
                 SignalML.toast(`Extraction error: ${err.detail || "Server error"}`, "error");

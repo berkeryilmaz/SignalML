@@ -1,6 +1,6 @@
 from typing import Dict, Any, List, Optional
 import json
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 from app.core.responses import SafeJSONResponse, sanitize_for_json
 from app.services.clustering_service import ClusteringService
 from app.schemas.clustering import ClusteringRequest
@@ -12,8 +12,8 @@ router = APIRouter(prefix="/api/clustering", tags=["Clustering & PCA"], default_
 @router.post("/run", response_class=SafeJSONResponse)
 def run_clustering(payload: ClusteringRequest):
     """
-    Executes K-Means or DBSCAN clustering along with 2D/3D PCA.
-    Returns 3D scatter plot coordinates, cluster distribution, and evaluation metrics.
+    Executes K-Means, DBSCAN, HDBSCAN, or OPTICS clustering along with 2D/3D PCA.
+    Returns 3D scatter plot coordinates, cluster distribution, soft probabilities, and evaluation metrics.
     """
     # Look up project_id from source
     with get_db_connection() as conn:
@@ -38,15 +38,78 @@ def run_clustering(payload: ClusteringRequest):
             eps=payload.eps,
             min_samples=payload.min_samples,
             metric=payload.metric,
+            min_cluster_size=payload.min_cluster_size,
+            cluster_selection_epsilon=payload.cluster_selection_epsilon,
+            cluster_selection_method=payload.cluster_selection_method,
+            max_eps=payload.max_eps,
+            xi=payload.xi,
             standardize=payload.standardize,
             random_state=payload.random_state,
-            compute_pca=payload.compute_pca
+            compute_pca=payload.compute_pca,
+            model_id=payload.model_id,
+            epochs=payload.epochs,
+            pretrain_epochs=payload.pretrain_epochs,
+            gamma=payload.gamma,
+            update_interval=payload.update_interval,
+            params=payload.model_dump() if hasattr(payload, "model_dump") else payload.dict()
         )
         return results
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Clustering execution failed: {str(e)}")
+
+
+@router.get("/detail/{clustering_id}", response_class=SafeJSONResponse)
+def get_clustering_detail(clustering_id: str):
+    """Reloads a saved clustering run from DB and .npz."""
+    try:
+        return ClusteringService.get_clustering_detail(clustering_id)
+    except HTTPException:
+        raise
+    except (ValueError, FileNotFoundError) as e:
+        status = 404 if "not found" in str(e).lower() else 400
+        raise HTTPException(status_code=status, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/{clustering_id}/export_csv")
+def export_clustering_csv(clustering_id: str):
+    """
+    Exports a CSV file with input_id,cluster_label,confidence,uncertainty,prob_cluster_0,...,pca_x,pca_y,pca_z,ground_truth
+    """
+    try:
+        csv_content = ClusteringService.export_clustering_csv(clustering_id)
+        return Response(
+            content=csv_content,
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f"attachment; filename=clustering_{clustering_id}.csv"
+            }
+        )
+    except HTTPException:
+        raise
+    except (ValueError, FileNotFoundError) as e:
+        status = 404 if "not found" in str(e).lower() else 400
+        raise HTTPException(status_code=status, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/{clustering_id}", response_class=SafeJSONResponse)
+def delete_clustering(clustering_id: str):
+    """Deletes the clustering record from DB and its .npz file from disk."""
+    try:
+        ClusteringService.delete_clustering(clustering_id)
+        return {"status": "success", "deleted_id": clustering_id}
+    except HTTPException:
+        raise
+    except (ValueError, FileNotFoundError) as e:
+        status = 404 if "not found" in str(e).lower() else 400
+        raise HTTPException(status_code=status, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/list/{project_id}", response_class=SafeJSONResponse)

@@ -5,9 +5,26 @@ import uuid
 from typing import Dict, Any, List, Optional
 import numpy as np
 
-from app.core.config import EXPORTS_DIR
+from app.core.config import EXPORTS_DIR, DATASETS_DIR
 from app.core.database import get_db_connection
-from app.services.node_engine import NodeEngine, NodeValidationError
+from app.services.node_engine import NodeEngine, NodeValidationError, NODE_CATALOG, PortType
+
+# Ensure clustering_idec node is registered in node catalog
+if "clustering_idec" not in NODE_CATALOG:
+    NODE_CATALOG["clustering_idec"] = {
+        "display_name": "IDEC Deep Clustering",
+        "category": "Clustering & Analysis",
+        "description": "Deep Embedded Clustering with Autoencoder neural network",
+        "inputs": [{"name": "features", "type": PortType.FEATURE_MATRIX}],
+        "outputs": [{"name": "cluster_results", "type": PortType.CLUSTER_RESULTS}],
+        "parameters": {
+            "model_id": {"type": "string", "default": ""},
+            "n_clusters": {"type": "int", "default": 5, "min": 2},
+            "epochs": {"type": "int", "default": 15, "min": 0},
+            "pretrain_epochs": {"type": "int", "default": 5, "min": 0},
+            "gamma": {"type": "float", "default": 0.1, "min": 0.01}
+        }
+    }
 from app.services.data_manager import DataManager
 from app.services.signal_processing import (
     to_fixed_length,
@@ -193,7 +210,7 @@ class WorkflowEngine:
                     status_entry["preview"] = f"Features extracted: shape {res['shape']}"
 
                 # 5. Clustering Nodes
-                elif ntype in ("clustering_kmeans", "clustering_dbscan"):
+                elif ntype in ("clustering_kmeans", "clustering_dbscan", "clustering_idec"):
                     feat_input = get_input(0)
                     if feat_input is None:
                         raise ValueError("Clustering requires input feature matrix or signals.")
@@ -202,29 +219,69 @@ class WorkflowEngine:
                     source_type = "features" if isinstance(feat_input, str) else "dataset"
                     # For direct arrays:
                     if isinstance(feat_input, np.ndarray):
-                        # Run directly on array with NaN / Inf sanitization
-                        X = np.nan_to_num(feat_input.reshape(feat_input.shape[0], -1), nan=0.0, posinf=0.0, neginf=0.0)
-                        if ntype == "clustering_kmeans":
-                            from sklearn.cluster import KMeans
-                            n_c = max(1, int(props.get("n_clusters", 3)))
-                            actual_k = min(n_c, len(X)) if len(X) > 0 else 1
-                            labels = KMeans(n_clusters=actual_k, random_state=42).fit_predict(X)
-                        else:
-                            from sklearn.cluster import DBSCAN
-                            eps = float(props.get("eps", 0.5))
-                            min_s = max(1, int(props.get("min_samples", 5)))
-                            labels = DBSCAN(eps=eps, min_samples=min_s).fit_predict(X)
+                        if ntype == "clustering_idec":
+                            dataset_id = str(uuid.uuid4())
+                            dest_dir = DATASETS_DIR / project_id
+                            dest_dir.mkdir(parents=True, exist_ok=True)
+                            dest_path = dest_dir / f"{dataset_id}.npz"
+                            now = datetime.now(timezone.utc).isoformat()
+                            data_arr = feat_input.reshape(feat_input.shape[0], -1) if feat_input.ndim > 2 else feat_input
+                            sample_ids = np.array([str(i) for i in range(len(data_arr))], dtype=str)
+                            np.savez_compressed(str(dest_path), data=data_arr, sample_ids=sample_ids)
+                            with get_db_connection() as conn:
+                                conn.execute(
+                                    """
+                                    INSERT INTO datasets (
+                                        id, project_id, name, file_path, file_format,
+                                        row_count, col_count, created_at, metadata_json
+                                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                    """,
+                                    (
+                                        dataset_id, project_id, f"wf_temp_{nid}", str(dest_path), "npz",
+                                        int(data_arr.shape[0]), int(data_arr.shape[1]), now, "{}"
+                                    )
+                                )
+                                conn.commit()
 
-                        runtime_outputs[nid][0] = {"labels": labels, "num_clusters": len(np.unique(labels))}
-                        status_entry["preview"] = f"Clustered into {len(np.unique(labels))} groups"
+                            res = ClusteringService.run_clustering(
+                                project_id=project_id,
+                                source_type="dataset",
+                                source_id=dataset_id,
+                                algorithm="idec",
+                                params=props
+                            )
+                            runtime_outputs[nid][0] = res
+                            status_entry["preview"] = f"IDEC Clusters: {res['cluster_distribution']}"
+                        else:
+                            # Run directly on array with NaN / Inf sanitization
+                            X = np.nan_to_num(feat_input.reshape(feat_input.shape[0], -1), nan=0.0, posinf=0.0, neginf=0.0)
+                            if ntype == "clustering_kmeans":
+                                from sklearn.cluster import KMeans
+                                n_c = max(1, int(props.get("n_clusters", 3)))
+                                actual_k = min(n_c, len(X)) if len(X) > 0 else 1
+                                labels = KMeans(n_clusters=actual_k, random_state=42).fit_predict(X)
+                            else:
+                                from sklearn.cluster import DBSCAN
+                                eps = float(props.get("eps", 0.5))
+                                min_s = max(1, int(props.get("min_samples", 5)))
+                                labels = DBSCAN(eps=eps, min_samples=min_s).fit_predict(X)
+
+                            runtime_outputs[nid][0] = {"labels": labels, "num_clusters": len(np.unique(labels))}
+                            status_entry["preview"] = f"Clustered into {len(np.unique(labels))} groups"
                     else:
-                        algo = "kmeans" if ntype == "clustering_kmeans" else "dbscan"
+                        if ntype == "clustering_kmeans":
+                            algo = "kmeans"
+                        elif ntype == "clustering_dbscan":
+                            algo = "dbscan"
+                        else:
+                            algo = "idec"
+
                         res = ClusteringService.run_clustering(
                             project_id=project_id,
                             source_type=source_type,
                             source_id=feat_input,
                             algorithm=algo,
-                            n_clusters=int(props.get("n_clusters", 3))
+                            params=props
                         )
                         runtime_outputs[nid][0] = res
                         status_entry["preview"] = f"Clusters: {res['cluster_distribution']}"

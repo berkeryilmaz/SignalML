@@ -28,6 +28,28 @@ class NNEditor {
         this.graph.start();
     }
 
+    toast(message, type = "info") {
+        const sml = (typeof window !== "undefined" && window.SignalML) || (typeof SignalML !== "undefined" ? SignalML : null);
+        if (sml && typeof sml.toast === "function") {
+            sml.toast(message, type);
+        } else {
+            console.log(`[${type}] ${message}`);
+        }
+    }
+
+    getActiveProjectId() {
+        const sml = (typeof window !== "undefined" && window.SignalML) || (typeof SignalML !== "undefined" ? SignalML : null);
+        if (sml) {
+            if (typeof sml.getProjectId === "function") return sml.getProjectId();
+            if (sml.currentProjectId) return sml.currentProjectId;
+        }
+        if (typeof localStorage !== "undefined") {
+            const saved = localStorage.getItem("signalml_active_project");
+            if (saved) return saved;
+        }
+        return "default-project";
+    }
+
     registerKerasNodes() {
         const registerLayer = (type, title, inputs, outputs, properties, aliases = []) => {
             function KerasNode() {
@@ -64,7 +86,8 @@ class NNEditor {
 
         // 3. CNN (1D & Transposed Deconvolution)
         registerLayer("conv1d", "Conv1D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { filters: 32, kernel_size: 5, strides: 1, padding: "same", activation: "relu" });
-        registerLayer("conv1dtranspose", "Conv1DTranspose", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { filters: 32, kernel_size: 5, strides: 2, padding: "same", activation: "relu" });
+        registerLayer("conv1dtranspose", "Conv1DTranspose", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { filters: 32, kernel_size: 5, strides: 2, padding: "same", activation: "relu" }, ["deconv1d", "conv1d_transpose"]);
+        registerLayer("deconv1d", "Deconv1D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { filters: 32, kernel_size: 5, strides: 2, padding: "same", activation: "relu" }, ["conv1dtranspose"]);
         registerLayer("upsampling1d", "UpSampling1D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { size: 2 });
         registerLayer("separable_conv1d", "SeparableConv1D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { filters: 32, kernel_size: 5, padding: "same", activation: "relu" });
         registerLayer("conv2d", "Conv2D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { filters: 32, kernel_size: 3, padding: "same", activation: "relu" });
@@ -73,11 +96,12 @@ class NNEditor {
         registerLayer("global_maxpooling1d", "GlobalMaxPooling1D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {}, ["globalmaxpooling1d"]);
         registerLayer("global_averagepooling1d", "GlobalAveragePooling1D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {}, ["globalaveragepooling1d", "globalavgpooling1d"]);
 
-        // 4. Recurrent
+        // 4. Recurrent & TimeDistributed
         registerLayer("lstm", "LSTM", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { units: 64, return_sequences: false, dropout: 0.0 });
         registerLayer("gru", "GRU", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { units: 64, return_sequences: false });
         registerLayer("simplernn", "SimpleRNN", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { units: 64, return_sequences: false, activation: "tanh" });
         registerLayer("bidirectional", "Bidirectional", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { units: 64, recurrent_type: "lstm", return_sequences: false });
+        registerLayer("timedistributed", "TimeDistributed", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { layer_type: "Dense", units: 32 }, ["time_distributed"]);
 
         // 5. Attention & Transformer
         registerLayer("multihead_attention", "MultiHeadAttention", [{ name: "query", type: "Tensor" }, { name: "value", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { num_heads: 4, key_dim: 32, dropout: 0.1 }, ["multiheadattention"]);
@@ -95,7 +119,13 @@ class NNEditor {
         registerLayer("concatenate", "Concatenate", [{ name: "in1", type: "Tensor" }, { name: "in2", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { axis: -1 });
         registerLayer("add", "Add", [{ name: "in1", type: "Tensor" }, { name: "in2", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {});
         registerLayer("multiply", "Multiply", [{ name: "in1", type: "Tensor" }, { name: "in2", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {});
+        registerLayer("average", "Average", [{ name: "in1", type: "Tensor" }, { name: "in2", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {});
+        registerLayer("dot", "Dot", [{ name: "in1", type: "Tensor" }, { name: "in2", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { axes: -1, normalize: false });
         registerLayer("activation", "Activation", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { activation: "relu" });
+
+        // 8. IDEC Clustering & Custom Layers
+        registerLayer("clustering", "ClusteringLayer (IDEC)", [{ name: "in", type: "Tensor" }], [{ name: "prob", type: "Tensor" }], { n_clusters: 8, alpha: 1.0 }, ["clusteringlayer"]);
+        registerLayer("custom_layer", "Custom Layer", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { class_name: "CustomSignalLayer", units: 32, activation: "relu", code: "" }, ["customlayer", "customsignallayer"]);
     }
 
     setupDefaultGraph() {
@@ -170,23 +200,78 @@ class NNEditor {
         const body = document.getElementById("nn-inspector-body");
         if (!body) return;
 
+        const currentCustomName = (node.properties && node.properties.custom_name) !== undefined ? node.properties.custom_name : (node.title || "");
+
+        let shapeBadgeHtml = "";
+        if (node._inferredShape !== undefined || node._paramCount !== undefined) {
+            const shapeStr = Array.isArray(node._inferredShape)
+                ? "(" + node._inferredShape.map(d => (d === null || d === -1) ? "?" : d).join(", ") + ")"
+                : (node._inferredShape !== undefined ? JSON.stringify(node._inferredShape) : "N/A");
+            const paramStr = node._paramCount !== undefined ? Number(node._paramCount).toLocaleString() : "0";
+            shapeBadgeHtml = `
+                <div style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 8px; padding: 10px; margin-bottom: 1rem;">
+                    <div style="font-size: 11px; font-weight: 700; color: #34d399; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">📐 Çıktı Boyutu & Parametre</div>
+                    <div style="display: flex; justify-content: space-between; align-items: center; font-size: 12px; margin-bottom: 4px;">
+                        <span style="color: var(--text-muted);">Output Shape:</span>
+                        <span class="shape-badge" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-weight: 600;">${shapeStr}</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; align-items: center; font-size: 12px;">
+                        <span style="color: var(--text-muted);">Parametreler:</span>
+                        <span class="shape-badge" style="background: rgba(16, 185, 129, 0.15); color: #34d399; font-weight: 600;">${paramStr}</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        const sml = (typeof window !== "undefined" && window.SignalML) || (typeof SignalML !== "undefined" ? SignalML : null);
+        const safeCustomName = (sml && typeof sml.escapeHtml === "function") ? sml.escapeHtml(currentCustomName) : currentCustomName;
+
         let html = `
             <div style="margin-bottom: 1rem;">
                 <div style="font-size: 16px; font-weight: 700; color: #fff;">${node.title}</div>
                 <div style="font-size: 12px; color: var(--text-muted); font-family: var(--font-mono);">Type: ${node.type} | ID: ${node.id}</div>
             </div>
+            <div class="form-group" style="background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 8px; padding: 10px; margin-bottom: 1rem;">
+                <label class="form-label" style="font-weight: 700; color: #38bdf8; margin-bottom: 4px;">Özel Düğüm / Katman Adı (Custom Node Name)</label>
+                <input class="form-control" id="inspector-custom-name" type="text" value="${safeCustomName}" placeholder="örn: Conv1D_Ozellik_Cikarici">
+            </div>
+            ${shapeBadgeHtml}
             <hr style="border: none; border-top: 1px solid var(--border-color); margin-bottom: 1rem;">
         `;
 
         if (node.properties && Object.keys(node.properties).length > 0) {
             html += `<div style="font-weight: 600; font-size: 13px; margin-bottom: 0.5rem;">Parameters</div>`;
             for (let [k, v] of Object.entries(node.properties)) {
-                html += `
-                    <div class="form-group">
-                        <label class="form-label">${k}</label>
-                        <input class="form-control prop-input" data-prop="${k}" type="${typeof v === 'number' ? 'number' : 'text'}" value="${v}">
-                    </div>
-                `;
+                if (k === "custom_name") continue;
+                if (k === "code") {
+                    const safeCode = (sml && typeof sml.escapeHtml === "function") ? sml.escapeHtml(v || "") : (v || "");
+                    html += `
+                        <div class="form-group">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                <label class="form-label" style="margin: 0;">Katman Kodu (Code)</label>
+                                <button class="btn btn-secondary btn-sm" onclick="openCustomLayerModal()" style="font-size: 10px; padding: 2px 6px;">Studio'da Aç</button>
+                            </div>
+                            <textarea class="form-control prop-input" data-prop="code" rows="5" style="font-family: var(--font-mono); font-size: 11px;">${safeCode}</textarea>
+                        </div>
+                    `;
+                } else if (typeof v === "boolean") {
+                    html += `
+                        <div class="form-group">
+                            <label class="form-label">${k}</label>
+                            <select class="form-control prop-input-bool" data-prop="${k}">
+                                <option value="true" ${v === true ? "selected" : ""}>true</option>
+                                <option value="false" ${v === false ? "selected" : ""}>false</option>
+                            </select>
+                        </div>
+                    `;
+                } else {
+                    html += `
+                        <div class="form-group">
+                            <label class="form-label">${k}</label>
+                            <input class="form-control prop-input" data-prop="${k}" type="${typeof v === 'number' ? 'number' : 'text'}" value="${v !== undefined && v !== null ? v : ''}">
+                        </div>
+                    `;
+                }
             }
         } else {
             html += `<div style="color: var(--text-muted); font-size: 13px;">No configurable parameters for this layer.</div>`;
@@ -194,13 +279,40 @@ class NNEditor {
 
         body.innerHTML = html;
 
-        // Bind input events
+        // Bind custom name input event
+        const nameInput = document.getElementById("inspector-custom-name");
+        if (nameInput) {
+            nameInput.addEventListener("input", (e) => {
+                const val = e.target.value;
+                node.properties.custom_name = val.trim();
+                node.title = val.trim() || node.type;
+                if (this.canvas) {
+                    this.canvas.setDirty(true, true);
+                }
+            });
+        }
+
+        // Bind boolean select change events
+        body.querySelectorAll(".prop-input-bool").forEach(sel => {
+            sel.addEventListener("change", (e) => {
+                const prop = e.target.dataset.prop;
+                node.properties[prop] = (e.target.value === "true");
+                if (this.canvas) {
+                    this.canvas.setDirty(true, true);
+                }
+            });
+        });
+
+        // Bind generic input events
         body.querySelectorAll(".prop-input").forEach(input => {
             input.addEventListener("input", (e) => {
                 const prop = e.target.dataset.prop;
                 let val = e.target.value;
-                if (e.target.type === "number") val = Number(val);
+                if (e.target.type === "number") val = val === "" ? 0 : Number(val);
                 node.properties[prop] = val;
+                if (this.canvas) {
+                    this.canvas.setDirty(true, true);
+                }
             });
         });
     }
@@ -216,8 +328,133 @@ class NNEditor {
         }
     }
 
-    serializeGraph() {
-        return this.graph.serialize();
+    autoLayout() {
+        if (!this.graph || !this.graph._nodes || this.graph._nodes.length === 0) {
+            this.toast("Hizalanacak düğüm bulunamadı!", "warning");
+            return;
+        }
+
+        const nodes = this.graph._nodes;
+        const links = this.graph.links || {};
+
+        // Build adjacency list and in-degree for topological longest-path depth computation
+        const adj = {};
+        const inDegree = {};
+        nodes.forEach(n => {
+            adj[n.id] = [];
+            inDegree[n.id] = 0;
+        });
+
+        // Map node id to node object
+        const nodeMap = {};
+        nodes.forEach(n => {
+            nodeMap[n.id] = n;
+        });
+
+        // Collect links from graph.links or node outputs
+        const allLinks = [];
+        if (Array.isArray(links)) {
+            links.forEach(l => {
+                if (l) allLinks.push({ origin_id: l[1], target_id: l[3] });
+            });
+        } else if (typeof links === "object" && links !== null) {
+            Object.values(links).forEach(l => {
+                if (l) allLinks.push({ origin_id: l.origin_id || l[1], target_id: l.target_id || l[3] });
+            });
+        }
+
+        // Also check node.outputs/inputs if graph.links is sparse
+        nodes.forEach(n => {
+            if (n.outputs) {
+                n.outputs.forEach((out, outIdx) => {
+                    if (out.links) {
+                        out.links.forEach(linkId => {
+                            const l = (this.graph.links && this.graph.links[linkId]) || (Array.isArray(links) && links.find(x => x && x[0] === linkId));
+                            if (l) {
+                                allLinks.push({ origin_id: l[1], target_id: l[3] });
+                            }
+                        });
+                    }
+                });
+            }
+        });
+
+        // Deduplicate links
+        const uniqueLinks = {};
+        allLinks.forEach(l => {
+            if (l.origin_id && l.target_id && nodeMap[l.origin_id] && nodeMap[l.target_id]) {
+                const key = `${l.origin_id}->${l.target_id}`;
+                if (!uniqueLinks[key]) {
+                    uniqueLinks[key] = true;
+                    adj[l.origin_id].push(l.target_id);
+                    inDegree[l.target_id] = (inDegree[l.target_id] || 0) + 1;
+                }
+            }
+        });
+
+        // Compute longest path depth using Kahn's algorithm / BFS topological sort
+        const depth = {};
+        nodes.forEach(n => { depth[n.id] = 0; });
+
+        const queue = [];
+        nodes.forEach(n => {
+            if ((inDegree[n.id] || 0) === 0) {
+                queue.push(n.id);
+                depth[n.id] = 0;
+            }
+        });
+
+        // If no 0 in-degree nodes found, fallback to node order
+        if (queue.length === 0 && nodes.length > 0) {
+            queue.push(nodes[0].id);
+            depth[nodes[0].id] = 0;
+        }
+
+        while (queue.length > 0) {
+            const u = queue.shift();
+            const currentDepth = depth[u];
+            (adj[u] || []).forEach(v => {
+                if (depth[v] < currentDepth + 1) {
+                    depth[v] = currentDepth + 1;
+                }
+                inDegree[v]--;
+                if (inDegree[v] === 0) {
+                    queue.push(v);
+                }
+            });
+        }
+
+        // Group nodes by depth
+        const depthGroups = {};
+        nodes.forEach(n => {
+            const d = depth[n.id] !== undefined ? depth[n.id] : 0;
+            if (!depthGroups[d]) depthGroups[d] = [];
+            depthGroups[d].push(n);
+        });
+
+        // Position nodes into clean horizontal columns and vertically centered rows
+        const colWidth = 260;
+        const rowHeight = 160;
+        const startX = 80;
+        const startY = 140;
+
+        Object.keys(depthGroups).sort((a, b) => Number(a) - Number(b)).forEach(dStr => {
+            const d = Number(dStr);
+            const groupNodes = depthGroups[d];
+            const x = startX + d * colWidth;
+            const totalGroupHeight = groupNodes.length * rowHeight;
+            
+            groupNodes.forEach((node, idx) => {
+                const y = startY + idx * rowHeight;
+                node.pos = [x, y];
+            });
+        });
+
+        if (this.canvas) {
+            this.canvas.setDirty(true, true);
+        }
+
+        this.toast("Mimari düğümleri otomatik hizalandı!", "success");
     }
 
     convertKerasConfigToLiteGraph(kerasConfig) {
@@ -227,11 +464,18 @@ class NNEditor {
         const nameToNodeId = {};
 
         layersList.forEach((layer, idx) => {
+            nameToNodeId[layer.name] = idx + 1;
+        });
+
+        layersList.forEach((layer, idx) => {
             const nodeId = idx + 1;
-            nameToNodeId[layer.name] = nodeId;
             const cname = (layer.class_name || "").toLowerCase();
             let mappedType = cname;
             if (cname === "inputlayer") mappedType = "input";
+            else if (cname === "timedistributed" || cname === "time_distributed") mappedType = "timedistributed";
+            else if (cname === "conv1dtranspose" || cname === "deconv1d") mappedType = "conv1dtranspose";
+            else if (cname === "average") mappedType = "average";
+            else if (cname === "dot") mappedType = "dot";
             else if (cname === "batchnormalization") mappedType = "batchnorm";
             else if (cname === "layernormalization") mappedType = "layernorm";
             else if (cname === "unitnormalization") mappedType = "unitnorm";
@@ -239,10 +483,11 @@ class NNEditor {
             else if (cname === "averagepooling1d" || cname === "avgpooling1d") mappedType = "averagepooling1d";
             else if (cname === "globalmaxpooling1d" || cname === "global_maxpooling1d") mappedType = "global_maxpooling1d";
             else if (cname === "globalaveragepooling1d" || cname === "global_averagepooling1d") mappedType = "global_averagepooling1d";
-            else if (cname === "conv1dtranspose") mappedType = "conv1dtranspose";
             else if (cname === "upsampling1d") mappedType = "upsampling1d";
             else if (cname === "multiheadattention") mappedType = "multihead_attention";
             else if (cname === "positionalencoding") mappedType = "positional_encoding";
+            else if (cname === "clusteringlayer") mappedType = "clustering";
+            else if (cname === "customsignallayer" || cname === "customlayer") mappedType = "custom_layer";
 
             const props = {};
             const cfg = layer.config || {};
@@ -256,6 +501,8 @@ class NNEditor {
             if (cfg.size !== undefined) props.size = Array.isArray(cfg.size) ? cfg.size[0] : Number(cfg.size);
             if (cfg.rate !== undefined) props.rate = Number(cfg.rate);
             if (cfg.return_sequences !== undefined) props.return_sequences = Boolean(cfg.return_sequences);
+            if (cfg.n_clusters !== undefined) props.n_clusters = Number(cfg.n_clusters);
+            if (cfg.alpha !== undefined) props.alpha = Number(cfg.alpha);
             if (mappedType === "input") {
                 const shape = cfg.batch_shape || cfg.input_shape || cfg.shape;
                 if (Array.isArray(shape)) {
@@ -268,6 +515,20 @@ class NNEditor {
             const row = Math.floor(idx / 4);
             const pos = [120 + col * 260, 100 + row * 180];
 
+            const isMultiInput = ["concatenate", "add", "multiply", "average", "dot", "multihead_attention"].includes(mappedType);
+            let nodeInputs = [];
+            if (mappedType === "input") {
+                nodeInputs = [];
+            } else if (mappedType === "multihead_attention") {
+                nodeInputs = [{ name: "query", type: "Tensor" }, { name: "value", type: "Tensor" }];
+            } else if (isMultiInput) {
+                nodeInputs = [{ name: "in1", type: "Tensor" }, { name: "in2", type: "Tensor" }];
+            } else {
+                nodeInputs = [{ name: "in", type: "Tensor" }];
+            }
+
+            const nodeOutputs = (mappedType === "output" ? [] : [{ name: "out", type: "Tensor", links: [] }]);
+
             nodes.push({
                 id: nodeId,
                 type: `keras/${mappedType}`,
@@ -275,12 +536,82 @@ class NNEditor {
                 pos: pos,
                 size: [200, 90],
                 properties: props,
-                inputs: idx > 0 ? [{ name: "in", type: "Tensor", link: idx }] : [],
-                outputs: idx < layersList.length - 1 ? [{ name: "out", type: "Tensor", links: [idx + 1] }] : []
+                inputs: nodeInputs,
+                outputs: nodeOutputs
+            });
+        });
+
+        // Reconstruct links from inbound_nodes or fallback to sequential
+        let linkIdCounter = 1;
+        let hasInboundLinks = false;
+
+        function findInboundLayerNames(obj, list = []) {
+            if (!obj) return list;
+            if (typeof obj === "string") {
+                if (nameToNodeId[obj] !== undefined) list.push(obj);
+                return list;
+            }
+            if (Array.isArray(obj)) {
+                if (obj.length >= 1 && typeof obj[0] === "string" && nameToNodeId[obj[0]] !== undefined) {
+                    list.push(obj[0]);
+                } else {
+                    for (let item of obj) {
+                        findInboundLayerNames(item, list);
+                    }
+                }
+            } else if (typeof obj === "object") {
+                if (obj.keras_history && Array.isArray(obj.keras_history) && typeof obj.keras_history[0] === "string" && nameToNodeId[obj.keras_history[0]] !== undefined) {
+                    list.push(obj.keras_history[0]);
+                } else if (obj.history && Array.isArray(obj.history) && typeof obj.history[0] === "string" && nameToNodeId[obj.history[0]] !== undefined) {
+                    list.push(obj.history[0]);
+                } else {
+                    for (let v of Object.values(obj)) {
+                        findInboundLayerNames(v, list);
+                    }
+                }
+            }
+            return list;
+        }
+
+        layersList.forEach((layer, idx) => {
+            const targetId = idx + 1;
+            if (layer.inbound_nodes && Array.isArray(layer.inbound_nodes) && layer.inbound_nodes.length > 0) {
+                const inbounds = findInboundLayerNames(layer.inbound_nodes);
+                if (inbounds.length > 0) {
+                    inbounds.forEach((originName, slotIdx) => {
+                        const originId = nameToNodeId[originName];
+                        if (originId && originId !== targetId) {
+                            links.push([linkIdCounter++, originId, 0, targetId, slotIdx, "Tensor"]);
+                            hasInboundLinks = true;
+                        }
+                    });
+                }
+            }
+        });
+
+        if (!hasInboundLinks && layersList.length > 1) {
+            for (let i = 1; i < layersList.length; i++) {
+                links.push([linkIdCounter++, i, 0, i + 1, 0, "Tensor"]);
+            }
+        }
+
+        // Connect node input and output slots to link IDs
+        nodes.forEach(node => {
+            const nodeInLinks = links.filter(l => l[3] === node.id);
+            const nodeOutLinks = links.filter(l => l[1] === node.id);
+
+            while (node.inputs.length < nodeInLinks.length) {
+                node.inputs.push({ name: `in${node.inputs.length + 1}`, type: "Tensor" });
+            }
+            nodeInLinks.forEach(l => {
+                const slot = l[4];
+                if (node.inputs[slot]) {
+                    node.inputs[slot].link = l[0];
+                }
             });
 
-            if (idx > 0) {
-                links.push([idx, idx, 0, nodeId, 0, "Tensor"]);
+            if (node.outputs && node.outputs.length > 0) {
+                node.outputs[0].links = nodeOutLinks.map(l => l[0]);
             }
         });
 
@@ -299,7 +630,7 @@ class NNEditor {
                 graphData = JSON.parse(graphData);
             } catch (e) {
                 console.error("Failed to parse graphData string", e);
-                SignalML.toast("Geçersiz JSON formatı: " + e.message, "error");
+                this.toast("Geçersiz JSON formatı: " + e.message, "error");
                 return;
             }
         }
@@ -326,6 +657,8 @@ class NNEditor {
                 // Handle aliases
                 if (t === "keras/inputlayer") t = "keras/input";
                 else if (t === "keras/modeloutput") t = "keras/output";
+                else if (t === "keras/deconv1d") t = "keras/conv1dtranspose";
+                else if (t === "keras/time_distributed") t = "keras/timedistributed";
                 else if (t === "keras/batchnormalization" || t === "keras/bn") t = "keras/batchnorm";
                 else if (t === "keras/layernormalization" || t === "keras/ln") t = "keras/layernorm";
                 else if (t === "keras/unitnormalization") t = "keras/unitnorm";
@@ -335,6 +668,8 @@ class NNEditor {
                 else if (t === "keras/globalaveragepooling1d" || t === "keras/globalavgpooling1d") t = "keras/global_averagepooling1d";
                 else if (t === "keras/multiheadattention") t = "keras/multihead_attention";
                 else if (t === "keras/positionalencoding") t = "keras/positional_encoding";
+                else if (t === "keras/clusteringlayer") t = "keras/clustering";
+                else if (t === "keras/customsignallayer" || t === "keras/customlayer") t = "keras/custom_layer";
                 n.type = t;
 
                 if (!n.pos || !Array.isArray(n.pos)) {
@@ -354,23 +689,63 @@ class NNEditor {
         this.validateGraph();
     }
 
+    serializeGraph() {
+        if (!this.graph) return { nodes: [], links: [] };
+        const serialized = this.graph.serialize();
+        if (serialized && serialized.nodes && this.graph._nodes) {
+            serialized.nodes.forEach(n => {
+                const actualNode = this.graph.getNodeById(n.id);
+                if (actualNode && actualNode.title) {
+                    n.title = actualNode.title;
+                }
+            });
+        }
+        return serialized;
+    }
+
     async validateGraph() {
         const payload = { graph: this.serializeGraph() };
+        const SML = (typeof window !== "undefined" && window.SignalML) || (typeof SignalML !== "undefined" ? SignalML : {
+            toast: (m, t) => this.toast(m, t),
+            safeJson: async (r) => { try { return await r.json(); } catch (_) { return {}; } }
+        });
         try {
             const res = await fetch("/api/models/validate", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload)
             });
-            const data = await SignalML.safeJson(res);
+            const data = await SML.safeJson(res);
             if (data.valid) {
-                SignalML.toast(`Valid Keras Architecture! Total params: ${data.summary.total_params.toLocaleString()}`, "success");
+                this.toast(`Valid Keras Architecture! Total params: ${data.summary.total_params.toLocaleString()}`, "success");
+                
+                if (data.summary && Array.isArray(data.summary.layers) && this.graph) {
+                    data.summary.layers.forEach(l => {
+                        const node = this.graph.getNodeById(Number(l.node_id)) || this.graph.getNodeById(l.node_id);
+                        if (node) {
+                            node._inferredShape = l.output_shape;
+                            node._paramCount = l.params;
+                            const shapeStr = Array.isArray(l.output_shape)
+                                ? "(" + l.output_shape.map(d => (d === null || d === -1) ? "?" : d).join(", ") + ")"
+                                : "";
+                            if (node.outputs && node.outputs.length > 0 && shapeStr) {
+                                node.outputs[0].label = shapeStr;
+                            }
+                        }
+                    });
+                    if (this.canvas) this.canvas.setDirty(true, true);
+                }
+
+                if (this.selectedNode) {
+                    this.updateInspector(this.selectedNode);
+                }
+
                 this.renderShapesSummary(data.summary);
             } else {
-                SignalML.toast(`Validation Error: ${data.error || data.detail || "Validation Error"}`, "error");
+                SML.toast(`Validation Error: ${data.error || data.detail || "Validation Error"}`, "error");
             }
         } catch (e) {
-            SignalML.toast(`Network Error: ${e.message}`, "error");
+            SML.toast(`Network Error: ${e.message}`, "error");
         }
     }
 
@@ -398,12 +773,19 @@ class NNEditor {
         container.innerHTML = html;
     }
 
-    async buildAndSave(name = "Keras Signal Model", taskType = "classification") {
+    async buildAndSave(name = "Keras Signal Model", taskType = "classification", optimizer = "adam") {
         const graphData = this.serializeGraph();
+        const activeProjectId = this.getActiveProjectId();
+        const SML = (typeof window !== "undefined" && window.SignalML) || (typeof SignalML !== "undefined" ? SignalML : {
+            currentProjectId: activeProjectId,
+            toast: (m, t) => this.toast(m, t),
+            safeJson: async (r) => { try { return await r.json(); } catch (_) { return {}; } }
+        });
         const payload = {
-            project_id: SignalML.currentProjectId,
+            project_id: activeProjectId,
             name: name,
             task_type: taskType,
+            optimizer: optimizer,
             graph: graphData
         };
 
@@ -414,15 +796,27 @@ class NNEditor {
                 body: JSON.stringify(payload)
             });
             if (res.ok) {
-                const data = await SignalML.safeJson(res);
-                SignalML.toast(`Model '${name}' compiled and saved successfully!`, "success");
-                SignalML.activeModel = data.model_id;
+                const data = await SML.safeJson(res);
+                this.toast(`Model '${name}' compiled and saved successfully!`, "success");
+                SML.activeModel = data.model_id;
+                if (typeof window.populateSavedModelsDropdown === "function") {
+                    await window.populateSavedModelsDropdown();
+                    const sel = document.getElementById("load-saved-model-select");
+                    if (sel && data.model_id) {
+                        sel.value = data.model_id;
+                        const updateBtn = document.getElementById("update-saved-model-btn");
+                        const deleteBtn = document.getElementById("delete-saved-model-btn");
+                        if (updateBtn) updateBtn.style.display = "inline-flex";
+                        if (deleteBtn) deleteBtn.style.display = "inline-flex";
+                    }
+                }
+                return data;
             } else {
-                const err = await SignalML.safeJson(res);
-                SignalML.toast(`Build Failed: ${err.detail || "Validation Error"}`, "error");
+                const err = await SML.safeJson(res);
+                this.toast(`Build Failed: ${err.detail || "Validation Error"}`, "error");
             }
         } catch (e) {
-            SignalML.toast(`Network Error: ${e.message}`, "error");
+            this.toast(`Network Error: ${e.message}`, "error");
         }
     }
 
@@ -514,7 +908,7 @@ class NNEditor {
             this.graph.add(nFinal);
 
             const nOutput = LiteGraph.createNode("keras/output");
-            nOutput.pos = [80, 560];
+            nOutput.pos = [80, (seqLen % 4 === 0) ? 560 : 740];
             nOutput.title = "AE Output";
             nOutput.properties.activation = "linear";
             this.graph.add(nOutput);
@@ -529,8 +923,35 @@ class NNEditor {
             nUp1.connect(0, nDec1, 0);
             nDec1.connect(0, nUp2, 0);
             nUp2.connect(0, nDec2, 0);
-            nDec2.connect(0, nFinal, 0);
-            nFinal.connect(0, nOutput, 0);
+
+            if (seqLen % 4 !== 0) {
+                const nAdjFlat = LiteGraph.createNode("keras/flatten");
+                nAdjFlat.pos = [80, 500];
+                nAdjFlat.title = "Shape Adjust Flatten";
+                this.graph.add(nAdjFlat);
+
+                const nAdjDense = LiteGraph.createNode("keras/dense");
+                nAdjDense.pos = [80, 580];
+                nAdjDense.title = "Target Dimension Dense";
+                nAdjDense.properties.units = seqLen;
+                nAdjDense.properties.activation = "linear";
+                this.graph.add(nAdjDense);
+
+                const nAdjReshape = LiteGraph.createNode("keras/reshape");
+                nAdjReshape.pos = [80, 660];
+                nAdjReshape.title = "Target Shape Reshape";
+                nAdjReshape.properties.target_shape = `${seqLen}, 1`;
+                this.graph.add(nAdjReshape);
+
+                nDec2.connect(0, nFinal, 0);
+                nFinal.connect(0, nAdjFlat, 0);
+                nAdjFlat.connect(0, nAdjDense, 0);
+                nAdjDense.connect(0, nAdjReshape, 0);
+                nAdjReshape.connect(0, nOutput, 0);
+            } else {
+                nDec2.connect(0, nFinal, 0);
+                nFinal.connect(0, nOutput, 0);
+            }
 
         } else if (type === "unet_1d") {
             // 1D U-Net with Skip Connections
@@ -849,6 +1270,372 @@ class NNEditor {
             nNorm.connect(0, nPool, 0);
             nPool.connect(0, nOut, 0);
             nOut.connect(0, nOutput, 0);
+
+        } else if (type === "idec_cnn") {
+            // 1D-CNN IDEC with editable Encoder, Decoder, and ClusteringLayer branch
+            const nInput = LiteGraph.createNode("keras/input");
+            nInput.pos = [80, 220];
+            nInput.title = "Signal Input";
+            nInput.properties.shape = `${seqLen}, 1`;
+            this.graph.add(nInput);
+
+            // Encoder
+            const nEnc1 = LiteGraph.createNode("keras/conv1d");
+            nEnc1.pos = [300, 220];
+            nEnc1.title = "Encoder Conv1";
+            nEnc1.properties.filters = baseFilters;
+            nEnc1.properties.kernel_size = 7;
+            nEnc1.properties.activation = act;
+            this.graph.add(nEnc1);
+
+            const nPool1 = LiteGraph.createNode("keras/maxpooling1d");
+            nPool1.pos = [520, 220];
+            nPool1.properties.pool_size = 2;
+            this.graph.add(nPool1);
+
+            const nEnc2 = LiteGraph.createNode("keras/conv1d");
+            nEnc2.pos = [740, 220];
+            nEnc2.title = "Encoder Conv2";
+            nEnc2.properties.filters = baseFilters * 2;
+            nEnc2.properties.kernel_size = 5;
+            nEnc2.properties.activation = act;
+            this.graph.add(nEnc2);
+
+            const nPool2 = LiteGraph.createNode("keras/maxpooling1d");
+            nPool2.pos = [960, 220];
+            nPool2.properties.pool_size = 2;
+            this.graph.add(nPool2);
+
+            const nFlat = LiteGraph.createNode("keras/flatten");
+            nFlat.pos = [1180, 220];
+            this.graph.add(nFlat);
+
+            const nBottle = LiteGraph.createNode("keras/dense");
+            nBottle.pos = [1400, 220];
+            nBottle.title = "Bottleneck Latent (Z)";
+            nBottle.properties.units = latentDim;
+            nBottle.properties.activation = "linear";
+            this.graph.add(nBottle);
+
+            // Branch A: ClusteringLayer
+            const nClust = LiteGraph.createNode("keras/clustering");
+            nClust.pos = [1640, 100];
+            nClust.title = "IDEC ClusteringLayer";
+            nClust.properties.n_clusters = numClasses || 8;
+            nClust.properties.alpha = 1.0;
+            this.graph.add(nClust);
+
+            const nClustOut = LiteGraph.createNode("keras/output");
+            nClustOut.pos = [1880, 100];
+            nClustOut.title = "Cluster Probabilities (Q)";
+            nClustOut.properties.activation = "linear";
+            this.graph.add(nClustOut);
+
+            // Branch B: Decoder (Signal Reconstruction)
+            const nDecDense = LiteGraph.createNode("keras/dense");
+            nDecDense.pos = [1640, 340];
+            nDecDense.title = "Decoder Expand";
+            nDecDense.properties.units = Math.floor(seqLen / 4) * baseFilters;
+            nDecDense.properties.activation = act;
+            this.graph.add(nDecDense);
+
+            const nReshape = LiteGraph.createNode("keras/reshape");
+            nReshape.pos = [1860, 340];
+            nReshape.properties.target_shape = `${Math.floor(seqLen / 4)}, ${baseFilters}`;
+            this.graph.add(nReshape);
+
+            const nUp1 = LiteGraph.createNode("keras/upsampling1d");
+            nUp1.pos = [2080, 340];
+            nUp1.properties.size = 2;
+            this.graph.add(nUp1);
+
+            const nDec1 = LiteGraph.createNode("keras/conv1d");
+            nDec1.pos = [2300, 340];
+            nDec1.title = "Decoder Conv1";
+            nDec1.properties.filters = baseFilters;
+            nDec1.properties.kernel_size = 5;
+            nDec1.properties.activation = act;
+            this.graph.add(nDec1);
+
+            const nUp2 = LiteGraph.createNode("keras/upsampling1d");
+            nUp2.pos = [2520, 340];
+            nUp2.properties.size = 2;
+            this.graph.add(nUp2);
+
+            const nDec2 = LiteGraph.createNode("keras/conv1d");
+            nDec2.pos = [2740, 340];
+            nDec2.title = "Reconstructed Waveform";
+            nDec2.properties.filters = 1;
+            nDec2.properties.kernel_size = 7;
+            nDec2.properties.activation = "linear";
+            this.graph.add(nDec2);
+
+            const nReconOut = LiteGraph.createNode("keras/output");
+            nReconOut.pos = [(seqLen % 4 === 0) ? 2960 : 3620, 340];
+            nReconOut.title = "Reconstruction Output";
+            nReconOut.properties.activation = "linear";
+            this.graph.add(nReconOut);
+
+            // Connections
+            nInput.connect(0, nEnc1, 0);
+            nEnc1.connect(0, nPool1, 0);
+            nPool1.connect(0, nEnc2, 0);
+            nEnc2.connect(0, nPool2, 0);
+            nPool2.connect(0, nFlat, 0);
+            nFlat.connect(0, nBottle, 0);
+
+            // Latent to Clustering branch
+            nBottle.connect(0, nClust, 0);
+            nClust.connect(0, nClustOut, 0);
+
+            // Latent to Decoder branch
+            nBottle.connect(0, nDecDense, 0);
+            nDecDense.connect(0, nReshape, 0);
+            nReshape.connect(0, nUp1, 0);
+            nUp1.connect(0, nDec1, 0);
+            nDec1.connect(0, nUp2, 0);
+            nUp2.connect(0, nDec2, 0);
+
+            if (seqLen % 4 !== 0) {
+                const nAdjFlat = LiteGraph.createNode("keras/flatten");
+                nAdjFlat.pos = [2960, 340];
+                nAdjFlat.title = "Shape Adjust Flatten";
+                this.graph.add(nAdjFlat);
+
+                const nAdjDense = LiteGraph.createNode("keras/dense");
+                nAdjDense.pos = [3180, 340];
+                nAdjDense.title = "Target Dimension Dense";
+                nAdjDense.properties.units = seqLen;
+                nAdjDense.properties.activation = "linear";
+                this.graph.add(nAdjDense);
+
+                const nAdjReshape = LiteGraph.createNode("keras/reshape");
+                nAdjReshape.pos = [3400, 340];
+                nAdjReshape.title = "Target Shape Reshape";
+                nAdjReshape.properties.target_shape = `${seqLen}, 1`;
+                this.graph.add(nAdjReshape);
+
+                nDec2.connect(0, nAdjFlat, 0);
+                nAdjFlat.connect(0, nAdjDense, 0);
+                nAdjDense.connect(0, nAdjReshape, 0);
+                nAdjReshape.connect(0, nReconOut, 0);
+            } else {
+                nDec2.connect(0, nReconOut, 0);
+            }
+
+        } else if (type === "idec_dense") {
+            // Dense IDEC with editable Encoder, Decoder, and ClusteringLayer branch
+            const nInput = LiteGraph.createNode("keras/input");
+            nInput.pos = [80, 200];
+            nInput.properties.shape = `${seqLen}, 1`;
+            this.graph.add(nInput);
+
+            const nFlat = LiteGraph.createNode("keras/flatten");
+            nFlat.pos = [300, 200];
+            this.graph.add(nFlat);
+
+            const nEnc1 = LiteGraph.createNode("keras/dense");
+            nEnc1.pos = [520, 200];
+            nEnc1.title = "Dense Encoder 1";
+            nEnc1.properties.units = 128;
+            nEnc1.properties.activation = act;
+            this.graph.add(nEnc1);
+
+            const nEnc2 = LiteGraph.createNode("keras/dense");
+            nEnc2.pos = [740, 200];
+            nEnc2.title = "Dense Encoder 2";
+            nEnc2.properties.units = 64;
+            nEnc2.properties.activation = act;
+            this.graph.add(nEnc2);
+
+            const nBottle = LiteGraph.createNode("keras/dense");
+            nBottle.pos = [960, 200];
+            nBottle.title = "Bottleneck Latent (Z)";
+            nBottle.properties.units = latentDim;
+            nBottle.properties.activation = "linear";
+            this.graph.add(nBottle);
+
+            // Branch A: Clustering branch
+            const nClust = LiteGraph.createNode("keras/clustering");
+            nClust.pos = [1200, 100];
+            nClust.title = "IDEC ClusteringLayer";
+            nClust.properties.n_clusters = numClasses || 8;
+            nClust.properties.alpha = 1.0;
+            this.graph.add(nClust);
+
+            const nClustOut = LiteGraph.createNode("keras/output");
+            nClustOut.pos = [1440, 100];
+            nClustOut.title = "Cluster Probabilities (Q)";
+            nClustOut.properties.activation = "linear";
+            this.graph.add(nClustOut);
+
+            // Branch B: Decoder branch
+            const nDec1 = LiteGraph.createNode("keras/dense");
+            nDec1.pos = [1200, 320];
+            nDec1.title = "Dense Decoder 1";
+            nDec1.properties.units = 64;
+            nDec1.properties.activation = act;
+            this.graph.add(nDec1);
+
+            const nDec2 = LiteGraph.createNode("keras/dense");
+            nDec2.pos = [1420, 320];
+            nDec2.title = "Dense Decoder 2";
+            nDec2.properties.units = 128;
+            nDec2.properties.activation = act;
+            this.graph.add(nDec2);
+
+            const nDecOut = LiteGraph.createNode("keras/dense");
+            nDecOut.pos = [1640, 320];
+            nDecOut.title = "Reconstructed Dense";
+            nDecOut.properties.units = seqLen;
+            nDecOut.properties.activation = "linear";
+            this.graph.add(nDecOut);
+
+            const nReshape = LiteGraph.createNode("keras/reshape");
+            nReshape.pos = [1860, 320];
+            nReshape.properties.target_shape = `${seqLen}, 1`;
+            this.graph.add(nReshape);
+
+            const nReconOut = LiteGraph.createNode("keras/output");
+            nReconOut.pos = [2080, 320];
+            nReconOut.title = "Reconstruction Output";
+            nReconOut.properties.activation = "linear";
+            this.graph.add(nReconOut);
+
+            // Connections
+            nInput.connect(0, nFlat, 0);
+            nFlat.connect(0, nEnc1, 0);
+            nEnc1.connect(0, nEnc2, 0);
+            nEnc2.connect(0, nBottle, 0);
+
+            nBottle.connect(0, nClust, 0);
+            nClust.connect(0, nClustOut, 0);
+
+            nBottle.connect(0, nDec1, 0);
+            nDec1.connect(0, nDec2, 0);
+            nDec2.connect(0, nDecOut, 0);
+            nDecOut.connect(0, nReshape, 0);
+            nReshape.connect(0, nReconOut, 0);
+
+        } else if (type === "hybrid_cnn_tabular") {
+            // Multi-Branch 1D-CNN + Tabular Input merging via Concatenate
+            const nSigIn = LiteGraph.createNode("keras/input");
+            nSigIn.pos = [80, 140];
+            nSigIn.title = "Signal Waveform Input";
+            nSigIn.properties.shape = `${seqLen}, 1`;
+            this.graph.add(nSigIn);
+
+            const nConv1 = LiteGraph.createNode("keras/conv1d");
+            nConv1.pos = [300, 140];
+            nConv1.title = "Signal Conv1D";
+            nConv1.properties.filters = baseFilters;
+            nConv1.properties.kernel_size = 5;
+            nConv1.properties.activation = act;
+            this.graph.add(nConv1);
+
+            const nPool1 = LiteGraph.createNode("keras/maxpooling1d");
+            nPool1.pos = [520, 140];
+            nPool1.properties.pool_size = 2;
+            this.graph.add(nPool1);
+
+            const nConv2 = LiteGraph.createNode("keras/conv1d");
+            nConv2.pos = [740, 140];
+            nConv2.title = "Signal Conv1D 2";
+            nConv2.properties.filters = baseFilters * 2;
+            nConv2.properties.kernel_size = 3;
+            nConv2.properties.activation = act;
+            this.graph.add(nConv2);
+
+            const nPool2 = LiteGraph.createNode("keras/global_averagepooling1d");
+            nPool2.pos = [960, 140];
+            this.graph.add(nPool2);
+
+            const nSigDense = LiteGraph.createNode("keras/dense");
+            nSigDense.pos = [1180, 140];
+            nSigDense.title = "Signal Embeddings";
+            nSigDense.properties.units = 32;
+            nSigDense.properties.activation = act;
+            this.graph.add(nSigDense);
+
+            // Tabular Stream
+            const nTabIn = LiteGraph.createNode("keras/input");
+            nTabIn.pos = [80, 360];
+            nTabIn.title = "Tabular Features Input";
+            nTabIn.properties.shape = "16";
+            this.graph.add(nTabIn);
+
+            const nTabDense1 = LiteGraph.createNode("keras/dense");
+            nTabDense1.pos = [320, 360];
+            nTabDense1.title = "Tabular Dense 1";
+            nTabDense1.properties.units = 32;
+            nTabDense1.properties.activation = act;
+            this.graph.add(nTabDense1);
+
+            const nTabDrop = LiteGraph.createNode("keras/dropout");
+            nTabDrop.pos = [540, 360];
+            nTabDrop.properties.rate = 0.2;
+            this.graph.add(nTabDrop);
+
+            const nTabDense2 = LiteGraph.createNode("keras/dense");
+            nTabDense2.pos = [760, 360];
+            nTabDense2.title = "Tabular Embeddings";
+            nTabDense2.properties.units = 16;
+            nTabDense2.properties.activation = act;
+            this.graph.add(nTabDense2);
+
+            // Merge Stream
+            const nConcat = LiteGraph.createNode("keras/concatenate");
+            nConcat.pos = [1420, 240];
+            nConcat.title = "Merge (Signal + Tabular)";
+            nConcat.properties.axis = -1;
+            this.graph.add(nConcat);
+
+            const nFusion = LiteGraph.createNode("keras/dense");
+            nFusion.pos = [1640, 240];
+            nFusion.title = "Fusion Dense";
+            nFusion.properties.units = 64;
+            nFusion.properties.activation = act;
+            this.graph.add(nFusion);
+
+            const nDropFinal = LiteGraph.createNode("keras/dropout");
+            nDropFinal.pos = [1860, 240];
+            nDropFinal.properties.rate = 0.3;
+            this.graph.add(nDropFinal);
+
+            const nFinal = LiteGraph.createNode("keras/dense");
+            nFinal.pos = [2080, 240];
+            nFinal.title = "Classifier Head";
+            nFinal.properties.units = numClasses || 4;
+            nFinal.properties.activation = "softmax";
+            this.graph.add(nFinal);
+
+            const nOutput = LiteGraph.createNode("keras/output");
+            nOutput.pos = [2300, 240];
+            nOutput.title = "Classification Output";
+            nOutput.properties.activation = "softmax";
+            this.graph.add(nOutput);
+
+            // Connect Signal Stream
+            nSigIn.connect(0, nConv1, 0);
+            nConv1.connect(0, nPool1, 0);
+            nPool1.connect(0, nConv2, 0);
+            nConv2.connect(0, nPool2, 0);
+            nPool2.connect(0, nSigDense, 0);
+
+            // Connect Tabular Stream
+            nTabIn.connect(0, nTabDense1, 0);
+            nTabDense1.connect(0, nTabDrop, 0);
+            nTabDrop.connect(0, nTabDense2, 0);
+
+            // Connect into Merge Concatenate
+            nSigDense.connect(0, nConcat, 0);
+            nTabDense2.connect(0, nConcat, 1);
+
+            // Connect Head
+            nConcat.connect(0, nFusion, 0);
+            nFusion.connect(0, nDropFinal, 0);
+            nDropFinal.connect(0, nFinal, 0);
+            nFinal.connect(0, nOutput, 0);
         }
 
         setTimeout(() => {

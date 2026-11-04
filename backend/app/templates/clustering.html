@@ -6,9 +6,12 @@
 <div class="page-header">
     <div>
         <h1 class="page-title">Clustering & 2D / 3D PCA Analysis</h1>
-        <p class="page-desc">Unsupervised pattern discovery using K-Means and DBSCAN with interactive 3D dimension reduction scatter visualization</p>
+        <p class="page-desc">Gelişmiş kümeleme (K-Means, DBSCAN, HDBSCAN, OPTICS), Soft Küme Olasılıkları ($q_{ij}$), Belirsizlik Analizi ve 3D PCA Görselleştirme</p>
     </div>
-    <div style="display: flex; gap: 8px;">
+    <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+        <button class="btn btn-secondary" id="export-cluster-csv-btn" disabled onclick="downloadCurrentCSV()" style="display: inline-flex; align-items: center; gap: 6px;">
+            📥 Kümeleme & Olasılıkları CSV İndir (Input ID ile)
+        </button>
         <button class="btn btn-primary" id="run-clustering-btn">▶ Run Clustering & PCA</button>
     </div>
 </div>
@@ -36,6 +39,9 @@
             <select id="cluster-algo" class="form-control">
                 <option value="kmeans">K-Means</option>
                 <option value="dbscan">DBSCAN</option>
+                <option value="hdbscan">HDBSCAN (Hierarchical Density)</option>
+                <option value="optics">OPTICS (Ordering Points To Identify Structure)</option>
+                <option value="idec">IDEC (Deep Embedded Clustering - Sinir Ağı)</option>
             </select>
         </div>
 
@@ -60,6 +66,74 @@
             <div class="form-group">
                 <label class="form-label">Min Samples</label>
                 <input type="number" id="dbscan-min-samples" class="form-control" value="5" min="1">
+            </div>
+        </div>
+
+        <!-- HDBSCAN Params -->
+        <div id="hdbscan-params-block" style="display: none;">
+            <div class="form-group">
+                <label class="form-label">Min Cluster Size</label>
+                <input type="number" id="hdbscan-min-cluster-size" class="form-control" value="5" min="2">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Min Samples (Noise Sensitivity)</label>
+                <input type="number" id="hdbscan-min-samples" class="form-control" value="5" min="1">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Cluster Selection Epsilon</label>
+                <input type="number" id="hdbscan-epsilon" class="form-control" value="0.0" step="0.05" min="0.0">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Cluster Selection Method</label>
+                <select id="hdbscan-method" class="form-control">
+                    <option value="eom">Excess of Mass (EOM)</option>
+                    <option value="leaf">Leaf</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- OPTICS Params -->
+        <div id="optics-params-block" style="display: none;">
+            <div class="form-group">
+                <label class="form-label">Min Samples</label>
+                <input type="number" id="optics-min-samples" class="form-control" value="5" min="2">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Max Epsilon (max_eps)</label>
+                <input type="number" id="optics-max-eps" class="form-control" placeholder="Infinity (optional)" step="0.05" min="0.01">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Xi (Cluster Steepness)</label>
+                <input type="number" id="optics-xi" class="form-control" value="0.05" step="0.01" min="0.01" max="0.99">
+            </div>
+        </div>
+
+        <!-- IDEC Params -->
+        <div id="params-idec" class="algo-params" style="display: none;">
+            <div class="form-group">
+                <label class="form-label">Target Neural Network Model</label>
+                <select id="idec-model-select" class="form-control"></select>
+                <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">
+                    IDEC çift çıkışlı veya Autoencoder rekonstrüksiyon modeli
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Number of Clusters (K)</label>
+                <input type="number" id="idec-n-clusters" class="form-control" value="5" min="2" max="50">
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                <div class="form-group">
+                    <label class="form-label">Training Epochs</label>
+                    <input type="number" id="idec-epochs" class="form-control" value="15" min="0" max="200" title="0 = inference only using current weights; >0 = run iterative IDEC training">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Pre-train Epochs</label>
+                    <input type="number" id="idec-pretrain-epochs" class="form-control" value="5" min="0" max="100">
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Clustering Loss Weight (&gamma;)</label>
+                <input type="number" id="idec-gamma" class="form-control" value="0.1" step="0.05" min="0.01">
             </div>
         </div>
 
@@ -141,6 +215,115 @@
     <!-- The Single Highcharts Plot for this Group -->
     <div id="cluster-group-chart" style="width: 100%; height: 500px;"></div>
 </div>
+
+<!-- Signal Cluster Probability Inspector Card -->
+<div class="card" id="cluster-inspector-card" style="display: none; margin-bottom: 2rem;">
+    <div class="card-title" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+            <span style="font-size: 16px; font-weight: 700;">📊 Sinyal Küme Olasılıkları ve Belirsizlik İnceleyici (Cluster Probabilities Inspector)</span>
+            <span id="inspector-sample-count-badge" class="badge" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-size: 11px; padding: 3px 8px; border-radius: 4px;">0 Signals</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+            <button class="btn btn-secondary btn-sm" onclick="downloadCurrentCSV()">📥 CSV İndir</button>
+        </div>
+    </div>
+
+    <!-- Filter / Sort Controls Bar -->
+    <div style="display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 1rem; align-items: center; background: rgba(255,255,255,0.02); padding: 10px 14px; border-radius: 6px; border: 1px solid var(--border-color);">
+        <div style="display: flex; align-items: center; gap: 6px;">
+            <label style="font-size: 12px; color: var(--text-muted);">Küme Filtresi:</label>
+            <select id="inspector-filter-cluster" class="form-control" style="width: auto; padding: 4px 8px; font-size: 12px;" onchange="onInspectorFilterChange()">
+                <option value="all">Tüm Kümeler (All)</option>
+            </select>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 6px;">
+            <label style="font-size: 12px; color: var(--text-muted);">Sıralama:</label>
+            <select id="inspector-sort" class="form-control" style="width: auto; padding: 4px 8px; font-size: 12px;" onchange="onInspectorFilterChange()">
+                <option value="lowest_confidence">⚠️ En Düşük Güven (Sınır / Boundary Sinyalleri Önce)</option>
+                <option value="highest_uncertainty">🔥 En Yüksek Belirsizlik (Entropy Önce)</option>
+                <option value="highest_confidence">⭐ En Yüksek Güven (Net Sinyaller Önce)</option>
+                <option value="sample_id_asc">Sıra No (Input Index)</option>
+            </select>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 6px; flex-grow: 1; max-width: 280px;">
+            <label style="font-size: 12px; color: var(--text-muted);">Arama:</label>
+            <input type="text" id="inspector-search-id" class="form-control" placeholder="Input ID ara..." style="padding: 4px 8px; font-size: 12px;" oninput="onInspectorFilterChange()">
+        </div>
+
+        <div style="margin-left: auto; font-size: 12px; color: var(--text-muted);" id="inspector-pagination-info">
+            Sayfa 1 / 1
+        </div>
+    </div>
+
+    <!-- Table of Signals -->
+    <div class="table-responsive" style="max-height: 480px; overflow-y: auto;">
+        <table class="data-table" id="inspector-table">
+            <thead>
+                <tr>
+                    <th style="width: 140px;">Input ID</th>
+                    <th style="width: 120px;">Atanan Küme</th>
+                    <th style="width: 120px;">Güven (Confidence)</th>
+                    <th style="width: 120px;">Belirsizlik (Entropy)</th>
+                    <th>Küme Olasılık Dağılımı ($q_{ij}$)</th>
+                    <th style="width: 110px; text-align: right;">PCA (X, Y)</th>
+                </tr>
+            </thead>
+            <tbody id="inspector-table-body">
+                <!-- Populated dynamically -->
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Pagination Controls -->
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px; font-size: 12px;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+            <span>Göster:</span>
+            <select id="inspector-page-size" class="form-control" style="width: auto; padding: 2px 6px; font-size: 12px;" onchange="onInspectorPageSizeChange()">
+                <option value="25">25</option>
+                <option value="50" selected>50</option>
+                <option value="100">100</option>
+                <option value="500">500</option>
+            </select>
+            <span id="inspector-total-label" style="color: var(--text-muted);">toplam 0 sinyal</span>
+        </div>
+        <div style="display: flex; gap: 6px;">
+            <button class="btn btn-secondary btn-sm" id="inspector-prev-btn" onclick="onInspectorPrevPage()">◀ Önceki</button>
+            <button class="btn btn-secondary btn-sm" id="inspector-next-btn" onclick="onInspectorNextPage()">Sonraki ▶</button>
+        </div>
+    </div>
+</div>
+
+<!-- Kayıtlı Kümeleme Sonuçları (Saved Clustering Runs) -->
+<div class="card" id="saved-clusterings-card" style="margin-top: 2rem;">
+    <div class="card-title" style="display: flex; justify-content: space-between; align-items: center;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+            <span style="font-size: 16px; font-weight: 700;">Kayıtlı Kümeleme Sonuçları (Saved Clustering Runs)</span>
+            <span id="saved-runs-count-badge" class="badge" style="background: rgba(255,255,255,0.06); color: #fff; font-size: 11px; padding: 2px 8px; border-radius: 4px;">0</span>
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="loadSavedClusterings()">🔄 Yenile</button>
+    </div>
+    <div class="table-responsive">
+        <table class="data-table" id="saved-clusterings-table">
+            <thead>
+                <tr>
+                    <th style="width: 160px;">Tarih</th>
+                    <th style="width: 110px;">Algoritma</th>
+                    <th>Kaynak (Source)</th>
+                    <th>Parametreler</th>
+                    <th style="width: 120px;">Silhouette</th>
+                    <th style="width: 260px; text-align: right;">İşlemler (Actions)</th>
+                </tr>
+            </thead>
+            <tbody id="saved-clusterings-body">
+                <tr>
+                    <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">Kayıtlı kümeleme bulunamadı.</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -152,6 +335,56 @@
     let clusterGroupChart = null;
     let cachedGroupData = null;
 
+    // Probability Inspector State
+    let inspectorAllPoints = [];
+    let inspectorFilteredPoints = [];
+    let inspectorCurrentPage = 1;
+    let inspectorPageSize = 50;
+
+    let idecModelsLoaded = false;
+    async function populateIdecModels() {
+        const sel = document.getElementById("idec-model-select");
+        if (!sel) return;
+        try {
+            const res = await fetch(`/api/models/list/${SignalML.currentProjectId}`);
+            const models = await SignalML.safeJson(res);
+            const mList = Array.isArray(models) ? models : [];
+            if (mList.length === 0) {
+                sel.innerHTML = `<option value="">Model bulunamadı (NN Builder ile oluşturun)</option>`;
+                return;
+            }
+            sel.innerHTML = mList.map(m => {
+                const isIdec = m.task_type === "idec_clustering" || (m.name || "").toLowerCase().includes("idec");
+                const isAe = m.task_type === "autoencoder" || (m.name || "").toLowerCase().includes("autoencoder");
+                const badge = isIdec ? " [IDEC Modeli]" : (isAe ? " [Autoencoder]" : "");
+                return `<option value="${m.id}">${m.name}${badge} (${(m.trainable_params || 0).toLocaleString()} p)</option>`;
+            }).join("");
+            idecModelsLoaded = true;
+        } catch (e) {
+            console.error("Failed to populate IDEC models", e);
+        }
+    }
+    window.populateIdecModels = populateIdecModels;
+
+    function toggleAlgoParams(algo) {
+        const elKmeans = document.getElementById("kmeans-params-block");
+        const elDbscan = document.getElementById("dbscan-params-block");
+        const elHdbscan = document.getElementById("hdbscan-params-block");
+        const elOptics = document.getElementById("optics-params-block");
+        const elIdec = document.getElementById("params-idec");
+
+        if (elKmeans) elKmeans.style.display = algo === "kmeans" ? "block" : "none";
+        if (elDbscan) elDbscan.style.display = algo === "dbscan" ? "block" : "none";
+        if (elHdbscan) elHdbscan.style.display = algo === "hdbscan" ? "block" : "none";
+        if (elOptics) elOptics.style.display = algo === "optics" ? "block" : "none";
+        if (elIdec) elIdec.style.display = algo === "idec" ? "block" : "none";
+
+        if (algo === "idec") {
+            populateIdecModels();
+        }
+    }
+    window.toggleAlgoParams = toggleAlgoParams;
+
     async function initClusteringView() {
         pcaVis = new PCAVisualizer("pca-vis-container");
         pcaVis.onClusterClick = (cId) => {
@@ -161,10 +394,9 @@
 
         const algoSel = document.getElementById("cluster-algo");
         algoSel.onchange = (e) => {
-            const isKM = e.target.value === "kmeans";
-            document.getElementById("kmeans-params-block").style.display = isKM ? "block" : "none";
-            document.getElementById("dbscan-params-block").style.display = isKM ? "none" : "block";
+            toggleAlgoParams(e.target.value);
         };
+        toggleAlgoParams(algoSel.value);
 
         const srcTypeSel = document.getElementById("cluster-source-type");
         srcTypeSel.onchange = () => loadSourceOptions();
@@ -185,6 +417,9 @@
         }
 
         document.getElementById("run-clustering-btn").onclick = executeClustering;
+
+        // Load saved runs table
+        await loadSavedClusterings();
     }
 
     async function loadSourceOptions() {
@@ -211,6 +446,33 @@
         }
     }
 
+    function enableExportButton(enabled) {
+        const btn = document.getElementById("export-cluster-csv-btn");
+        if (btn) {
+            btn.disabled = !enabled;
+            if (enabled) {
+                btn.classList.remove("btn-secondary");
+                btn.classList.add("btn-primary");
+            } else {
+                btn.classList.remove("btn-primary");
+                btn.classList.add("btn-secondary");
+            }
+        }
+    }
+
+    function downloadCurrentCSV() {
+        if (!currentClusteringId) {
+            SignalML.toast("Lütfen önce bir kümeleme çalıştırın veya kayıtlı bir sonucu yükleyin", "warning");
+            return;
+        }
+        window.location.href = `/api/clustering/${currentClusteringId}/export_csv`;
+    }
+
+    function downloadClusteringCSV(clusteringId) {
+        if (!clusteringId) return;
+        window.location.href = `/api/clustering/${clusteringId}/export_csv`;
+    }
+
     async function executeClustering() {
         const srcType = document.getElementById("cluster-source-type").value;
         const srcId = document.getElementById("cluster-source-select").value;
@@ -224,13 +486,33 @@
             source_type: srcType,
             source_id: srcId,
             algorithm: algo,
-            n_clusters: Number(document.getElementById("kmeans-k").value),
-            n_init: Number(document.getElementById("kmeans-n-init").value),
-            eps: Number(document.getElementById("dbscan-eps").value),
-            min_samples: Number(document.getElementById("dbscan-min-samples").value),
             standardize: document.getElementById("cluster-standardize").value === "true",
             compute_pca: true
         };
+
+        if (algo === "kmeans") {
+            payload.n_clusters = Number(document.getElementById("kmeans-k").value);
+            payload.n_init = Number(document.getElementById("kmeans-n-init").value);
+        } else if (algo === "dbscan") {
+            payload.eps = Number(document.getElementById("dbscan-eps").value);
+            payload.min_samples = Number(document.getElementById("dbscan-min-samples").value);
+        } else if (algo === "hdbscan") {
+            payload.min_cluster_size = Number(document.getElementById("hdbscan-min-cluster-size").value);
+            payload.min_samples = Number(document.getElementById("hdbscan-min-samples").value);
+            payload.cluster_selection_epsilon = Number(document.getElementById("hdbscan-epsilon").value);
+            payload.cluster_selection_method = document.getElementById("hdbscan-method").value;
+        } else if (algo === "optics") {
+            payload.min_samples = Number(document.getElementById("optics-min-samples").value);
+            const maxEpsVal = document.getElementById("optics-max-eps").value;
+            payload.max_eps = maxEpsVal ? Number(maxEpsVal) : null;
+            payload.xi = Number(document.getElementById("optics-xi").value);
+        } else if (algo === "idec") {
+            payload.model_id = document.getElementById("idec-model-select")?.value || null;
+            payload.n_clusters = Number(document.getElementById("idec-n-clusters")?.value || 5);
+            payload.epochs = Number(document.getElementById("idec-epochs")?.value || 15);
+            payload.pretrain_epochs = Number(document.getElementById("idec-pretrain-epochs")?.value || 5);
+            payload.gamma = Number(document.getElementById("idec-gamma")?.value || 0.1);
+        }
 
         SignalML.toast(`Running ${algo.toUpperCase()} and 3D PCA...`, "info");
 
@@ -250,10 +532,11 @@
             SignalML.toast("Clustering & PCA completed successfully!", "success");
 
             currentClusteringId = data.clustering_id;
+            enableExportButton(true);
 
             // Update stats
-            const sil = data.metrics.silhouette_score;
-            document.getElementById("metric-silhouette").textContent = sil !== null ? sil.toFixed(4) : "N/A";
+            const sil = data.metrics ? data.metrics.silhouette_score : null;
+            document.getElementById("metric-silhouette").textContent = (sil !== null && sil !== undefined) ? sil.toFixed(4) : "N/A";
 
             const dist = data.cluster_distribution || {};
             const numClusters = Object.keys(dist).length;
@@ -274,6 +557,12 @@
                 const firstLabel = Number(clusterKeys[0]);
                 selectClusterGroup(firstLabel);
             }
+
+            // Populate Probability Inspector
+            updateInspectorData(data);
+
+            // Refresh saved clusterings table
+            await loadSavedClusterings();
         } catch (e) {
             SignalML.toast(`Network Error: ${e.message}`, "error");
         }
@@ -334,7 +623,6 @@
     }
 
     function renderClusterWaveformChart(data, clusterColor) {
-        // Update stats
         const stats = data.stats || {};
         document.getElementById("cluster-group-stats").innerHTML = `
             <div><strong>Group Sample Count:</strong> <span style="color: ${clusterColor}; font-weight: 700;">${data.sample_count}</span></div>
@@ -353,7 +641,7 @@
         const showFaded = document.getElementById("toggle-faded-lines").checked;
         const showStd = document.getElementById("toggle-std-band").checked;
 
-        // 1. Faded / transparent individual waveforms (silinik dalga formları)
+        // 1. Faded / transparent individual waveforms
         if (showFaded && data.waveforms && data.waveforms.length > 0) {
             data.waveforms.forEach((wf, i) => {
                 const points = data.x.map((xVal, idx) => [xVal, wf.y[idx]]);
@@ -362,7 +650,7 @@
                     type: "line",
                     data: points,
                     color: clusterColor,
-                    opacity: 0.16, // Faded / transparent
+                    opacity: 0.16,
                     lineWidth: 1,
                     enableMouseTracking: false,
                     showInLegend: false,
@@ -397,7 +685,7 @@
             });
         }
 
-        // 3. Prominent Group Average / Mean Waveform (Ortalamaları belirgin)
+        // 3. Prominent Group Average
         const meanPoints = data.x.map((xVal, idx) => [xVal, data.mean[idx]]);
         seriesList.push({
             name: `Group Mean / Ortalama (N=${data.sample_count})`,
@@ -464,6 +752,301 @@
         if (cachedGroupData && activeClusterLabel !== null) {
             const cColor = pcaVis ? pcaVis.getClusterColor(activeClusterLabel) : "#38bdf8";
             renderClusterWaveformChart(cachedGroupData, cColor);
+        }
+    }
+
+    // =========================================================================
+    // Signal Cluster Probability Inspector Functions
+    // =========================================================================
+    function updateInspectorData(data) {
+        const inspectorCard = document.getElementById("cluster-inspector-card");
+        if (!inspectorCard) return;
+
+        inspectorAllPoints = data.points || [];
+        inspectorCard.style.display = inspectorAllPoints.length > 0 ? "block" : "none";
+        document.getElementById("inspector-sample-count-badge").textContent = `${inspectorAllPoints.length} Sinyal`;
+
+        // Update cluster filter dropdown options
+        const filterSel = document.getElementById("inspector-filter-cluster");
+        const dist = data.cluster_distribution || {};
+        let opts = `<option value="all">Tüm Kümeler (All - ${inspectorAllPoints.length})</option>`;
+        Object.entries(dist).forEach(([cid, cnt]) => {
+            const cNum = Number(cid);
+            const name = cNum === -1 ? `Gürültü / Noise (${cnt})` : `Küme ${cNum} (${cnt})`;
+            opts += `<option value="${cNum}">${name}</option>`;
+        });
+        filterSel.innerHTML = opts;
+
+        inspectorCurrentPage = 1;
+        applyInspectorFilters();
+    }
+
+    function onInspectorFilterChange() {
+        inspectorCurrentPage = 1;
+        applyInspectorFilters();
+    }
+
+    function onInspectorPageSizeChange() {
+        inspectorPageSize = Number(document.getElementById("inspector-page-size").value);
+        inspectorCurrentPage = 1;
+        renderInspectorTable();
+    }
+
+    function onInspectorPrevPage() {
+        if (inspectorCurrentPage > 1) {
+            inspectorCurrentPage--;
+            renderInspectorTable();
+        }
+    }
+
+    function onInspectorNextPage() {
+        const totalPages = Math.ceil(inspectorFilteredPoints.length / inspectorPageSize) || 1;
+        if (inspectorCurrentPage < totalPages) {
+            inspectorCurrentPage++;
+            renderInspectorTable();
+        }
+    }
+
+    function applyInspectorFilters() {
+        const clusterFilter = document.getElementById("inspector-filter-cluster").value;
+        const sortBy = document.getElementById("inspector-sort").value;
+        const searchQuery = (document.getElementById("inspector-search-id").value || "").trim().toLowerCase();
+
+        // 1. Filter
+        let filtered = inspectorAllPoints.filter(p => {
+            if (clusterFilter !== "all" && p.cluster !== Number(clusterFilter)) {
+                return false;
+            }
+            if (searchQuery) {
+                const sId = String(p.input_id !== undefined ? p.input_id : p.sample_id).toLowerCase();
+                if (!sId.includes(searchQuery)) return false;
+            }
+            return true;
+        });
+
+        // 2. Sort
+        if (sortBy === "lowest_confidence") {
+            filtered.sort((a, b) => (a.confidence || 0) - (b.confidence || 0));
+        } else if (sortBy === "highest_uncertainty") {
+            filtered.sort((a, b) => (b.uncertainty || 0) - (a.uncertainty || 0));
+        } else if (sortBy === "highest_confidence") {
+            filtered.sort((a, b) => (b.confidence || 0) - (a.confidence || 0));
+        } else if (sortBy === "sample_id_asc") {
+            filtered.sort((a, b) => a.sample_id - b.sample_id);
+        }
+
+        inspectorFilteredPoints = filtered;
+        renderInspectorTable();
+    }
+
+    function renderInspectorTable() {
+        const tbody = document.getElementById("inspector-table-body");
+        const total = inspectorFilteredPoints.length;
+        const totalPages = Math.ceil(total / inspectorPageSize) || 1;
+        if (inspectorCurrentPage > totalPages) inspectorCurrentPage = totalPages;
+
+        document.getElementById("inspector-pagination-info").textContent = `Sayfa ${inspectorCurrentPage} / ${totalPages}`;
+        document.getElementById("inspector-total-label").textContent = `toplam ${total} sinyal`;
+        document.getElementById("inspector-prev-btn").disabled = inspectorCurrentPage <= 1;
+        document.getElementById("inspector-next-btn").disabled = inspectorCurrentPage >= totalPages;
+
+        if (total === 0) {
+            tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">Kriterlere uygun sinyal bulunamadı.</td></tr>`;
+            return;
+        }
+
+        const startIdx = (inspectorCurrentPage - 1) * inspectorPageSize;
+        const pageItems = inspectorFilteredPoints.slice(startIdx, startIdx + inspectorPageSize);
+
+        tbody.innerHTML = pageItems.map(p => {
+            const cColor = pcaVis ? pcaVis.getClusterColor(p.cluster) : "#38bdf8";
+            const clusterName = p.cluster === -1 ? "Noise (-1)" : `Cluster ${p.cluster}`;
+            const confPct = ((p.confidence || 0) * 100).toFixed(1);
+            const uncVal = (p.uncertainty !== undefined && p.uncertainty !== null) ? Number(p.uncertainty).toFixed(3) : "0.000";
+
+            // Visual probability bars
+            const probs = p.probabilities || {};
+            const probEntries = Object.entries(probs);
+
+            const probBarHtml = `
+                <div style="display: flex; flex-direction: column; gap: 4px; min-width: 160px;">
+                    <div style="display: flex; height: 7px; border-radius: 4px; overflow: hidden; background: rgba(255,255,255,0.08); width: 100%;">
+                        ${probEntries.map(([c, pr]) => {
+                            const pct = (pr * 100).toFixed(1);
+                            if (pr < 0.01) return '';
+                            const col = pcaVis ? pcaVis.getClusterColor(Number(c)) : '#38bdf8';
+                            return `<div style="width: ${pct}%; background: ${col};" title="C${c}: ${pct}%"></div>`;
+                        }).join('')}
+                    </div>
+                    <div style="display: flex; flex-wrap: wrap; gap: 6px; font-size: 11px;">
+                        ${probEntries.map(([c, pr]) => {
+                            const pct = (pr * 100).toFixed(1);
+                            const col = pcaVis ? pcaVis.getClusterColor(Number(c)) : '#38bdf8';
+                            return `<span style="display: inline-flex; align-items: center; gap: 3px; color: #cbd5e1;">
+                                <span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:${col};"></span>
+                                C${c}: <strong>${pct}%</strong>
+                            </span>`;
+                        }).join('')}
+                    </div>
+                </div>
+            `;
+
+            // Confidence styling (green if high, warning if low)
+            const confColor = p.confidence >= 0.8 ? "#34d399" : (p.confidence >= 0.5 ? "#fbbf24" : "#f43f5e");
+            // Uncertainty styling (red if high uncertainty, cyan/green if low)
+            const uncColor = p.uncertainty >= 0.5 ? "#f43f5e" : (p.uncertainty >= 0.25 ? "#fbbf24" : "#38bdf8");
+
+            const xStr = (p.x !== undefined) ? Number(p.x).toFixed(2) : "0.00";
+            const yStr = (p.y !== undefined) ? Number(p.y).toFixed(2) : "0.00";
+
+            return `
+                <tr>
+                    <td>
+                        <strong style="color: #fff; font-family: monospace;">${p.input_id || p.sample_id}</strong>
+                        <div style="font-size: 10px; color: var(--text-muted);">#${p.sample_id}</div>
+                    </td>
+                    <td>
+                        <span class="shape-badge" style="border-color: ${cColor}; color: ${cColor}; font-weight: 600; font-size: 11px; padding: 2px 7px;">
+                            ${clusterName}
+                        </span>
+                    </td>
+                    <td>
+                        <span style="color: ${confColor}; font-weight: 700;">${confPct}%</span>
+                        <div style="height: 3px; width: 60px; background: rgba(255,255,255,0.06); border-radius: 2px; margin-top: 3px; overflow: hidden;">
+                            <div style="height: 100%; width: ${confPct}%; background: ${confColor};"></div>
+                        </div>
+                    </td>
+                    <td>
+                        <span style="color: ${uncColor}; font-weight: 700;">${uncVal}</span>
+                    </td>
+                    <td>${probBarHtml}</td>
+                    <td style="text-align: right; font-family: monospace; font-size: 11px; color: var(--text-muted);">
+                        (${xStr}, ${yStr})
+                    </td>
+                </tr>
+            `;
+        }).join("");
+    }
+
+    // =========================================================================
+    // Saved Clustering Runs CRUD
+    // =========================================================================
+    async function loadSavedClusterings() {
+        const tbody = document.getElementById("saved-clusterings-body");
+        const badge = document.getElementById("saved-runs-count-badge");
+
+        try {
+            const res = await fetch(`/api/clustering/list/${SignalML.currentProjectId}`);
+            const runs = await SignalML.safeJson(res);
+            const list = Array.isArray(runs) ? runs : [];
+            badge.textContent = list.length;
+
+            if (list.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">Kayıtlı kümeleme bulunamadı.</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = list.map(r => {
+                const dateStr = r.created_at ? new Date(r.created_at).toLocaleString("tr-TR") : "—";
+                const algoBadge = `<span class="badge" style="background: rgba(59, 130, 246, 0.2); color: var(--accent-blue); font-weight: 600; text-transform: uppercase;">${r.algorithm}</span>`;
+                const sil = r.metrics && r.metrics.silhouette_score !== null && r.metrics.silhouette_score !== undefined
+                    ? Number(r.metrics.silhouette_score).toFixed(4)
+                    : "—";
+
+                let paramsSummary = "";
+                if (r.params) {
+                    paramsSummary = Object.entries(r.params).map(([k, v]) => `${k}=${v}`).join(", ");
+                }
+
+                return `
+                    <tr>
+                        <td style="font-size: 12px; color: var(--text-secondary);">${dateStr}</td>
+                        <td>${algoBadge}</td>
+                        <td style="font-size: 12px;">${r.source_type || 'dataset'}</td>
+                        <td style="font-size: 11px; color: var(--text-muted); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${paramsSummary}">${paramsSummary || '—'}</td>
+                        <td style="font-weight: 600; color: ${sil !== '—' && Number(sil) > 0.4 ? '#34d399' : '#fff'};">${sil}</td>
+                        <td style="text-align: right;">
+                            <button class="btn btn-primary btn-sm" onclick="loadClusteringRun('${r.id}')" style="padding: 4px 10px; font-size: 11px; margin-right: 4px;">
+                                🔄 Yükle
+                            </button>
+                            <button class="btn btn-secondary btn-sm" onclick="downloadClusteringCSV('${r.id}')" style="padding: 4px 10px; font-size: 11px; margin-right: 4px;">
+                                📥 CSV İndir
+                            </button>
+                            <button class="btn btn-danger btn-sm" onclick="deleteClusteringRun('${r.id}')" style="padding: 4px 10px; font-size: 11px; background: rgba(239, 68, 68, 0.2); border: 1px solid rgba(239, 68, 68, 0.4); color: #f87171;">
+                                🗑️ Sil
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            }).join("");
+        } catch (e) {
+            console.error("Failed to load saved clusterings:", e);
+        }
+    }
+
+    async function loadClusteringRun(clusteringId) {
+        try {
+            SignalML.toast("Kümeleme sonucu yükleniyor...", "info");
+            const res = await fetch(`/api/clustering/detail/${clusteringId}`);
+            const data = await SignalML.safeJson(res);
+            if (!res.ok) {
+                SignalML.toast(`Yükleme başarısız: ${data.detail || res.statusText}`, "error");
+                return;
+            }
+
+            currentClusteringId = data.clustering_id;
+            enableExportButton(true);
+
+            // Update stats
+            const sil = data.metrics ? data.metrics.silhouette_score : null;
+            document.getElementById("metric-silhouette").textContent = (sil !== null && sil !== undefined) ? sil.toFixed(4) : "N/A";
+
+            const dist = data.cluster_distribution || {};
+            const numClusters = Object.keys(dist).length;
+            document.getElementById("metric-clusters-count").textContent = numClusters;
+            document.getElementById("metric-clusters-dist").textContent = Object.entries(dist).map(([k, v]) => `C${k}:${v}`).join(", ");
+
+            pcaVis.loadData(data);
+
+            // Render Waveform pills & select first cluster
+            renderClusterPills(dist);
+            const clusterKeys = Object.keys(dist);
+            if (clusterKeys.length > 0) {
+                selectClusterGroup(Number(clusterKeys[0]));
+            }
+
+            // Populate Probability Inspector
+            updateInspectorData(data);
+
+            SignalML.toast("Kümeleme ve olasılık sonuçları yüklendi!", "success");
+            window.scrollTo({ top: 0, behavior: "smooth" });
+        } catch (e) {
+            SignalML.toast(`Hata: ${e.message}`, "error");
+        }
+    }
+
+    async function deleteClusteringRun(clusteringId) {
+        if (!confirm("Bu kümeleme sonucunu ve diskteki dosyasını silmek istediğinizden emin misiniz?")) {
+            return;
+        }
+
+        try {
+            const res = await fetch(`/api/clustering/${clusteringId}`, { method: "DELETE" });
+            const data = await SignalML.safeJson(res);
+            if (!res.ok) {
+                SignalML.toast(`Silme başarısız: ${data.detail || res.statusText}`, "error");
+                return;
+            }
+
+            SignalML.toast("Kümeleme sonucu silindi", "success");
+            if (currentClusteringId === clusteringId) {
+                currentClusteringId = null;
+                enableExportButton(false);
+                document.getElementById("cluster-inspector-card").style.display = "none";
+            }
+            await loadSavedClusterings();
+        } catch (e) {
+            SignalML.toast(`Hata: ${e.message}`, "error");
         }
     }
 

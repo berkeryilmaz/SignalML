@@ -63,6 +63,7 @@ class WorkflowEditor {
         // 5. Clustering & PCA
         registerWfNode("clustering_kmeans", "K-Means Clustering", [{ name: "features", type: "Feature Matrix" }], [{ name: "cluster_results", type: "Cluster Results" }], { n_clusters: 3 });
         registerWfNode("clustering_dbscan", "DBSCAN Clustering", [{ name: "features", type: "Feature Matrix" }], [{ name: "cluster_results", type: "Cluster Results" }], { eps: 0.5, min_samples: 5 });
+        registerWfNode("clustering_idec", "IDEC Deep Clustering", [{ name: "features", type: "Feature Matrix" }], [{ name: "cluster_results", type: "Cluster Results" }], { n_clusters: 5, epochs: 15, pretrain_epochs: 5, gamma: 0.1 });
         registerWfNode("pca_analysis", "PCA Analysis", [{ name: "features", type: "Feature Matrix" }], [{ name: "pca_coords", type: "PCA Coordinates" }], { n_components: 3 });
 
         // 6. Signal Export
@@ -237,8 +238,12 @@ class WorkflowEditor {
 
     async executeWorkflow() {
         const graphData = this.serializeGraph();
+        const activeProjectId = (window.SignalML && typeof window.SignalML.getProjectId === "function" ? window.SignalML.getProjectId() : (window.SignalML && window.SignalML.currentProjectId))
+            || (typeof SignalML !== "undefined" && (typeof SignalML.getProjectId === "function" ? SignalML.getProjectId() : SignalML.currentProjectId))
+            || localStorage.getItem("signalml_active_project")
+            || "default-project";
         const payload = {
-            project_id: SignalML.currentProjectId,
+            project_id: activeProjectId,
             name: "Automated Signal Workflow",
             graph: graphData
         };
