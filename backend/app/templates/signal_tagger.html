@@ -1,26 +1,27 @@
 {% extends "base.html" %}
+{% from "_macros.html" import icon %}
 
-{% block title %}Signal Tagger & Waveforms — SignalML{% endblock %}
+{% block title %}Signal Tagger &amp; Waveforms — SignalML{% endblock %}
 
 {% block content %}
 <div class="page-header">
     <div>
-        <h1 class="page-title">Signal Tagger & Waveform Inspector</h1>
+        <h1 class="page-title">Signal Tagger &amp; Waveform Inspector</h1>
         <p class="page-desc">High-resolution analog and discrete time-series visualization, navigation, and multi-signal comparison</p>
     </div>
-    <div style="display: flex; gap: 8px; align-items: center;">
-        <input type="file" id="tagger-file-input" accept=".csv,.txt,.tsv,.npy,.npz" style="display: none;">
-        <button class="btn btn-primary btn-sm" id="btn-quick-upload" onclick="document.getElementById('tagger-file-input').click()">📁 Load CSV</button>
-        <select id="dataset-selector" class="form-control" style="width: 250px;">
+    <div class="page-actions row">
+        <input type="file" id="tagger-file-input" accept=".csv,.txt,.tsv,.npy,.npz" class="is-hidden">
+        <button type="button" class="btn btn-primary btn-sm" id="btn-quick-upload" onclick="document.getElementById('tagger-file-input').click()">{{ icon('upload') }} <span>Quick upload</span></button>
+        <select id="dataset-selector" class="form-control w-auto">
             <option value="">Select a Dataset...</option>
         </select>
-        <button class="btn btn-secondary btn-sm" id="prev-sample-btn">&larr; Prev</button>
-        <span id="sample-counter" style="font-family: var(--font-mono); font-size: 13px; font-weight: 600; padding: 0 8px;">0 / 0</span>
-        <button class="btn btn-secondary btn-sm" id="next-sample-btn">Next &rarr;</button>
+        <button type="button" class="btn btn-secondary btn-sm" id="prev-sample-btn">{{ icon('chevron-left', 'icon-xs') }} <span>Prev</span></button>
+        <span id="sample-counter" class="mono text-md fw-600 px-2">0 / 0</span>
+        <button type="button" class="btn btn-secondary btn-sm" id="next-sample-btn"><span>Next</span> {{ icon('chevron-right', 'icon-xs') }}</button>
     </div>
 </div>
 
-<div class="grid-cards" style="margin-bottom: 1rem;">
+<div class="grid-cards mb-4">
     <div class="card">
         <div class="card-title">Sample Index</div>
         <div class="stat-val" id="stat-sample-idx">#0</div>
@@ -37,22 +38,22 @@
         <div class="stat-desc">Range: [Min, Max]</div>
     </div>
     <div class="card">
-        <div class="card-title">Distribution & Label</div>
-        <div class="stat-val" style="color: var(--accent-green);" id="stat-label">None</div>
-        <div class="stat-desc" id="stat-mean-std">μ: 0.00, σ: 0.00</div>
+        <div class="card-title">Distribution &amp; Label</div>
+        <div class="stat-val text-success" id="stat-label">None</div>
+        <div class="stat-desc" id="stat-mean-std">&mu;: 0.00, &sigma;: 0.00</div>
     </div>
 </div>
 
 <!-- Waveform Canvas -->
-<div class="card" style="margin-bottom: 1.5rem;">
-    <div class="card-title" style="display: flex; justify-content: space-between;">
+<div class="card mb-6">
+    <div class="card-title row-between">
         <span>Interactive Waveform (Pan: Shift + Drag, Zoom: Box Drag)</span>
-        <div style="display: flex; gap: 8px;">
-            <button class="btn btn-secondary btn-sm" id="group-overlay-btn" title="View all waveforms in dataset faded with their prominent average">👥 Group Overlay (Faded + Average)</button>
-            <button class="btn btn-secondary btn-sm" id="overlay-toggle-btn">Toggle Multi-Signal Overlay</button>
+        <div class="row">
+            <button type="button" class="btn btn-secondary btn-sm" id="group-overlay-btn" title="View all waveforms in dataset faded with their prominent average">{{ icon('layers', 'icon-xs') }} <span>Group overlay</span></button>
+            <button type="button" class="btn btn-secondary btn-sm" id="overlay-toggle-btn">Toggle Multi-Signal Overlay</button>
         </div>
     </div>
-    <div id="waveform-chart" style="width: 100%; height: 480px;"></div>
+    <div id="waveform-chart" class="chart-box-lg"></div>
 </div>
 {% endblock %}
 
@@ -156,11 +157,11 @@
         // Drag & drop on waveform card
         const chartCard = document.getElementById("waveform-chart").parentElement;
         if (chartCard) {
-            chartCard.ondragover = (e) => { e.preventDefault(); chartCard.style.borderColor = "var(--accent-blue)"; };
-            chartCard.ondragleave = () => { chartCard.style.borderColor = "var(--border-color)"; };
+            chartCard.ondragover = (e) => { e.preventDefault(); chartCard.classList.add("is-dragover"); };
+            chartCard.ondragleave = () => { chartCard.classList.remove("is-dragover"); };
             chartCard.ondrop = (e) => {
                 e.preventDefault();
-                chartCard.style.borderColor = "var(--border-color)";
+                chartCard.classList.remove("is-dragover");
                 if (e.dataTransfer.files.length > 0) handleTaggerFileUpload(e.dataTransfer.files[0]);
             };
         }

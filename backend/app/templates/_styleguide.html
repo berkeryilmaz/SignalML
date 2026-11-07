@@ -1,0 +1,381 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon %}
+
+{% block title %}Design System Styleguide — SignalML{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-title">SignalML Design System</h1>
+        <p class="page-desc">Technical instrument reference for tokens, typography, controls, tables, and charts</p>
+    </div>
+    <div class="page-actions">
+        <button type="button" class="btn btn-secondary btn-sm" onclick="SignalML.toggleTheme()">
+            {{ icon('sun') }}
+            <span>Toggle theme</span>
+        </button>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="SignalML.toast('Validation completed in 42 ms', 'success')">
+            {{ icon('circle-check') }}
+            <span>Trigger toast</span>
+        </button>
+        <button type="button" class="btn btn-primary btn-sm" onclick="document.getElementById('sg-demo-modal').style.display='flex'">
+            {{ icon('layers') }}
+            <span>Open modal</span>
+        </button>
+    </div>
+</div>
+
+<!-- 1. Surface & Semantic Tokens -->
+<section class="sg-section">
+    <h2>1. Surface &amp; Semantic Tokens</h2>
+    <p class="sg-desc">Neutral surface steps + 1px hairline borders define hierarchy. One chromatic accent for primary actions and focus.</p>
+    <div class="grid-6 gap-3">
+        <div class="tile">
+            <div class="sg-swatch" data-bg="var(--surface-1)"></div>
+            <div class="sg-token">--surface-1</div>
+        </div>
+        <div class="tile">
+            <div class="sg-swatch" data-bg="var(--surface-2)"></div>
+            <div class="sg-token">--surface-2</div>
+        </div>
+        <div class="tile">
+            <div class="sg-swatch" data-bg="var(--surface-3)"></div>
+            <div class="sg-token">--surface-3</div>
+        </div>
+        <div class="tile">
+            <div class="sg-swatch" data-bg="var(--surface-4)"></div>
+            <div class="sg-token">--surface-4</div>
+        </div>
+        <div class="tile">
+            <div class="sg-swatch" data-bg="var(--surface-5)"></div>
+            <div class="sg-token">--surface-5</div>
+        </div>
+        <div class="tile">
+            <div class="sg-swatch" data-bg="var(--accent)"></div>
+            <div class="sg-token">--accent</div>
+        </div>
+    </div>
+    <div class="grid-4 gap-3 mt-3">
+        <div class="tile">
+            <div class="sg-swatch" data-bg="var(--success)"></div>
+            <div class="sg-token">--success</div>
+        </div>
+        <div class="tile">
+            <div class="sg-swatch" data-bg="var(--warning)"></div>
+            <div class="sg-token">--warning</div>
+        </div>
+        <div class="tile">
+            <div class="sg-swatch" data-bg="var(--danger)"></div>
+            <div class="sg-token">--danger</div>
+        </div>
+        <div class="tile">
+            <div class="sg-swatch" data-bg="var(--info)"></div>
+            <div class="sg-token">--info</div>
+        </div>
+    </div>
+</section>
+
+<!-- 2. Stat / Metric Tiles -->
+<section class="sg-section">
+    <h2>2. Telemetry &amp; Stat Tiles</h2>
+    <p class="sg-desc">All numeric metrics, shapes, epochs, and IDs use JetBrains Mono with tabular-nums.</p>
+    <div class="stat-grid">
+        <div class="stat">
+            <div class="stat-label">{{ icon('database') }} Active Dataset</div>
+            <div class="stat-value">12,480<span class="stat-unit">rows</span></div>
+            <div class="stat-meta">512 samples @ 1.0 kHz</div>
+        </div>
+        <div class="stat">
+            <div class="stat-label">{{ icon('network') }} Parameters</div>
+            <div class="stat-value">184,326</div>
+            <div class="stat-meta">Conv1D + BiLSTM</div>
+        </div>
+        <div class="stat">
+            <div class="stat-label">{{ icon('activity') }} Validation Loss</div>
+            <div class="stat-value">0.0384</div>
+            <div class="stat-meta"><span class="stat-delta-up">-14.2%</span> vs baseline</div>
+        </div>
+        <div class="stat">
+            <div class="stat-label">{{ icon('orbit') }} Silhouette Score</div>
+            <div class="stat-value">0.792</div>
+            <div class="stat-meta">k = 5 clusters (IDEC)</div>
+        </div>
+    </div>
+</section>
+
+<!-- 3. Buttons, Tabs, Badges & Icons -->
+<section class="sg-section">
+    <h2>3. Controls, Tabs, Badges &amp; Icons</h2>
+    <p class="sg-desc">Compact 32px / 28px controls, 4px radius, crisp 1px borders, and local Lucide SVG sprite icons.</p>
+    <div class="grid-2 gap-4">
+        <div class="card stack">
+            <div class="section-title">Buttons &amp; Segmented Tabs</div>
+            <div class="cluster">
+                <button type="button" class="btn btn-primary">{{ icon('play') }}<span>Train model</span></button>
+                <button type="button" class="btn btn-secondary">{{ icon('download') }}<span>Export CSV</span></button>
+                <button type="button" class="btn btn-ghost">{{ icon('refresh-cw') }}<span>Refresh</span></button>
+                <button type="button" class="btn btn-danger">{{ icon('trash') }}<span>Delete</span></button>
+                <button type="button" class="btn btn-secondary" disabled>Disabled</button>
+            </div>
+            <div class="cluster">
+                <button type="button" class="btn btn-primary btn-sm">{{ icon('wand-sparkles') }}<span>Architecture wizard</span></button>
+                <button type="button" class="btn btn-secondary btn-sm">{{ icon('search') }}<span>Infer shapes</span></button>
+                <button type="button" class="btn btn-secondary btn-xs">Compact XS</button>
+                <div class="btn-group">
+                    <button type="button" class="btn btn-secondary btn-sm">{{ icon('chevron-left') }}</button>
+                    <button type="button" class="btn btn-secondary btn-sm">{{ icon('chevron-right') }}</button>
+                </div>
+                <button type="button" class="btn btn-secondary btn-sm btn-icon" aria-label="Settings">{{ icon('settings') }}</button>
+            </div>
+            <div class="row-between pt-2 border-t">
+                <div class="tabs" role="tablist">
+                    <button type="button" class="tab active" role="tab" aria-selected="true">{{ icon('chart-scatter') }}<span>2D Projection</span></button>
+                    <button type="button" class="tab" role="tab" aria-selected="false">{{ icon('box') }}<span>3D Orbit</span></button>
+                    <button type="button" class="tab" role="tab" aria-selected="false">{{ icon('table') }}<span>Probabilities</span></button>
+                </div>
+                <span class="text-caption text-muted">Shortcut <kbd>Ctrl</kbd> + <kbd>K</kbd></span>
+            </div>
+        </div>
+
+        <div class="card stack">
+            <div class="section-title">Badges, Status Pills &amp; Typography</div>
+            <div class="cluster">
+                <span class="badge">Neutral</span>
+                <span class="badge badge-accent">{{ icon('sparkles') }} Accent</span>
+                <span class="badge badge-success">{{ icon('check') }} Completed</span>
+                <span class="badge badge-warning">{{ icon('triangle-exclamation-point') }} High entropy</span>
+                <span class="badge badge-danger">{{ icon('x') }} Failed</span>
+                <span class="shape-badge">(None, 512, 32)</span>
+            </div>
+            <div class="cluster">
+                <span class="status-badge completed"><span class="status-dot"></span>Completed</span>
+                <span class="status-badge running"><span class="status-dot is-accent is-live"></span>Running epoch 18/50</span>
+                <span class="status-badge warning"><span class="status-dot is-warning"></span>Early stop</span>
+                <span class="status-badge failed"><span class="status-dot is-danger"></span>Aborted</span>
+            </div>
+            <div class="tile stack-xs">
+                <div class="text-title">Title 18/24 Semibold (-0.02em)</div>
+                <div class="text-subhead">Subhead 14/20 Semibold</div>
+                <div class="text-body text-secondary">Body 13/18 Regular — Secondary technical description text</div>
+                <div class="text-caption text-muted">Caption 12/16 Muted · <span class="mono">loss=0.0142 val_acc=0.9840</span></div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- 4. Forms & Structured Cards -->
+<section class="sg-section">
+    <h2>4. Forms, Callouts &amp; Structured Panels</h2>
+    <p class="sg-desc">30px inputs on surface-1, focus rings in accent-ring, and hairline-divided cards.</p>
+    <div class="grid-2 gap-4">
+        <div class="card card-flush">
+            <div class="card-header">
+                <div class="card-header-title">
+                    {{ icon('sliders-horizontal') }}
+                    <span>Preprocessing Configuration</span>
+                </div>
+                <span class="badge badge-mono">v2.4</span>
+            </div>
+            <div class="card-body stack">
+                <div class="form-row">
+                    <div class="form-group m-0">
+                        <label class="form-label" for="sg-norm">Normalization method</label>
+                        <select id="sg-norm" class="form-control">
+                            <option value="zscore">Z-Score Standardization</option>
+                            <option value="minmax">Min-Max Scaling [0, 1]</option>
+                        </select>
+                    </div>
+                    <div class="form-group m-0">
+                        <label class="form-label" for="sg-len">
+                            Target length
+                            <span class="form-label-meta">samples</span>
+                        </label>
+                        <div class="input-group">
+                            <input id="sg-len" type="number" class="form-control mono" value="512">
+                            <span class="input-addon">pts</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="form-group m-0">
+                    <label class="form-label" for="sg-search">Filter layers</label>
+                    <div class="input-icon">
+                        {{ icon('search') }}
+                        <input id="sg-search" type="text" class="form-control" placeholder="Search Conv1D, LSTM, MultiHeadAttention...">
+                    </div>
+                </div>
+                <div class="row-between pt-2">
+                    <label class="switch">
+                        <input type="checkbox" checked>
+                        <span class="switch-track"></span>
+                        <span>Per-waveform standardization</span>
+                    </label>
+                    <label class="check">
+                        <input type="checkbox" checked>
+                        <span>Zero-pad tail</span>
+                    </label>
+                </div>
+            </div>
+            <div class="card-footer">
+                <button type="button" class="btn btn-secondary btn-sm">Reset</button>
+                <button type="button" class="btn btn-primary btn-sm">{{ icon('check') }}<span>Apply pipeline</span></button>
+            </div>
+        </div>
+
+        <div class="stack">
+            <div class="alert alert-info">
+                {{ icon('info') }}
+                <div class="alert-body">
+                    <span class="alert-title">Per-waveform normalization active</span>
+                    Each signal is independently scaled by its own mean and standard deviation before feature extraction.
+                </div>
+            </div>
+            <div class="alert alert-warning">
+                {{ icon('triangle-exclamation-point') }}
+                <div class="alert-body">
+                    <span class="alert-title">Boundary samples detected</span>
+                    14 waveforms exhibit cluster assignment entropy above 0.65 and are flagged for review.
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-title">
+                    <span>Run Hyperparameters</span>
+                    <span class="badge badge-mono">adamw</span>
+                </div>
+                <dl class="kv">
+                    <dt>Learning rate</dt>
+                    <dd>0.0010</dd>
+                    <dt>Batch size</dt>
+                    <dd>64</dd>
+                    <dt>Early stopping patience</dt>
+                    <dd>10 epochs</dd>
+                    <dt>Training progress</dt>
+                    <dd>72%</dd>
+                </dl>
+                <div class="progress mt-3">
+                    <div class="progress-bar" data-width="72%"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- 5. Data Table & Chart -->
+<section class="sg-section">
+    <h2>5. Dense Data Tables &amp; Highcharts Theme</h2>
+    <p class="sg-desc">Sticky 30px headers, right-aligned monospace numbers, and theme-aware telemetry charts.</p>
+    <div class="grid-2 gap-4">
+        <div class="table-wrap">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Layer</th>
+                        <th>Type</th>
+                        <th>Output Shape</th>
+                        <th class="num">Params</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td class="mono">input_signal</td>
+                        <td>InputLayer</td>
+                        <td><span class="shape-badge">(None, 512, 1)</span></td>
+                        <td class="num">0</td>
+                        <td><span class="badge badge-success">Trainable</span></td>
+                    </tr>
+                    <tr class="is-selected">
+                        <td class="mono">conv1d_stem</td>
+                        <td>Conv1D</td>
+                        <td><span class="shape-badge">(None, 512, 32)</span></td>
+                        <td class="num">192</td>
+                        <td><span class="badge badge-success">Trainable</span></td>
+                    </tr>
+                    <tr>
+                        <td class="mono">bilstm_encoder</td>
+                        <td>Bidirectional</td>
+                        <td><span class="shape-badge">(None, 128)</span></td>
+                        <td class="num">49,664</td>
+                        <td><span class="badge">{{ icon('snowflake') }} Frozen</span></td>
+                    </tr>
+                    <tr>
+                        <td class="mono">idec_clusters</td>
+                        <td>ClusteringLayer</td>
+                        <td><span class="shape-badge">(None, 5)</span></td>
+                        <td class="num">640</td>
+                        <td><span class="badge badge-accent">Centroid</span></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="card card-flush">
+            <div class="card-header">
+                <div class="card-header-title">
+                    {{ icon('chart-line') }}
+                    <span>Convergence Curve</span>
+                </div>
+                <span class="text-caption text-muted mono">Epoch 1–20</span>
+            </div>
+            <div class="card-body">
+                <div id="sg-chart" class="chart-box chart-box-sm"></div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Demo Modal -->
+<div id="sg-demo-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="sg-modal-title">
+    <div class="modal modal-sm">
+        <div class="modal-header">
+            <h3 class="modal-title" id="sg-modal-title">
+                {{ icon('layers') }}
+                <span>Compile Keras Model</span>
+            </h3>
+            <button type="button" class="btn btn-ghost btn-sm btn-icon modal-close" onclick="document.getElementById('sg-demo-modal').style.display='none'" aria-label="Close">
+                {{ icon('x') }}
+            </button>
+        </div>
+        <div class="modal-body stack">
+            <p class="text-secondary">Confirm compilation of the active Functional API graph before launching a background training job.</p>
+            <div class="tile">
+                <dl class="kv">
+                    <dt>Architecture</dt>
+                    <dd>Conv1D-BiLSTM</dd>
+                    <dt>Total parameters</dt>
+                    <dd>50,496</dd>
+                </dl>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('sg-demo-modal').style.display='none'">Cancel</button>
+            <button type="button" class="btn btn-primary btn-sm" onclick="document.getElementById('sg-demo-modal').style.display='none'; SignalML.toast('Model compiled', 'success')">Compile</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener("DOMContentLoaded", function () {
+        document.querySelectorAll(".sg-swatch[data-bg]").forEach(function (el) {
+            el.style.background = el.getAttribute("data-bg");
+        });
+        document.querySelectorAll(".progress-bar[data-width]").forEach(function (el) {
+            el.style.width = el.getAttribute("data-width");
+        });
+        if (typeof Highcharts !== "undefined") {
+            SignalML.chartTheme();
+            Highcharts.chart("sg-chart", {
+                chart: { type: "spline", height: 210 },
+                title: { text: null },
+                xAxis: { title: { text: "Epoch" }, categories: ["1", "4", "8", "12", "16", "20"] },
+                yAxis: { title: { text: "Loss" } },
+                series: [
+                    { name: "Train Loss", data: [0.68, 0.34, 0.19, 0.11, 0.06, 0.042] },
+                    { name: "Val Loss", data: [0.71, 0.39, 0.22, 0.14, 0.08, 0.058] }
+                ]
+            });
+        }
+    });
+</script>
+{% endblock %}

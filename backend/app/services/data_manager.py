@@ -756,6 +756,21 @@ class DataManager:
                         row_maxs = np.max(seq_matrix, axis=1, keepdims=True)
                         diff = row_maxs - row_mins
                         seq_matrix = (seq_matrix - row_mins) / np.where(diff == 0, eps, diff)
+                    elif norm_to_apply in ("row_median", "subtract_median"):
+                        row_medians = np.median(seq_matrix, axis=1, keepdims=True)
+                        seq_matrix = seq_matrix - row_medians
+                    elif norm_to_apply in ("row_mode", "subtract_mode"):
+                        from app.services.signal_processing import subtract_mode
+                        seq_matrix = subtract_mode(seq_matrix, per_signal=True)
+                    elif norm_to_apply in ("row_gaussian_peak", "subtract_gaussian_peak"):
+                        from app.services.signal_processing import subtract_gaussian_peak
+                        seq_matrix = subtract_gaussian_peak(seq_matrix, per_signal=True)
+                    elif norm_to_apply in ("row_scale_min", "scale_min"):
+                        from app.services.signal_processing import scale_min
+                        seq_matrix = scale_min(seq_matrix, per_signal=True)
+                    elif norm_to_apply in ("row_scale_max", "scale_max"):
+                        from app.services.signal_processing import scale_max
+                        seq_matrix = scale_max(seq_matrix, per_signal=True)
                     elif norm_to_apply == "global_standard":
                         g_mean = float(np.mean(seq_matrix))
                         g_std = float(np.std(seq_matrix))

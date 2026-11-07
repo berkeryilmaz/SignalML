@@ -15,6 +15,12 @@ from app.services.signal_processing import (
     peak_asymmetric_window,
     normalize_minmax,
     normalize_zscore,
+    subtract_median,
+    subtract_mode,
+    subtract_gaussian_peak,
+    reverse_signals,
+    scale_min,
+    scale_max,
     handle_missing,
     export_signals,
     run_pipeline
@@ -116,6 +122,67 @@ def test_normalization_and_missing_values():
     zs = normalize_zscore(signals, per_signal=True)
     assert np.isclose(np.mean(zs[0]), 0.0, atol=1e-5)
     assert np.isclose(np.std(zs[0]), 1.0, atol=1e-5)
+
+    # Median Baseline Subtraction (per signal)
+    med_sig = subtract_median(signals, per_signal=True)
+    assert np.allclose(med_sig[0], [-2.0, -1.0, 0.0, 1.0, 2.0])
+    assert np.allclose(med_sig[1], [-20.0, -10.0, 0.0, 10.0, 20.0])
+    assert np.allclose(np.median(med_sig, axis=1), [0.0, 0.0])
+
+    # Median Baseline Subtraction via run_pipeline
+    piped = run_pipeline(signals, [{"name": "subtract_median", "params": {"per_signal": True}}])
+    assert np.allclose(piped, med_sig)
+
+    # Mode Baseline Subtraction (most frequent value = 4.2, even with wide asymmetric pulse)
+    pulse_sig = np.full((1, 200), 4.2, dtype=np.float32)
+    pulse_sig[0, 100:180] = np.linspace(5.0, 25.0, 80, dtype=np.float32)
+    mode_corrected = subtract_mode(pulse_sig, bins=100, per_signal=True)
+    assert np.allclose(mode_corrected[0, :100], 0.0, atol=1e-4)
+
+    # Histogram + Gaussian Fit Peak Baseline Subtraction (noisy baseline around -3.5 + large pulse)
+    rng = np.random.default_rng(42)
+    noisy_sig = rng.normal(loc=-3.5, scale=0.08, size=(1, 500)).astype(np.float32)
+    noisy_sig[0, 350:480] += np.linspace(2.0, 15.0, 130, dtype=np.float32)
+    gauss_corrected = subtract_gaussian_peak(noisy_sig, bins=80, fit_window_bins=5, per_signal=True)
+    # The baseline region [0:350] should now be centered near 0.0 (within ~0.05)
+    assert abs(float(np.mean(gauss_corrected[0, :350]))) < 0.05
+
+    piped_mode = run_pipeline(pulse_sig, [{"name": "subtract_mode", "params": {"bins": 100, "per_signal": True}}])
+    assert np.allclose(piped_mode[0, :100], 0.0, atol=1e-4)
+
+    piped_gauss = run_pipeline(noisy_sig, [{"name": "subtract_gaussian_peak", "params": {"bins": 80, "fit_window_bins": 5, "per_signal": True}}])
+    assert abs(float(np.mean(piped_gauss[0, :350]))) < 0.05
+
+    # Reverse Filter (polarity, time, both)
+    rev_src = np.array([[0.0, -2.0, 4.0]], dtype=np.float32)
+    assert np.allclose(reverse_signals(rev_src, mode="polarity"), [[0.0, 2.0, -4.0]])
+    assert np.allclose(reverse_signals(rev_src, mode="time"), [[4.0, -2.0, 0.0]])
+    assert np.allclose(reverse_signals(rev_src, mode="both"), [[-4.0, 2.0, 0.0]])
+
+    # Min Scaler & Max Scaler (preserving 0 baseline)
+    base_zero_sig = np.array([[0.0, -4.0, 0.0, 8.0]], dtype=np.float32)
+    s_min_abs = scale_min(base_zero_sig, mode="divide_abs_min", per_signal=True)
+    assert np.allclose(s_min_abs, [[0.0, -1.0, 0.0, 2.0]])
+    s_min_div = scale_min(base_zero_sig, mode="divide_min", per_signal=True)
+    assert np.allclose(s_min_div, [[0.0, 1.0, 0.0, -2.0]])
+    s_min_sub = scale_min(base_zero_sig, mode="subtract_min", per_signal=True)
+    assert np.allclose(s_min_sub, [[4.0, 0.0, 4.0, 12.0]])
+
+    s_max = scale_max(base_zero_sig, mode="divide_max", per_signal=True)
+    assert np.allclose(s_max, [[0.0, -0.5, 0.0, 1.0]])
+    s_max_abs = scale_max(np.array([[0.0, -10.0, 5.0]], dtype=np.float32), mode="divide_max_abs", per_signal=True)
+    assert np.allclose(s_max_abs, [[0.0, -1.0, 0.5]])
+
+    # Chained pipeline: Gaussian/Median baseline -> Reverse polarity -> Max scaler
+    chained = run_pipeline(
+        np.array([[5.0, 5.0, 5.0, 1.0, 5.0]], dtype=np.float32),
+        [
+            {"name": "subtract_median", "params": {"per_signal": True}},
+            {"name": "reverse_signals", "params": {"mode": "polarity"}},
+            {"name": "scale_max", "params": {"mode": "divide_max", "per_signal": True}}
+        ]
+    )
+    assert np.allclose(chained, [[0.0, 0.0, 0.0, 1.0, 0.0]])
 
     # Missing values
     dirty = np.array([[1.0, np.nan, 3.0, 4.0, np.inf]], dtype=np.float32)

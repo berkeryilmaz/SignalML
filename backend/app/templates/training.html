@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import icon %}
 
 {% block title %}Model Training — SignalML{% endblock %}
 
@@ -8,167 +9,168 @@
         <h1 class="page-title">Asynchronous Model Training</h1>
         <p class="page-desc">Background job execution with real-time loss/accuracy curves, early stopping, and evaluation metrics</p>
     </div>
-    <div style="display: flex; gap: 8px;">
-        <button class="btn btn-danger" id="cancel-train-btn">Stop Training</button>
-        <button class="btn btn-secondary" id="resume-train-btn" style="background: rgba(56, 189, 248, 0.15); border: 1px solid var(--accent-cyan); color: var(--accent-cyan); font-weight: 600;">⏯ Kaldığı Yerden Devam Et (Resume Training)</button>
-        <button class="btn btn-primary" id="start-train-btn">▶ Launch Training Job</button>
+    <div class="page-actions">
+        <button class="btn btn-danger" id="cancel-train-btn">Stop training</button>
+        <button class="btn btn-secondary" id="resume-train-btn">{{ icon('rotate-ccw') }} <span>Resume training</span></button>
+        <button class="btn btn-primary" id="start-train-btn">{{ icon('play') }} <span>Start training</span></button>
     </div>
 </div>
 
-<div style="display: grid; grid-template-columns: 360px 1fr; gap: 1.5rem; margin-bottom: 1.5rem;">
-    <!-- Training Setup Panel -->
-    <div class="card">
-        <div class="card-title" style="display: flex; justify-content: space-between; align-items: center;">
-            <span>Training Configuration</span>
-            <a href="/nn-builder" class="btn btn-primary btn-sm" style="font-size: 11px; padding: 3px 8px; background: linear-gradient(135deg, var(--accent-blue), #8b5cf6); border: none; text-decoration: none;">
-                🪄 Model Sihirbazı
-            </a>
-        </div>
-        <div class="form-group">
-            <label class="form-label">Target Model</label>
-            <select id="train-model-select" class="form-control"></select>
-        </div>
-        <div class="form-group">
-            <label class="form-label">Training Dataset</label>
-            <select id="train-dataset-select" class="form-control"></select>
-        </div>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-            <div class="form-group">
-                <label class="form-label">Epochs</label>
-                <input type="number" id="train-epochs" class="form-control" value="25" min="1" max="1000">
+<div class="grid-sidebar mb-6">
+    <!-- Left Column: Training Setup & Layer Freezing -->
+    <div class="stack-lg">
+        <!-- Training Setup Panel -->
+        <div class="card">
+            <div class="card-title row-between">
+                <span>Training Configuration</span>
+                <a href="/nn-builder" class="btn btn-secondary btn-xs">
+                    {{ icon('wand-sparkles', 'icon-xs') }} <span>Architecture wizard</span>
+                </a>
             </div>
             <div class="form-group">
-                <label class="form-label">Batch Size</label>
-                <input type="number" id="train-batch-size" class="form-control" value="32" min="1" max="1024">
-            </div>
-        </div>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-            <div class="form-group">
-                <label class="form-label">Optimizer</label>
-                <select id="train-opt" class="form-control">
-                    <option value="adam">Adam</option>
-                    <option value="sgd">SGD</option>
-                    <option value="rmsprop">RMSprop</option>
-                    <option value="adamw">AdamW</option>
-                </select>
+                <label class="form-label">Target model</label>
+                <select id="train-model-select" class="form-control"></select>
             </div>
             <div class="form-group">
-                <label class="form-label">Learning Rate</label>
-                <input type="number" id="train-lr" class="form-control" value="0.001" step="0.0001">
+                <label class="form-label">Training dataset</label>
+                <select id="train-dataset-select" class="form-control"></select>
             </div>
-        </div>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-            <div class="form-group">
-                <label class="form-label">Val Split</label>
-                <input type="number" id="train-val-split" class="form-control" value="0.2" step="0.05" min="0" max="0.5">
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Epochs</label>
+                    <input type="number" id="train-epochs" class="form-control mono" value="25" min="1" max="1000">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Batch size</label>
+                    <input type="number" id="train-batch-size" class="form-control mono" value="32" min="1" max="1024">
+                </div>
             </div>
-            <div class="form-group">
-                <label class="form-label">Early Stopping</label>
-                <select id="train-es" class="form-control">
-                    <option value="true">Enabled (patience 5)</option>
-                    <option value="false">Disabled</option>
-                </select>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Optimizer</label>
+                    <select id="train-opt" class="form-control">
+                        <option value="adam">Adam</option>
+                        <option value="sgd">SGD</option>
+                        <option value="rmsprop">RMSprop</option>
+                        <option value="adamw">AdamW</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Learning rate</label>
+                    <input type="number" id="train-lr" class="form-control mono" value="0.001" step="0.0001">
+                </div>
             </div>
-        </div>
-
-        <!-- IDEC Derin Kümeleme Ayarları -->
-        <div style="margin-top: 1rem; border-top: 1px solid var(--border-color, #1e293b); padding-top: 0.75rem;">
-            <div style="display: flex; align-items: flex-start; gap: 8px;">
-                <input type="checkbox" id="train-idec-mode" onchange="toggleIdecParamsSection()" style="margin-top: 3px; cursor: pointer;">
-                <div>
-                    <label for="train-idec-mode" style="font-size: 13px; font-weight: 600; cursor: pointer; color: var(--accent-cyan, #38bdf8);">
-                        IDEC Kümeleme Eğitimi Aktif (Autoencoder / IDEC)
-                    </label>
-                    <div style="font-size: 11px; color: var(--text-muted, #94a3b8); margin-top: 2px; line-height: 1.4;">
-                        Herhangi bir Autoencoder veya IDEC modeli yinelemeli hedef dağılım ($P$) güncellemeleri, KLD kümeleme ve MSE rekonstrüksiyon kaybı ile eğitilebilir.
-                    </div>
+            <div class="form-row">
+                <div class="form-group m-0">
+                    <label class="form-label">Val split</label>
+                    <input type="number" id="train-val-split" class="form-control mono" value="0.2" step="0.05" min="0" max="0.5">
+                </div>
+                <div class="form-group m-0">
+                    <label class="form-label">Early stopping</label>
+                    <select id="train-es" class="form-control">
+                        <option value="true">Enabled (patience 5)</option>
+                        <option value="false">Disabled</option>
+                    </select>
                 </div>
             </div>
 
-            <div id="idec-params-section" style="display: none; background: rgba(15, 23, 42, 0.4); border: 1px solid #1e293b; border-radius: 6px; padding: 10px; margin-top: 10px;">
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
-                    <div class="form-group" style="margin-bottom: 0;">
-                        <label class="form-label" style="font-size: 11px;">Küme Sayısı (K)</label>
-                        <input type="number" id="train-idec-clusters" class="form-control" value="5" min="2" max="50">
+            <!-- IDEC Deep Clustering Settings -->
+            <div class="mt-4 pt-3 border-t">
+                <label class="check items-start">
+                    <input type="checkbox" id="train-idec-mode" onchange="toggleIdecParamsSection()">
+                    <div>
+                        <div class="fw-600 text-sm text-primary">Enable IDEC deep clustering training</div>
+                        <div class="text-xs text-muted mt-1">
+                            Train any Autoencoder or IDEC model with iterative target distribution (P) updates, KLD clustering loss, and MSE reconstruction loss.
+                        </div>
                     </div>
-                    <div class="form-group" style="margin-bottom: 0;">
-                        <label class="form-label" style="font-size: 11px;">Kümeleme Ağırlığı (&gamma;)</label>
-                        <input type="number" id="train-idec-gamma" class="form-control" value="0.1" step="0.05" min="0.01">
+                </label>
+
+                <div id="idec-params-section" class="tile mt-3">
+                    <div class="form-row mb-2">
+                        <div class="form-group m-0">
+                            <label class="form-label">Clusters (k)</label>
+                            <input type="number" id="train-idec-clusters" class="form-control mono" value="5" min="2" max="50">
+                        </div>
+                        <div class="form-group m-0">
+                            <label class="form-label">Clustering weight (&gamma;)</label>
+                            <input type="number" id="train-idec-gamma" class="form-control mono" value="0.1" step="0.05" min="0.01">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group m-0">
+                            <label class="form-label">Pretrain epochs</label>
+                            <input type="number" id="train-idec-pretrain" class="form-control mono" value="5" min="0" max="200">
+                        </div>
+                        <div class="form-group m-0">
+                            <label class="form-label">Update interval (epochs)</label>
+                            <input type="number" id="train-idec-update" class="form-control mono" value="1" min="1">
+                        </div>
                     </div>
                 </div>
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-                    <div class="form-group" style="margin-bottom: 0;">
-                        <label class="form-label" style="font-size: 11px;">AE Ön-Eğitim Epoch</label>
-                        <input type="number" id="train-idec-pretrain" class="form-control" value="5" min="0" max="200">
-                    </div>
-                    <div class="form-group" style="margin-bottom: 0;">
-                        <label class="form-label" style="font-size: 11px;">Hedef Güncelleme (Epoch)</label>
-                        <input type="number" id="train-idec-update" class="form-control" value="1" min="1">
-                    </div>
-                </div>
+            </div>
+        </div>
+
+        <!-- Layer Freezing & Selective Training Card -->
+        <div class="card" id="layer-freeze-card">
+            <div class="card-title row">
+                {{ icon('snowflake') }} <span>Layer Freezing &amp; Selective Training</span>
+            </div>
+            <p class="text-xs text-muted mb-3">
+                Freeze specific layers for transfer learning and selective fine-tuning.
+            </p>
+
+            <div class="cluster mb-3">
+                <button type="button" class="btn btn-secondary btn-xs" id="freeze-cnn-btn">Freeze 1D-CNN branch</button>
+                <button type="button" class="btn btn-secondary btn-xs" id="unfreeze-all-btn">Unfreeze all</button>
+                <button type="button" class="btn btn-primary btn-xs" id="save-freeze-btn">Save freeze state</button>
+            </div>
+
+            <div id="freeze-params-badge" class="text-xs text-secondary mb-2">
+                Trainable: <strong id="freeze-trainable-count" class="text-success mono">—</strong> / Frozen: <strong id="freeze-nontrainable-count" class="text-danger mono">—</strong>
+            </div>
+
+            <div id="layers-freeze-list" class="tile max-h-sm scroll-y p-2">
+                <div class="text-xs text-muted text-center p-4">Select a model to list its layers.</div>
             </div>
         </div>
     </div>
 
-    <!-- Katman Dondurma ve Seçimli Eğitim Card -->
-    <div class="card" style="margin-top: 1rem;" id="layer-freeze-card">
-        <div class="card-title" style="display: flex; justify-content: space-between; align-items: center;">
-            <span>❄️ Katman Dondurma ve Seçimli Eğitim (Layer Freezing)</span>
-        </div>
-        <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 0.75rem;">
-            Katmanları dondurarak (Freeze) transfer öğrenme ve selective training yapın.
-        </p>
-
-        <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 0.75rem;">
-            <button type="button" class="btn btn-secondary btn-sm" id="freeze-cnn-btn" style="font-size: 11px; padding: 4px 8px;">1D-CNN Kolunu Dondur</button>
-            <button type="button" class="btn btn-secondary btn-sm" id="unfreeze-all-btn" style="font-size: 11px; padding: 4px 8px;">Tümünü Aç</button>
-            <button type="button" class="btn btn-primary btn-sm" id="save-freeze-btn" style="font-size: 11px; padding: 4px 8px; background: var(--accent-cyan); color: #000; border: none; font-weight: 600;">Dondurma Ayarlarını Kaydet</button>
-        </div>
-
-        <div id="freeze-params-badge" style="font-size: 12px; margin-bottom: 0.5rem; color: #94a3b8;">
-            Eğitilebilir: <strong id="freeze-trainable-count" style="color: var(--accent-green);">—</strong> / Dondurulmuş: <strong id="freeze-nontrainable-count" style="color: var(--accent-rose);">—</strong>
-        </div>
-
-        <div id="layers-freeze-list" style="max-height: 240px; overflow-y: auto; border: 1px solid #1e293b; border-radius: 6px; padding: 6px; background: rgba(15, 23, 42, 0.6);">
-            <div style="font-size: 12px; color: var(--text-muted); text-align: center; padding: 1rem;">Model seçildiğinde katmanlar burada listelenecektir.</div>
-        </div>
-    </div>
-
-    <!-- Live Monitor & Chart -->
-    <div>
-        <div class="grid-cards" style="margin-bottom: 1rem;">
+    <!-- Right Column: Live Monitor & Chart -->
+    <div class="stack-lg">
+        <div class="grid-cards">
             <div class="card">
                 <div class="card-title">Epoch Progress</div>
-                <div class="stat-val" id="train-stat-epoch">0 / 0</div>
+                <div class="stat-val mono" id="train-stat-epoch">0 / 0</div>
                 <div class="stat-desc" id="train-stat-status">IDLE</div>
             </div>
             <div class="card">
                 <div class="card-title">Training Loss</div>
-                <div class="stat-val" id="train-stat-loss">0.0000</div>
+                <div class="stat-val mono" id="train-stat-loss">0.0000</div>
                 <div class="stat-desc">Current Loss</div>
             </div>
             <div class="card">
                 <div class="card-title">Validation Loss</div>
-                <div class="stat-val" id="train-stat-val-loss">0.0000</div>
+                <div class="stat-val mono" id="train-stat-val-loss">0.0000</div>
                 <div class="stat-desc">Generalization Loss</div>
             </div>
             <div class="card">
                 <div class="card-title">Accuracy / Quality</div>
-                <div class="stat-val" style="color: var(--accent-green, #34d399);" id="train-stat-accuracy">—</div>
+                <div class="stat-val mono text-success" id="train-stat-accuracy">—</div>
                 <div class="stat-desc" id="train-stat-acc-label">Model Accuracy</div>
             </div>
             <div class="card">
                 <div class="card-title">Elapsed Time</div>
-                <div class="stat-val" style="color: var(--accent-cyan);" id="train-stat-elapsed">0.0s</div>
+                <div class="stat-val mono text-info" id="train-stat-elapsed">0.0s</div>
                 <div class="stat-desc">Background Job Duration</div>
             </div>
         </div>
 
-        <div id="train-error-banner" style="display: none; padding: 0.75rem 1rem; margin-bottom: 1rem; background: rgba(244, 63, 94, 0.15); border: 1px solid var(--accent-rose); border-radius: 8px; color: #fca5a5; font-size: 13px;"></div>
+        <div id="train-error-banner" class="alert alert-danger" hidden></div>
 
         <div class="card">
-            <div class="card-title">Real-Time Loss & Accuracy Learning Curves</div>
-            <div id="training-curves-chart" style="width: 100%; height: 380px;"></div>
+            <div class="card-title">Real-Time Loss &amp; Accuracy Learning Curves</div>
+            <div id="training-curves-chart" class="chart-box-lg"></div>
         </div>
 
         <div id="evaluation-results-container"></div>
@@ -185,12 +187,15 @@
         const cb = document.getElementById("train-idec-mode");
         const sec = document.getElementById("idec-params-section");
         if (sec) {
-            sec.style.display = cb && cb.checked ? "block" : "none";
+            const show = Boolean(cb && cb.checked);
+            sec.hidden = !show;
+            sec.style.display = show ? "block" : "none";
         }
     }
     window.toggleIdecParamsSection = toggleIdecParamsSection;
 
     async function initTrainingView() {
+        toggleIdecParamsSection();
         monitor = new TrainingMonitor("training-curves-chart");
 
         async function loadModelLayers(modelId) {
@@ -207,9 +212,11 @@
 
                 const container = document.getElementById("layers-freeze-list");
                 if (layers.length === 0) {
-                    container.innerHTML = `<div style="font-size: 12px; color: var(--text-muted); text-align: center; padding: 1rem;">Katman bilgisi bulunamadı.</div>`;
+                    container.innerHTML = `<div class="text-xs text-muted text-center p-4">No layer metadata available.</div>`;
                     return;
                 }
+
+                const iconFn = (window.SignalML && typeof window.SignalML.icon === "function") ? window.SignalML.icon.bind(window.SignalML) : (() => "");
 
                 container.innerHTML = layers.map((l, idx) => {
                     const lName = l.layer_name || l.name || `layer_${idx}`;
@@ -220,19 +227,19 @@
                     const params = (l.params || 0).toLocaleString();
 
                     return `
-                        <div style="display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 12px;">
-                            <div style="display: flex; align-items: center; gap: 8px; overflow: hidden;">
-                                <input type="checkbox" class="layer-trainable-toggle" data-layer-name="${lName}" data-layer-type="${lType}" ${isTrainable ? "checked" : ""} ${isInput ? "disabled" : ""} style="cursor: pointer;">
-                                <div style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                        <div class="freeze-layer-row row-between py-1 px-2 border-b text-xs">
+                            <label class="check min-w-0">
+                                <input type="checkbox" class="layer-trainable-toggle" data-layer-name="${lName}" data-layer-type="${lType}" ${isTrainable ? "checked" : ""} ${isInput ? "disabled" : ""}>
+                                <span class="truncate">
                                     <strong>${customName}</strong>
-                                    <span style="color: var(--text-muted); font-size: 11px;">(${lType})</span>
-                                </div>
-                            </div>
-                            <div style="display: flex; align-items: center; gap: 6px; font-size: 11px;">
-                                <span class="layer-status-pill" style="padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; ${isTrainable ? 'background: rgba(34, 197, 94, 0.2); color: #4ade80;' : 'background: rgba(239, 68, 68, 0.2); color: #f87171;'}">
-                                    ${isTrainable ? 'Trainable' : 'Frozen 🔒'}
+                                    <span class="text-muted">(${lType})</span>
                                 </span>
-                                <span style="color: #64748b; font-family: var(--font-mono);">${params} p</span>
+                            </label>
+                            <div class="row shrink-0">
+                                <span class="layer-status-pill badge ${isTrainable ? 'badge-success' : 'badge-danger'}">
+                                    ${isTrainable ? `${iconFn('lock-open', 'icon-xs')} <span>Trainable</span>` : `${iconFn('lock', 'icon-xs')} <span>Frozen</span>`}
+                                </span>
+                                <span class="text-muted mono">${params} p</span>
                             </div>
                         </div>
                     `;
@@ -240,16 +247,15 @@
 
                 container.querySelectorAll(".layer-trainable-toggle").forEach(cb => {
                     cb.onchange = (e) => {
-                        const pill = e.target.closest("div[style*='display: flex']").parentElement.querySelector(".layer-status-pill");
+                        const row = e.target.closest(".freeze-layer-row");
+                        const pill = row ? row.querySelector(".layer-status-pill") : null;
                         if (pill) {
                             if (e.target.checked) {
-                                pill.textContent = "Trainable";
-                                pill.style.background = "rgba(34, 197, 94, 0.2)";
-                                pill.style.color = "#4ade80";
+                                pill.className = "layer-status-pill badge badge-success";
+                                pill.innerHTML = `${iconFn('lock-open', 'icon-xs')} <span>Trainable</span>`;
                             } else {
-                                pill.textContent = "Frozen 🔒";
-                                pill.style.background = "rgba(239, 68, 68, 0.2)";
-                                pill.style.color = "#f87171";
+                                pill.className = "layer-status-pill badge badge-danger";
+                                pill.innerHTML = `${iconFn('lock', 'icon-xs')} <span>Frozen</span>`;
                             }
                         }
                     };
@@ -334,7 +340,7 @@
                     cb.dispatchEvent(new Event("change"));
                 }
             });
-            SignalML.toast("1D-CNN ve Pooling katmanları donduruldu.", "info");
+            SignalML.toast("1D-CNN and pooling layers frozen", "info");
         };
 
         document.getElementById("unfreeze-all-btn").onclick = () => {
@@ -344,13 +350,13 @@
                     cb.dispatchEvent(new Event("change"));
                 }
             });
-            SignalML.toast("Tüm katmanlar eğitilebilir yapıldı.", "info");
+            SignalML.toast("All layers set to trainable", "info");
         };
 
         document.getElementById("save-freeze-btn").onclick = async () => {
             const modelId = document.getElementById("train-model-select").value;
             if (!modelId) {
-                SignalML.toast("Lütfen model seçin", "error");
+                SignalML.toast("Please select a model", "error");
                 return;
             }
             const frozenLayers = [];
@@ -370,14 +376,14 @@
                 });
                 const data = await SignalML.safeJson(res);
                 if (res.ok) {
-                    SignalML.toast(`Dondurma ayarları kaydedildi! Eğitilebilir: ${data.trainable_params.toLocaleString()}`, "success");
+                    SignalML.toast(`Freeze state saved. Trainable: ${data.trainable_params.toLocaleString()}`, "success");
                     document.getElementById("freeze-trainable-count").textContent = (data.trainable_params || 0).toLocaleString();
                     document.getElementById("freeze-nontrainable-count").textContent = (data.non_trainable_params || 0).toLocaleString();
                 } else {
-                    SignalML.toast(`Kayıt hatası: ${data.detail || "Hata oluştu"}`, "error");
+                    SignalML.toast(`Save error: ${data.detail || "Failed to save"}`, "error");
                 }
             } catch (e) {
-                SignalML.toast(`Hata: ${e.message}`, "error");
+                SignalML.toast(`Error: ${e.message}`, "error");
             }
         };
 

@@ -10,6 +10,9 @@ class TrainingMonitor {
     }
 
     initChart() {
+        if (window.SignalML && typeof window.SignalML.chartTheme === "function") {
+            window.SignalML.chartTheme();
+        }
         this.chart = Highcharts.chart(this.chartContainerId, {
             chart: {
                 type: "spline",
@@ -18,29 +21,24 @@ class TrainingMonitor {
             title: { text: null },
             credits: { enabled: false },
             xAxis: {
-                title: { text: "Epoch", style: { color: "#94a3b8" } },
-                labels: { style: { color: "#94a3b8" } },
-                gridLineColor: "#1e293b",
+                title: { text: "Epoch" },
                 allowDecimals: false
             },
             yAxis: [
                 {
                     // yAxis 0 (Left): Loss
-                    title: { text: "Loss (Kayıp)", style: { color: "#38bdf8" } },
+                    title: { text: "Loss" },
                     labels: {
-                        style: { color: "#94a3b8" },
                         formatter: function () {
                             return (typeof this.value === "number") ? this.value.toFixed(4) : this.value;
                         }
                     },
-                    gridLineColor: "#1e293b",
                     min: 0
                 },
                 {
                     // yAxis 1 (Right): Accuracy
-                    title: { text: "Accuracy (Doğruluk)", style: { color: "#34d399" } },
+                    title: { text: "Accuracy" },
                     labels: {
-                        style: { color: "#34d399" },
                         formatter: function () {
                             if (typeof this.value !== "number") return this.value;
                             return (this.value <= 1.0) ? (this.value * 100).toFixed(0) + "%" : this.value.toFixed(2);
@@ -52,29 +50,23 @@ class TrainingMonitor {
                     gridLineWidth: 0
                 }
             ],
-            legend: {
-                itemStyle: { color: "#f1f5f9" }
-            },
             tooltip: {
                 shared: true,
-                backgroundColor: "#191f2e",
-                borderColor: "#334155",
-                style: { color: "#f8fafc" },
                 valueDecimals: 4,
                 pointFormatter: function () {
-                    const isAcc = this.series.name.toLowerCase().includes("accur") || this.series.name.toLowerCase().includes("doğruluk");
+                    const isAcc = this.series.name.toLowerCase().includes("accur");
                     let valStr = (typeof this.y === "number") ? this.y.toFixed(4) : this.y;
                     if (isAcc && typeof this.y === "number" && this.y <= 1.0) {
                         valStr += ` (${(this.y * 100).toFixed(2)}%)`;
                     }
-                    return `<span style="color:${this.color}">●</span> ${this.series.name}: <b>${valStr}</b><br/>`;
+                    return `<span style="color:${this.color}">\u25CF</span> ${this.series.name}: <b>${valStr}</b><br/>`;
                 }
             },
             series: [
-                { name: "Training Loss", data: [], color: "#38bdf8", yAxis: 0 },
-                { name: "Validation Loss", data: [], color: "#f43f5e", dashStyle: "ShortDash", yAxis: 0 },
-                { name: "Training Accuracy", data: [], color: "#34d399", yAxis: 1 },
-                { name: "Validation Accuracy", data: [], color: "#a78bfa", dashStyle: "ShortDash", yAxis: 1 }
+                { name: "Training Loss", data: [], color: "#0090ff", yAxis: 0 },
+                { name: "Validation Loss", data: [], color: "#e5484d", dashStyle: "ShortDash", yAxis: 0 },
+                { name: "Training Accuracy", data: [], color: "#30a46c", yAxis: 1 },
+                { name: "Validation Accuracy", data: [], color: "#8e4ec6", dashStyle: "ShortDash", yAxis: 1 }
             ]
         });
     }
@@ -129,7 +121,7 @@ class TrainingMonitor {
             const data = await SignalML.safeJson(res);
             this.activeJobId = data.job_id;
             if (config.resume) {
-                SignalML.toast("Eğitim kaldığı yerden devam ettiriliyor (Resume Training)...", "info");
+                SignalML.toast("Resuming training job...", "info");
             } else {
                 SignalML.toast("Training dispatched in background thread!", "success");
             }
@@ -202,9 +194,12 @@ class TrainingMonitor {
         const errBanner = document.getElementById("train-error-banner");
         if (errBanner) {
             if (status.error || status.status === "failed") {
-                errBanner.style.display = "block";
-                errBanner.innerHTML = `<strong>⚠️ Eğitim Durumu:</strong> ${status.error || "Bilinmeyen bir hata nedeniyle eğitim tamamlanamadı."}`;
+                const warnIcon = (window.SignalML && typeof window.SignalML.icon === "function") ? window.SignalML.icon("triangle-exclamation-point") : "";
+                errBanner.hidden = false;
+                errBanner.style.display = "flex";
+                errBanner.innerHTML = `${warnIcon}<div class="alert-body"><span class="alert-title">Training status:</span> ${status.error || "Training failed due to an unexpected error."}</div>`;
             } else {
+                errBanner.hidden = true;
                 errBanner.style.display = "none";
             }
         }
@@ -229,7 +224,7 @@ class TrainingMonitor {
                 this.chart.series[3].update({ name: "Validation Accuracy" }, false);
             }
             if (this.chart.yAxis[1]) {
-                this.chart.yAxis[1].update({ title: { text: "Accuracy (Doğruluk)" }, max: 1.0 }, false);
+                this.chart.yAxis[1].update({ title: { text: "Accuracy" }, max: 1.0 }, false);
             }
 
             const lastAcc = accData[accData.length - 1];
@@ -248,7 +243,7 @@ class TrainingMonitor {
                 this.chart.series[3].update({ name: "Validation MAE (Error)" }, false);
             }
             if (this.chart.yAxis[1]) {
-                this.chart.yAxis[1].update({ title: { text: "MAE (Hata)" }, max: null }, false);
+                this.chart.yAxis[1].update({ title: { text: "MAE (Error)" }, max: null }, false);
             }
 
             metricLabel = "Mean Absolute Error";
@@ -292,15 +287,18 @@ class TrainingMonitor {
         const container = document.getElementById("evaluation-results-container");
         if (!container) return;
 
+        const iconFn = (window.SignalML && typeof window.SignalML.icon === "function") ? window.SignalML.icon.bind(window.SignalML) : (() => "");
+
         let html = `
-            <div class="card" style="margin-top: 1.5rem;">
+            <div class="card">
                 <div class="card-title">Model Evaluation Metrics</div>
         `;
 
         if (evalData.error) {
             html += `
-                <div style="padding: 0.75rem 1rem; background: rgba(244, 63, 94, 0.15); border: 1px solid var(--accent-rose); border-radius: 6px; color: #fca5a5; margin-bottom: 1rem; font-size: 13px;">
-                    <strong>Evaluation Warning:</strong> ${evalData.error}
+                <div class="alert alert-danger mb-4">
+                    ${iconFn("triangle-exclamation-point")}
+                    <div class="alert-body"><span class="alert-title">Evaluation warning:</span> ${evalData.error}</div>
                 </div>
             `;
         }
@@ -312,31 +310,31 @@ class TrainingMonitor {
                 : "—";
 
             html += `
-                <div class="grid-cards" style="margin-bottom: 1.25rem;">
+                <div class="grid-cards mb-4">
                     <div class="card">
-                        <div class="card-title">Küme Sayısı (K)</div>
-                        <div class="stat-val" style="color: var(--accent-cyan, #38bdf8);">${evalData.n_clusters}</div>
+                        <div class="card-title">Clusters (K)</div>
+                        <div class="stat-val mono text-info">${evalData.n_clusters}</div>
                         <div class="stat-desc">Learned Clusters</div>
                     </div>
                     <div class="card">
-                        <div class="card-title">Ortalama Küme Güveni</div>
-                        <div class="stat-val" style="color: var(--accent-green, #4ade80);">${confStr}</div>
+                        <div class="card-title">Mean Cluster Confidence</div>
+                        <div class="stat-val mono text-success">${confStr}</div>
                         <div class="stat-desc">Mean Confidence (max Q)</div>
                     </div>
                     ${evalData.silhouette_score != null ? `
                     <div class="card">
-                        <div class="card-title">Silhouette Skoru</div>
-                        <div class="stat-val" style="color: #a78bfa;">${typeof evalData.silhouette_score === "number" ? evalData.silhouette_score.toFixed(4) : evalData.silhouette_score}</div>
+                        <div class="card-title">Silhouette Score</div>
+                        <div class="stat-val mono">${typeof evalData.silhouette_score === "number" ? evalData.silhouette_score.toFixed(4) : evalData.silhouette_score}</div>
                         <div class="stat-desc">Separation (-1 to +1)</div>
                     </div>` : ""}
                     <div class="card">
-                        <div class="card-title">Rekonstrüksiyon MSE</div>
-                        <div class="stat-val" style="font-size: 20px; font-family: var(--font-mono); color: #f59e0b;">${evalData.reconstruction_mse !== undefined ? evalData.reconstruction_mse : "—"}</div>
+                        <div class="card-title">Reconstruction MSE</div>
+                        <div class="stat-val mono text-warning">${evalData.reconstruction_mse !== undefined ? evalData.reconstruction_mse : "—"}</div>
                         <div class="stat-desc">AE Reconstruction Loss</div>
                     </div>
                     <div class="card">
-                        <div class="card-title">Rekonstrüksiyon MAE</div>
-                        <div class="stat-val" style="font-size: 20px; font-family: var(--font-mono); color: #f59e0b;">${evalData.reconstruction_mae !== undefined ? evalData.reconstruction_mae : "—"}</div>
+                        <div class="card-title">Reconstruction MAE</div>
+                        <div class="stat-val mono text-warning">${evalData.reconstruction_mae !== undefined ? evalData.reconstruction_mae : "—"}</div>
                         <div class="stat-desc">AE Reconstruction MAE</div>
                     </div>
                 </div>
@@ -348,14 +346,14 @@ class TrainingMonitor {
             const totalSamples = clusterEntries.reduce((sum, [, count]) => sum + (Number(count) || 0), 0);
 
             if (clusterEntries.length > 0) {
-                const palette = ["#38bdf8", "#818cf8", "#c084fc", "#f472b6", "#fb7185", "#fb923c", "#facc15", "#4ade80", "#2dd4bf", "#94a3b8"];
+                const palette = ["#0090ff", "#30a46c", "#ffc53d", "#e5484d", "#8e4ec6", "#00b8d9", "#f76b15", "#a0a7b4"];
                 html += `
-                    <div style="margin-bottom: 1.25rem; background: rgba(15, 23, 42, 0.4); border: 1px solid #1e293b; border-radius: 8px; padding: 1rem;">
-                        <div style="font-weight: 600; font-size: 14px; margin-bottom: 0.75rem; display: flex; justify-content: space-between; align-items: center;">
-                            <span>📊 Küme Dağılımı (Cluster Distribution)</span>
-                            <span style="font-size: 12px; color: var(--text-muted);">Toplam: ${totalSamples.toLocaleString()} örnek</span>
+                    <div class="tile mb-4">
+                        <div class="row-between mb-3">
+                            <span class="row fw-600 text-sm">${iconFn("chart-column", "icon-sm")} <span>Cluster Distribution</span></span>
+                            <span class="text-xs text-muted mono">Total: ${totalSamples.toLocaleString()} samples</span>
                         </div>
-                        <div style="display: flex; flex-direction: column; gap: 8px;">
+                        <div class="stack-sm">
                 `;
 
                 clusterEntries.forEach(([cLabel, count], idx) => {
@@ -364,12 +362,12 @@ class TrainingMonitor {
                     const color = palette[idx % palette.length];
                     html += `
                         <div>
-                            <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 3px;">
-                                <span><strong style="color: ${color};">Cluster ${cLabel}</strong></span>
-                                <span><span style="font-family: var(--font-mono); font-weight: 600;">${cnt.toLocaleString()}</span> örnek (${pct}%)</span>
+                            <div class="row-between text-xs mb-1">
+                                <span class="row"><span class="status-dot" style="background: ${color};"></span><strong>Cluster ${cLabel}</strong></span>
+                                <span class="mono"><span class="fw-600">${cnt.toLocaleString()}</span> samples (${pct}%)</span>
                             </div>
-                            <div style="background: rgba(255,255,255,0.06); height: 8px; border-radius: 4px; overflow: hidden;">
-                                <div style="background: ${color}; width: ${pct}%; height: 100%; border-radius: 4px; transition: width 0.4s ease;"></div>
+                            <div class="progress progress-sm">
+                                <div class="progress-bar" style="background: ${color}; width: ${pct}%;"></div>
                             </div>
                         </div>
                     `;
@@ -383,38 +381,38 @@ class TrainingMonitor {
 
             // Action Buttons to Clustering and NN Builder
             html += `
-                <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 1rem;">
-                    <a href="/clustering" class="btn btn-primary" style="text-decoration: none; display: inline-flex; align-items: center; gap: 6px;">
-                        🌐 Clustering & 3D PCA Sayfasında İncele
+                <div class="cluster mt-3">
+                    <a href="/clustering" class="btn btn-primary">
+                        ${iconFn("orbit")} <span>Inspect in Clustering &amp; 3D PCA</span>
                     </a>
-                    <a href="/nn-builder" class="btn btn-secondary" style="text-decoration: none; display: inline-flex; align-items: center; gap: 6px;">
-                        🪄 NN Model Sihirbazı
+                    <a href="/nn-builder" class="btn btn-secondary">
+                        ${iconFn("wand-sparkles")} <span>Architecture wizard</span>
                     </a>
                 </div>
             `;
         } else if (evalData.accuracy !== undefined && evalData.accuracy !== null) {
             html += `
-                <div class="grid-cards" style="margin-bottom: 1rem;">
+                <div class="grid-cards mb-4">
                     <div class="card">
                         <div class="card-title">Test Accuracy</div>
-                        <div class="stat-val">${(evalData.accuracy * 100).toFixed(2)}%</div>
+                        <div class="stat-val mono">${(evalData.accuracy * 100).toFixed(2)}%</div>
                     </div>
                 </div>
             `;
         } else if (evalData.rmse !== undefined && evalData.rmse !== null) {
             html += `
-                <div class="grid-cards" style="margin-bottom: 1rem;">
+                <div class="grid-cards mb-4">
                     <div class="card">
                         <div class="card-title">RMSE</div>
-                        <div class="stat-val">${evalData.rmse}</div>
+                        <div class="stat-val mono">${evalData.rmse}</div>
                     </div>
                     <div class="card">
                         <div class="card-title">MAE</div>
-                        <div class="stat-val">${evalData.mae}</div>
+                        <div class="stat-val mono">${evalData.mae}</div>
                     </div>
                     <div class="card">
-                        <div class="card-title">R² Score</div>
-                        <div class="stat-val">${evalData.r2}</div>
+                        <div class="card-title">R&sup2; Score</div>
+                        <div class="stat-val mono">${evalData.r2}</div>
                     </div>
                 </div>
             `;
@@ -423,20 +421,20 @@ class TrainingMonitor {
         // Confusion matrix if available
         if (evalData.confusion_matrix) {
             html += `
-                <div style="font-weight: 600; margin-bottom: 0.5rem;">Confusion Matrix</div>
+                <div class="section-title">Confusion Matrix</div>
                 <div class="table-responsive">
                     <table class="data-table">
                         <thead>
                             <tr>
                                 <th>True \\ Pred</th>
-                                ${evalData.class_labels.map(l => `<th>Class ${l}</th>`).join("")}
+                                ${evalData.class_labels.map(l => `<th class="num">Class ${l}</th>`).join("")}
                             </tr>
                         </thead>
                         <tbody>
                             ${evalData.confusion_matrix.map((row, i) => `
                                 <tr>
                                     <td><strong>Class ${evalData.class_labels[i]}</strong></td>
-                                    ${row.map(val => `<td style="font-family: var(--font-mono); font-weight: 600;">${val}</td>`).join("")}
+                                    ${row.map(val => `<td class="num fw-600">${val}</td>`).join("")}
                                 </tr>
                             `).join("")}
                         </tbody>

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import icon %}
 
 {% block title %}Visual Workflow Builder — SignalML{% endblock %}
 
@@ -6,14 +7,14 @@
 <div class="page-header">
     <div>
         <h1 class="page-title">Visual Workflow Builder</h1>
-        <p class="page-desc">General-purpose DAG workflow canvas (Data &rarr; Signal Ops &rarr; ML Features &rarr; Clustering &rarr; Export)</p>
+        <p class="page-desc">General-purpose DAG workflow canvas (Data {{ icon('arrow-right', 'icon-xs') }} Signal Ops {{ icon('arrow-right', 'icon-xs') }} ML Features {{ icon('arrow-right', 'icon-xs') }} Clustering {{ icon('arrow-right', 'icon-xs') }} Export)</p>
     </div>
-    <div style="display: flex; gap: 8px;">
-        <a href="/nn-builder" class="btn btn-primary" style="background: linear-gradient(135deg, var(--accent-blue), #8b5cf6); border: none; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; font-weight: 600;">
-            🪄 Model Sihirbazı (NN Builder)
+    <div class="page-actions">
+        <a href="/nn-builder" class="btn btn-secondary">
+            {{ icon('wand-sparkles') }} <span>NN Builder</span>
         </a>
         <button class="btn btn-secondary" onclick="wfEditor.validateWorkflow()">Validate DAG</button>
-        <button class="btn btn-primary" onclick="wfEditor.executeWorkflow()">▶ Execute Workflow</button>
+        <button class="btn btn-primary" onclick="wfEditor.executeWorkflow()">{{ icon('play') }} <span>Execute workflow</span></button>
     </div>
 </div>
 
@@ -26,7 +27,7 @@
         </div>
         <div class="palette-list" id="wf-palette-list">
             <div class="node-category-group">
-                <div class="category-title">Data & I/O</div>
+                <div class="category-title">Data &amp; I/O</div>
                 <div class="node-item" onclick="addWfNode('data_source')">Data Source <span>+</span></div>
                 <div class="node-item" onclick="addWfNode('csv_parser')">CSV / TXT Parser <span>+</span></div>
             </div>
@@ -36,17 +37,24 @@
                 <div class="node-item" onclick="addWfNode('signal_truncate')">Signal Truncate <span>+</span></div>
                 <div class="node-item" onclick="addWfNode('signal_pad')">Signal Pad <span>+</span></div>
                 <div class="node-item" onclick="addWfNode('peak_window')">Peak Window <span>+</span></div>
+                <div class="node-item" onclick="addWfNode('reverse_signals')">Reverse Filter <span>+</span></div>
+                <div class="node-item" onclick="addWfNode('subtract_median')">Median Baseline <span>+</span></div>
+                <div class="node-item" onclick="addWfNode('subtract_mode')">Mode Baseline <span>+</span></div>
+                <div class="node-item" onclick="addWfNode('subtract_gaussian_peak')">Gaussian Peak Baseline <span>+</span></div>
+                <div class="node-item" onclick="addWfNode('scale_min')">Min Scaler <span>+</span></div>
+                <div class="node-item" onclick="addWfNode('scale_max')">Max Scaler <span>+</span></div>
                 <div class="node-item" onclick="addWfNode('normalize')">Normalize <span>+</span></div>
             </div>
             <div class="node-category-group">
-                <div class="category-title">Features & Models</div>
+                <div class="category-title">Features &amp; Models</div>
                 <div class="node-item" onclick="addWfNode('feature_extractor')">Feature Extractor <span>+</span></div>
-                <a href="/nn-builder" class="node-item" style="color: #c084fc; text-decoration: none; font-weight: 600; border-color: rgba(192, 132, 252, 0.3); background: rgba(192, 132, 252, 0.08);">
-                    🪄 Model Sihirbazı (Autoencoder / U-Net) <span>&rarr;</span>
+                <a href="/nn-builder" class="node-item text-accent fw-600">
+                    <span class="row">{{ icon('wand-sparkles', 'icon-sm') }} <span>Open Architecture Wizard</span></span>
+                    {{ icon('arrow-right', 'icon-xs') }}
                 </a>
             </div>
             <div class="node-category-group">
-                <div class="category-title">Clustering & PCA</div>
+                <div class="category-title">Clustering &amp; PCA</div>
                 <div class="node-item" onclick="addWfNode('clustering_kmeans')">K-Means <span>+</span></div>
                 <div class="node-item" onclick="addWfNode('clustering_dbscan')">DBSCAN <span>+</span></div>
                 <div class="node-item" onclick="addWfNode('clustering_idec')">IDEC Deep Clustering <span>+</span></div>
@@ -73,10 +81,11 @@
         <div class="pane-header">Node Inspector</div>
         <div class="inspector-body" id="wf-inspector-body">
             <div class="empty-inspector">
+                {{ icon('sliders-horizontal') }}
                 <p>Click any node in the workflow canvas to configure its properties and view execution logs.</p>
             </div>
         </div>
-        <div id="wf-results-container" style="padding: 0 1rem 1rem 1rem;"></div>
+        <div id="wf-results-container" class="px-3 pb-3"></div>
     </div>
 </div>
 {% endblock %}

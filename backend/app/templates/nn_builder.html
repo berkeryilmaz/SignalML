@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import icon %}
 
 {% block title %}Neural Network Builder — SignalML{% endblock %}
 
@@ -8,18 +9,18 @@
         <h1 class="page-title">Neural Network Builder</h1>
         <p class="page-desc">Design deep architectures with typed tensor ports, automatic Keras Functional API model compilation, and shape inference</p>
     </div>
-    <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-        <button class="btn btn-primary" onclick="openWizardModal()" style="background: linear-gradient(135deg, #2563eb, #7c3aed); border: 1.5px solid rgba(255,255,255,0.3); box-shadow: 0 0 16px rgba(124, 58, 237, 0.6); font-weight: 700; font-size: 13px; padding: 7px 16px; display: inline-flex; align-items: center; gap: 6px; cursor: pointer;">
-            <span style="font-size: 15px;">🪄</span> Model Sihirbazı
+    <div class="page-actions">
+        <button class="btn btn-primary btn-sm" onclick="openWizardModal()">
+            {{ icon('wand-sparkles') }} <span>Architecture wizard</span>
         </button>
-        <button class="btn btn-secondary btn-sm" onclick="openCustomLayerModal()" style="border-color: rgba(192, 132, 252, 0.4); color: #c084fc; font-weight: 600;" title="Keras Özel Katmanlarını Yönet ve Oluştur">
-            <span>🧩</span> Özel Katmanlar
+        <button class="btn btn-secondary btn-sm" onclick="openCustomLayerModal()" title="Manage and create custom Keras layers">
+            {{ icon('blocks') }} <span>Custom layers</span>
         </button>
-        <button class="btn btn-secondary btn-sm" onclick="nnEditorInstance.validateGraph()" style="border-color: rgba(56, 189, 248, 0.4); color: #38bdf8; font-weight: 600;" title="Katman Tensör Boyutlarını Doğrula ve Parametreleri Hesapla">
-            <span>🔍</span> Check & Infer Shapes
+        <button class="btn btn-secondary btn-sm" onclick="nnEditorInstance.validateGraph()" title="Validate tensor shapes and calculate parameters">
+            {{ icon('search') }} <span>Infer shapes</span>
         </button>
-        <button class="btn btn-primary btn-sm" onclick="openBuildModelModal()" style="background: linear-gradient(135deg, #10b981, #059669); border: none; font-weight: 700; padding: 7px 16px; box-shadow: 0 0 14px rgba(16, 185, 129, 0.4);">
-            <span>🚀</span> Build & Save Model
+        <button class="btn btn-primary btn-sm" onclick="openBuildModelModal()">
+            {{ icon('play') }} <span>Build &amp; save</span>
         </button>
     </div>
 </div>
@@ -27,9 +28,9 @@
 <div class="editor-layout">
     <!-- Left Layer Palette -->
     <div class="palette-pane">
-        <div class="pane-header" style="display: flex; justify-content: space-between; align-items: center;">
+        <div class="pane-header row-between">
             <span>Keras Layer Palette</span>
-            <span class="shape-badge" style="cursor: pointer;" onclick="openWizardModal()">🪄 Sihirbaz</span>
+            <button type="button" class="btn btn-ghost btn-xs" onclick="openWizardModal()">{{ icon('wand-sparkles', 'icon-xs') }} <span>Wizard</span></button>
         </div>
 
         <div class="palette-search">
@@ -37,9 +38,9 @@
         </div>
         <div class="palette-list" id="nn-palette-list">
             <div class="node-category-group">
-                <div class="category-title">Core & IO (Giriş / Çıkış)</div>
+                <div class="category-title">Core &amp; IO</div>
                 <div class="node-item" onclick="addLayerNode('input')">Input <span>+</span></div>
-                <div class="node-item" onclick="addLayerNode('output')" style="color: var(--accent-green); font-weight: 600;">Model Output (Terminal) <span>+</span></div>
+                <div class="node-item text-success fw-600" onclick="addLayerNode('output')">Model Output (Terminal) <span>+</span></div>
                 <div class="node-item" onclick="addLayerNode('dense')">Dense <span>+</span></div>
                 <div class="node-item" onclick="addLayerNode('activation')">Activation <span>+</span></div>
                 <div class="node-item" onclick="addLayerNode('flatten')">Flatten <span>+</span></div>
@@ -50,10 +51,10 @@
                 <div class="node-item" onclick="addLayerNode('unitnorm')">Unit Normalization (L2) <span>+</span></div>
             </div>
             <div class="node-category-group">
-                <div class="category-title">Convolutional & Autoencoder</div>
+                <div class="category-title">1D Convolution</div>
                 <div class="node-item" onclick="addLayerNode('conv1d')">Conv1D <span>+</span></div>
-                <div class="node-item" onclick="addLayerNode('conv1dtranspose')" style="color: var(--accent-cyan);">Conv1DTranspose (Decoder) <span>+</span></div>
-                <div class="node-item" onclick="addLayerNode('upsampling1d')" style="color: var(--accent-cyan);">UpSampling1D (U-Net / AE) <span>+</span></div>
+                <div class="node-item text-info" onclick="addLayerNode('conv1dtranspose')">Conv1DTranspose (Decoder) <span>+</span></div>
+                <div class="node-item text-info" onclick="addLayerNode('upsampling1d')">UpSampling1D (U-Net / AE) <span>+</span></div>
                 <div class="node-item" onclick="addLayerNode('separable_conv1d')">Separable Conv1D <span>+</span></div>
                 <div class="node-item" onclick="addLayerNode('conv2d')">Conv2D <span>+</span></div>
                 <div class="node-item" onclick="addLayerNode('maxpooling1d')">MaxPooling1D <span>+</span></div>
@@ -62,7 +63,7 @@
                 <div class="node-item" onclick="addLayerNode('global_averagepooling1d')">Global AvgPooling1D <span>+</span></div>
             </div>
             <div class="node-category-group">
-                <div class="category-title">Recurrent Time-Series</div>
+                <div class="category-title">Recurrent</div>
                 <div class="node-item" onclick="addLayerNode('lstm')">LSTM <span>+</span></div>
                 <div class="node-item" onclick="addLayerNode('gru')">GRU <span>+</span></div>
                 <div class="node-item" onclick="addLayerNode('simplernn')">SimpleRNN <span>+</span></div>
@@ -70,19 +71,21 @@
                 <div class="node-item" onclick="addLayerNode('timedistributed')">TimeDistributed <span>+</span></div>
             </div>
             <div class="node-category-group">
-                <div class="category-title">Attention & Transformer</div>
+                <div class="category-title">Attention &amp; Transformer</div>
                 <div class="node-item" onclick="addLayerNode('multihead_attention')">MultiHeadAttention <span>+</span></div>
                 <div class="node-item" onclick="addLayerNode('positional_encoding')">Positional Encoding <span>+</span></div>
             </div>
             <div class="node-category-group">
-                <div class="category-title" style="color: #c084fc;">IDEC & Custom Layers</div>
-                <div class="node-item" onclick="addLayerNode('clustering')" style="color: #38bdf8; font-weight: 600;">ClusteringLayer (IDEC) <span>+</span></div>
-                <div class="node-item" onclick="addLayerNode('custom_layer')" style="color: #c084fc; font-weight: 600;">Custom Layer <span>+</span></div>
-                <div class="node-item" onclick="openCustomLayerModal()" style="color: #94a3b8; font-size: 11px; cursor: pointer; text-decoration: underline;">⚙️ Katman Şablonları...</div>
+                <div class="category-title">Clustering &amp; Custom</div>
+                <div class="node-item text-info fw-600" onclick="addLayerNode('clustering')">ClusteringLayer (IDEC) <span>+</span></div>
+                <div class="node-item text-accent fw-600" onclick="addLayerNode('custom_layer')">Custom Layer <span>+</span></div>
+                <div class="node-item text-muted text-xs" onclick="openCustomLayerModal()">
+                    <span class="row">{{ icon('settings', 'icon-xs') }} <span>Layer templates...</span></span>
+                </div>
             </div>
             <div class="node-category-group">
-                <div class="category-title">Tensor Combinations (Skip Connections)</div>
-                <div class="node-item" onclick="addLayerNode('concatenate')" style="color: #fbbf24;">Concatenate (U-Net Skip) <span>+</span></div>
+                <div class="category-title">Merge &amp; Arithmetic</div>
+                <div class="node-item text-warning" onclick="addLayerNode('concatenate')">Concatenate (U-Net Skip) <span>+</span></div>
                 <div class="node-item" onclick="addLayerNode('add')">Add (Residual Skip) <span>+</span></div>
                 <div class="node-item" onclick="addLayerNode('multiply')">Multiply <span>+</span></div>
                 <div class="node-item" onclick="addLayerNode('average')">Average <span>+</span></div>
@@ -94,56 +97,56 @@
     <!-- Center Canvas Area -->
     <div class="canvas-wrapper nn-canvas-wrapper">
         <div class="canvas-toolbar nn-canvas-toolbar">
-            <!-- 1. Left Group: Model Yöneticisi -->
+            <!-- 1. Left Group: Model Manager -->
             <div class="toolbar-group toolbar-group-left">
                 <select id="load-saved-model-select" class="toolbar-select" onchange="handleLoadSavedModel(this.value)">
-                    <option value="">📂 Kayıtlı Model Yükle...</option>
+                    <option value="">Load saved model...</option>
                 </select>
-                <button class="btn btn-secondary toolbar-btn btn-update" id="update-saved-model-btn" onclick="handleUpdateSavedModel()" title="Mevcut loaded model üzerindeki değişiklikleri kaydet" style="display: none;">
-                    💾 Güncelle
+                <button class="btn btn-secondary toolbar-btn btn-update" id="update-saved-model-btn" onclick="handleUpdateSavedModel()" title="Save changes to the currently loaded model" hidden>
+                    {{ icon('save') }} <span>Update</span>
                 </button>
-                <button class="btn btn-secondary toolbar-btn btn-delete" id="delete-saved-model-btn" onclick="handleDeleteSavedModel()" title="Seçili kayıtlı modeli sil" style="display: none;">
-                    🗑️ Sil
+                <button class="btn btn-secondary toolbar-btn btn-delete" id="delete-saved-model-btn" onclick="handleDeleteSavedModel()" title="Delete selected saved model" hidden>
+                    {{ icon('trash') }} <span>Delete</span>
                 </button>
-                <button class="btn btn-secondary toolbar-btn" onclick="triggerImportGraphFile()" title="Mimari veya Keras modelini (.json, .keras, .h5) yükle">
-                    📥 İçe Aktar
+                <button class="btn btn-secondary toolbar-btn" onclick="triggerImportGraphFile()" title="Import architecture or Keras model (.json, .keras, .h5)">
+                    {{ icon('upload') }} <span>Import</span>
                 </button>
-                <input type="file" id="import-graph-input" accept=".json,.keras,.h5" style="display:none;" onchange="handleImportFileInput(event)">
+                <input type="file" id="import-graph-input" accept=".json,.keras,.h5" hidden onchange="handleImportFileInput(event)">
             </div>
 
             <div class="toolbar-divider"></div>
 
-            <!-- 2. Center Group: Tuval İşlemleri -->
+            <!-- 2. Center Group: Canvas Operations -->
             <div class="toolbar-group toolbar-group-center">
-                <button class="btn btn-secondary toolbar-btn btn-wizard" onclick="openWizardModal()" title="Hazır derin öğrenme mimarisi sihirbazı">
-                    🪄 Sihirbaz
+                <button class="btn btn-secondary toolbar-btn btn-wizard" onclick="openWizardModal()" title="Pre-built deep learning architecture wizard">
+                    {{ icon('wand-sparkles') }} <span>Wizard</span>
                 </button>
-                <button class="btn btn-secondary toolbar-btn" onclick="nnEditorInstance.autoLayout()" title="Düğümleri otomatik hizala">
-                    ✨ Otomatik Hizala
+                <button class="btn btn-secondary toolbar-btn" onclick="nnEditorInstance.autoLayout()" title="Auto-align nodes">
+                    {{ icon('sparkles') }} <span>Auto-layout</span>
                 </button>
-                <button class="btn btn-secondary toolbar-btn btn-validate" id="btn-toolbar-validate" onclick="nnEditorInstance.validateGraph()" title="Tensör boyutlarını doğrula ve parametreleri hesapla">
-                    🔍 Boyut Doğrula
+                <button class="btn btn-secondary toolbar-btn btn-validate" id="btn-toolbar-validate" onclick="nnEditorInstance.validateGraph()" title="Validate tensor shapes and calculate parameters">
+                    {{ icon('search') }} <span>Validate</span>
                 </button>
-                <button class="btn btn-secondary toolbar-btn btn-clear" onclick="clearCanvasGraph()" title="Tuvali temizle">
-                    🧹 Temizle
+                <button class="btn btn-secondary toolbar-btn btn-clear" onclick="clearCanvasGraph()" title="Clear canvas">
+                    {{ icon('eraser') }} <span>Clear</span>
                 </button>
-                <button class="btn btn-secondary toolbar-btn" onclick="toggleExpandCanvas()" title="Kenar panellerini gizle/göster">
-                    ⛶ Geniş Tuval
+                <button class="btn btn-secondary toolbar-btn" id="expand-canvas-btn" onclick="toggleExpandCanvas()" title="Show/hide side panels">
+                    {{ icon('maximize-2') }} <span>Expand</span>
                 </button>
             </div>
 
             <div class="toolbar-divider"></div>
 
-            <!-- 3. Right Group: Dışa Aktar & Analiz -->
+            <!-- 3. Right Group: Export & Analysis -->
             <div class="toolbar-group toolbar-group-right">
-                <button class="btn btn-secondary toolbar-btn" onclick="exportGraphJSON()" title="Mevcut mimariyi Graph JSON olarak indir">
-                    📤 JSON
+                <button class="btn btn-secondary toolbar-btn" onclick="exportGraphJSON()" title="Download current architecture as Graph JSON">
+                    {{ icon('download') }} <span>Export JSON</span>
                 </button>
-                <button class="btn btn-secondary toolbar-btn btn-python" onclick="openPythonExportModal()" title="Keras Functional API Python Kodunu Görüntüle ve İndir">
-                    🐍 Python
+                <button class="btn btn-secondary toolbar-btn btn-python" onclick="openPythonExportModal()" title="View and download Keras Functional API Python code">
+                    {{ icon('file-code') }} <span>Python code</span>
                 </button>
-                <button class="btn btn-secondary toolbar-btn btn-idec" onclick="openIdecProbabilitiesModal()" title="IDEC Küme Olasılıklarını İncele & CSV İndir">
-                    📊 IDEC Analiz
+                <button class="btn btn-secondary toolbar-btn btn-idec" onclick="openIdecProbabilitiesModal()" title="Inspect IDEC cluster probabilities and export CSV">
+                    {{ icon('chart-column') }} <span>IDEC analysis</span>
                 </button>
             </div>
         </div>
@@ -152,17 +155,17 @@
             <canvas id="nn-canvas" class="node-canvas"></canvas>
 
             <!-- Drag & Drop Zone Overlay -->
-            <div id="canvas-dropzone-overlay" class="canvas-dropzone-overlay" style="display: none;">
-                <div style="font-size: 48px; margin-bottom: 12px; filter: drop-shadow(0 0 14px rgba(56, 189, 248, 0.8));">📥</div>
-                <div style="font-size: 18px; font-weight: 700; color: #fff; margin-bottom: 6px;">Model Mimarisini Tuvale Bırakın</div>
-                <div style="font-size: 13px; color: #94a3b8; max-width: 440px; text-align: center; line-height: 1.5;">
-                    Önceden export aldığınız <strong>Graph JSON</strong>, <strong>Keras Mimarisi (.json)</strong> veya <strong>Keras Modeli (.keras, .h5)</strong> dosyasını buraya bırakın.
+            <div id="canvas-dropzone-overlay" class="canvas-dropzone-overlay" hidden>
+                {{ icon('upload', 'icon-xl') }}
+                <div class="text-title">Drop model architecture onto canvas</div>
+                <div class="text-body text-secondary max-w-sm text-center">
+                    Drop an exported <strong>Graph JSON</strong>, <strong>Keras Architecture (.json)</strong>, or <strong>Keras Model (.keras, .h5)</strong> file here.
                 </div>
             </div>
 
-            <!-- Subtle drag & drop hint badge at bottom-right (replaces intrusive floating wizard) -->
+            <!-- Subtle drag & drop hint badge at bottom-right -->
             <div class="canvas-hint-badge">
-                💡 .json / .keras dosyasını tuvale sürükleyebilirsiniz
+                {{ icon('info', 'icon-xs') }} <span>Drag &amp; drop .json / .keras files onto canvas</span>
             </div>
         </div>
     </div>
@@ -172,265 +175,267 @@
         <div class="pane-header">Layer Parameter Inspector</div>
         <div class="inspector-body" id="nn-inspector-body">
             <div class="empty-inspector">
+                {{ icon('layers') }}
                 <p>Click any layer node in the canvas to inspect its parameters, change units, and view output shapes.</p>
             </div>
         </div>
-        <div id="shapes-summary-container" style="padding: 0 1rem 1rem 1rem;"></div>
+        <div id="shapes-summary-container" class="px-3 pb-3"></div>
     </div>
 </div>
 
 <!-- Architecture Wizard Modal -->
-<div id="wizard-modal" class="modal-overlay" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(5px); z-index: 1000; align-items: center; justify-content: center;">
-    <div class="modal-content card" style="width: 840px; max-width: 95%; max-height: 90vh; overflow-y: auto; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 1.75rem;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.75rem;">
+<div id="wizard-modal" class="modal-overlay" role="dialog" aria-modal="true">
+    <div class="modal modal-xl">
+        <div class="modal-header">
             <div>
-                <h2 style="margin: 0; font-size: 18px; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 8px;">
-                    <span>⚡</span> Model Mimarisi Sihirbazı (Architecture Wizard)
-                </h2>
-                <p style="font-size: 12px; color: var(--text-muted); margin: 4px 0 0 0;">
-                    Autoencoder, 1D U-Net, CNN, LSTM veya Transformer mimarilerini tek tıkla otomatik oluşturun ve bağlayın.
-                </p>
+                <h3 class="modal-title">{{ icon('wand-sparkles') }} <span>Architecture Wizard</span></h3>
+                <p class="text-xs text-muted mt-1">Generate and wire Autoencoder, 1D U-Net, CNN, LSTM, or Transformer architectures in one click.</p>
             </div>
-            <button class="btn btn-secondary btn-sm" onclick="closeWizardModal()" style="padding: 2px 8px;">✕</button>
+            <button type="button" class="btn btn-ghost btn-sm btn-icon modal-close" onclick="closeWizardModal()" aria-label="Close">{{ icon('x') }}</button>
         </div>
 
-        <!-- Step 1: Select Architecture Template -->
-        <div style="font-weight: 600; font-size: 13px; color: var(--accent-cyan); margin-bottom: 8px;">1. Model Mimarisi Seçin:</div>
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; margin-bottom: 1.25rem;" id="wizard-templates-grid">
-            <!-- 1D Conv AE -->
-            <div class="wizard-card active" data-type="conv_ae" onclick="selectWizardTemplate('conv_ae', this)">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-                    <strong style="color: #fff; font-size: 13px;">1D Convolutional Autoencoder</strong>
-                    <span class="shape-badge" style="background: rgba(56, 189, 248, 0.2); color: #38bdf8;">Denoising / AE</span>
+        <div class="modal-body">
+            <!-- Step 1: Select Architecture Template -->
+            <div class="section-title">1. Select architecture template</div>
+            <div class="grid-auto mb-4" id="wizard-templates-grid">
+                <!-- 1D Conv AE -->
+                <div class="wizard-card active" data-type="conv_ae" onclick="selectWizardTemplate('conv_ae', this)">
+                    <div class="row-between mb-1">
+                        <strong class="text-sm text-primary">1D Convolutional Autoencoder</strong>
+                        <span class="badge badge-info">Denoising / AE</span>
+                    </div>
+                    <p class="text-xs text-secondary m-0">
+                        Encoder (Conv1D + MaxPool) &rarr; Bottleneck Latent &rarr; Decoder (UpSampling1D + Conv1D) &rarr; Signal Reconstruction Output.
+                    </p>
                 </div>
-                <p style="font-size: 11px; color: var(--text-secondary); margin: 0;">
-                    Encoder (Conv1D + MaxPool) → Bottleneck Latent → Decoder (UpSampling1D + Conv1D) → Sinyal Yeniden Yapılandırma Çıktısı.
-                </p>
+
+                <!-- 1D U-Net -->
+                <div class="wizard-card" data-type="unet_1d" onclick="selectWizardTemplate('unet_1d', this)">
+                    <div class="row-between mb-1">
+                        <strong class="text-sm text-primary">1D U-Net (Skip Connections)</strong>
+                        <span class="badge badge-warning">U-Net / Seg</span>
+                    </div>
+                    <p class="text-xs text-secondary m-0">
+                        Concatenate skip connections from Encoder levels to Decoder. Preserves sharp peaks and high-frequency details.
+                    </p>
+                </div>
+
+                <!-- Dense AE -->
+                <div class="wizard-card" data-type="dense_ae" onclick="selectWizardTemplate('dense_ae', this)">
+                    <div class="row-between mb-1">
+                        <strong class="text-sm text-primary">Dense / MLP Autoencoder</strong>
+                        <span class="badge badge-accent">Dim Reduction</span>
+                    </div>
+                    <p class="text-xs text-secondary m-0">
+                        Flatten &rarr; Dense Encoder &rarr; Latent Code &rarr; Dense Decoder &rarr; Reshape. For signal compression and anomaly detection.
+                    </p>
+                </div>
+
+                <!-- 1D CNN Classifier -->
+                <div class="wizard-card" data-type="cnn_classifier" onclick="selectWizardTemplate('cnn_classifier', this)">
+                    <div class="row-between mb-1">
+                        <strong class="text-sm text-primary">1D CNN Signal Classifier</strong>
+                        <span class="badge badge-success">Classification</span>
+                    </div>
+                    <p class="text-xs text-secondary m-0">
+                        Conv1D + MaxPool feature extraction &rarr; Global Pooling &rarr; Dense Softmax output.
+                    </p>
+                </div>
+
+                <!-- BiLSTM -->
+                <div class="wizard-card" data-type="bilstm" onclick="selectWizardTemplate('bilstm', this)">
+                    <div class="row-between mb-1">
+                        <strong class="text-sm text-primary">Bidirectional LSTM</strong>
+                        <span class="badge badge-danger">Time Series</span>
+                    </div>
+                    <p class="text-xs text-secondary m-0">
+                        Bidirectional LSTM layer + Unidirectional LSTM + Dense. Captures long-term dependencies and periodic signals.
+                    </p>
+                </div>
+
+                <!-- 1D Transformer -->
+                <div class="wizard-card" data-type="transformer_1d" onclick="selectWizardTemplate('transformer_1d', this)">
+                    <div class="row-between mb-1">
+                        <strong class="text-sm text-primary">1D Transformer (Self-Attention)</strong>
+                        <span class="badge badge-info">Attention</span>
+                    </div>
+                    <p class="text-xs text-secondary m-0">
+                        Projection &rarr; Positional Encoding &rarr; MultiHeadAttention &rarr; Residual Add &rarr; LayerNorm.
+                    </p>
+                </div>
+
+                <!-- 1D-CNN IDEC -->
+                <div class="wizard-card" data-type="idec_cnn" onclick="selectWizardTemplate('idec_cnn', this)">
+                    <div class="row-between mb-1">
+                        <strong class="text-sm text-primary">1D-CNN IDEC (Clustering + AE)</strong>
+                        <span class="badge badge-info">IDEC / 1D-CNN</span>
+                    </div>
+                    <p class="text-xs text-secondary m-0">
+                        1D-CNN Encoder &rarr; Bottleneck &rarr; Dual Output: ClusteringLayer (KLD Clustering) + 1D-CNN Decoder (MSE Reconstruction).
+                    </p>
+                </div>
+
+                <!-- Dense IDEC -->
+                <div class="wizard-card" data-type="idec_dense" onclick="selectWizardTemplate('idec_dense', this)">
+                    <div class="row-between mb-1">
+                        <strong class="text-sm text-primary">Dense / MLP IDEC</strong>
+                        <span class="badge badge-accent">IDEC / Dense</span>
+                    </div>
+                    <p class="text-xs text-secondary m-0">
+                        Dense Encoder &rarr; Bottleneck &rarr; Dual Output: ClusteringLayer (KLD) + Dense Decoder (MSE).
+                    </p>
+                </div>
+
+                <!-- Hybrid 1D-CNN + Tabular -->
+                <div class="wizard-card" data-type="hybrid_cnn_tabular" onclick="selectWizardTemplate('hybrid_cnn_tabular', this)">
+                    <div class="row-between mb-1">
+                        <strong class="text-sm text-primary">Hybrid 1D-CNN + Tabular Model</strong>
+                        <span class="badge badge-warning">Multi-Input / Fusion</span>
+                    </div>
+                    <p class="text-xs text-secondary m-0">
+                        Multi-input architecture: Signal Waveform (1D-CNN) + Tabular Metadata (Dense) &rarr; Concatenate &rarr; Classification Head.
+                    </p>
+                </div>
             </div>
 
-            <!-- 1D U-Net -->
-            <div class="wizard-card" data-type="unet_1d" onclick="selectWizardTemplate('unet_1d', this)">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-                    <strong style="color: #fff; font-size: 13px;">1D U-Net (Skip Connections)</strong>
-                    <span class="shape-badge" style="background: rgba(251, 191, 36, 0.2); color: #fbbf24;">U-Net / Seg</span>
+            <!-- Step 2: Configuration Parameters -->
+            <div class="section-title">2. Configure parameters</div>
+            <div class="grid-4 tile mb-4">
+                <div class="form-group m-0">
+                    <label class="form-label">Sequence length</label>
+                    <input type="number" id="wiz-seq-len" class="form-control mono" value="512" min="16" step="16">
                 </div>
-                <p style="font-size: 11px; color: var(--text-secondary); margin: 0;">
-                    Encoder seviyelerinden Decoder'a Concatenate skip bağlantıları. Tepe noktalarını ve yüksek frekans detaylarını korur.
-                </p>
+                <div class="form-group m-0">
+                    <label class="form-label">Base filters / units</label>
+                    <input type="number" id="wiz-base-filters" class="form-control mono" value="32" min="8" step="8">
+                </div>
+                <div class="form-group m-0" id="wiz-latent-group">
+                    <label class="form-label" id="wiz-latent-label">Bottleneck / latent dim</label>
+                    <input type="number" id="wiz-latent-dim" class="form-control mono" value="16" min="2">
+                </div>
+                <div class="form-group m-0">
+                    <label class="form-label">Activation function</label>
+                    <select id="wiz-activation" class="form-control">
+                        <option value="relu" selected>ReLU</option>
+                        <option value="elu">ELU</option>
+                        <option value="tanh">Tanh</option>
+                    </select>
+                </div>
             </div>
 
-            <!-- Dense AE -->
-            <div class="wizard-card" data-type="dense_ae" onclick="selectWizardTemplate('dense_ae', this)">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-                    <strong style="color: #fff; font-size: 13px;">Dense / MLP Autoencoder</strong>
-                    <span class="shape-badge" style="background: rgba(168, 85, 247, 0.2); color: #a855f7;">Boyut İndirgeme</span>
+            <!-- Architecture Topology Summary Box -->
+            <div id="wizard-summary-box" class="tile">
+                <div class="fw-600 text-primary text-sm mb-1" id="wiz-summary-title">Autoencoder topology:</div>
+                <div id="wiz-summary-desc" class="mono text-xs text-secondary">
+                    Input(512, 1) &rarr; Conv1D(32, k=7) &rarr; MaxPool(2) &rarr; Conv1D(64, k=5) &rarr; MaxPool(2) &rarr; Latent(16) &rarr; UpSampling1D(2) &rarr; Conv1D(64) &rarr; UpSampling1D(2) &rarr; Conv1D(32) &rarr; Output(512, 1)
                 </div>
-                <p style="font-size: 11px; color: var(--text-secondary); margin: 0;">
-                    Flatten → Dense Encoder → Latent Code → Dense Decoder → Reshape. Sinyal sıkıştırma ve anomali tespiti için.
-                </p>
-            </div>
-
-            <!-- 1D CNN Classifier -->
-            <div class="wizard-card" data-type="cnn_classifier" onclick="selectWizardTemplate('cnn_classifier', this)">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-                    <strong style="color: #fff; font-size: 13px;">1D CNN Sinyal Sınıflandırıcı</strong>
-                    <span class="shape-badge" style="background: rgba(52, 211, 153, 0.2); color: #34d399;">Sınıflandırma</span>
-                </div>
-                <p style="font-size: 11px; color: var(--text-secondary); margin: 0;">
-                    Conv1D + MaxPool öznitelik çıkarımı → Global Pooling → Dense Softmax çıkışı.
-                </p>
-            </div>
-
-            <!-- BiLSTM -->
-            <div class="wizard-card" data-type="bilstm" onclick="selectWizardTemplate('bilstm', this)">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-                    <strong style="color: #fff; font-size: 13px;">Bidirectional LSTM</strong>
-                    <span class="shape-badge" style="background: rgba(244, 63, 94, 0.2); color: #f43f5e;">Zaman Serisi</span>
-                </div>
-                <p style="font-size: 11px; color: var(--text-secondary); margin: 0;">
-                    Çift yönlü LSTM katmanı + Tek yönlü LSTM + Dense. Uzun vadeli bağımlılıkları ve periyodik sinyalleri yakalar.
-                </p>
-            </div>
-
-            <!-- 1D Transformer -->
-            <div class="wizard-card" data-type="transformer_1d" onclick="selectWizardTemplate('transformer_1d', this)">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-                    <strong style="color: #fff; font-size: 13px;">1D Transformer (Self-Attention)</strong>
-                    <span class="shape-badge" style="background: rgba(56, 189, 248, 0.2); color: #38bdf8;">Attention</span>
-                </div>
-                <p style="font-size: 11px; color: var(--text-secondary); margin: 0;">
-                    Projeksiyon → Positional Encoding → MultiHeadAttention → Residual Add → LayerNorm.
-                </p>
-            </div>
-
-            <!-- 1D-CNN IDEC -->
-            <div class="wizard-card" data-type="idec_cnn" onclick="selectWizardTemplate('idec_cnn', this)">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-                    <strong style="color: #fff; font-size: 13px;">1D-CNN IDEC (Clustering + AE)</strong>
-                    <span class="shape-badge" style="background: rgba(14, 165, 233, 0.2); color: #38bdf8;">IDEC / 1D-CNN</span>
-                </div>
-                <p style="font-size: 11px; color: var(--text-secondary); margin: 0;">
-                    1D-CNN Encoder → Bottleneck → Çift Çıkış: ClusteringLayer (KLD Kümeleme) + 1D-CNN Decoder (MSE Rekonstrüksiyon).
-                </p>
-            </div>
-
-            <!-- Dense IDEC -->
-            <div class="wizard-card" data-type="idec_dense" onclick="selectWizardTemplate('idec_dense', this)">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-                    <strong style="color: #fff; font-size: 13px;">Dense / MLP IDEC</strong>
-                    <span class="shape-badge" style="background: rgba(168, 85, 247, 0.2); color: #c084fc;">IDEC / Dense</span>
-                </div>
-                <p style="font-size: 11px; color: var(--text-secondary); margin: 0;">
-                    Dense Encoder → Bottleneck → Çift Çıkış: ClusteringLayer (KLD) + Dense Decoder (MSE).
-                </p>
-            </div>
-
-            <!-- Hybrid 1D-CNN + Tabular -->
-            <div class="wizard-card" data-type="hybrid_cnn_tabular" onclick="selectWizardTemplate('hybrid_cnn_tabular', this)">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-                    <strong style="color: #fff; font-size: 13px;">Hibrit 1D-CNN + Tabular Model</strong>
-                    <span class="shape-badge" style="background: rgba(245, 158, 11, 0.2); color: #fbbf24;">Multi-Input / Füzyon</span>
-                </div>
-                <p style="font-size: 11px; color: var(--text-secondary); margin: 0;">
-                    Çok Girişli Mimari: Sinyal Dalga Formu (1D-CNN) + Tabular Metaveri (Dense) → Concatenate → Sınıflandırma Başı.
-                </p>
             </div>
         </div>
 
-        <!-- Step 2: Configuration Parameters -->
-        <div style="font-weight: 600; font-size: 13px; color: var(--accent-cyan); margin-bottom: 8px;">2. Parametreleri Belirleyin:</div>
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 1.25rem; background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px;">
-            <div class="form-group">
-                <label class="form-label">Sinyal Uzunluğu (Seq Length)</label>
-                <input type="number" id="wiz-seq-len" class="form-control" value="512" min="16" step="16">
-            </div>
-            <div class="form-group">
-                <label class="form-label">Başlangıç Filtre / Unit Sayısı</label>
-                <input type="number" id="wiz-base-filters" class="form-control" value="32" min="8" step="8">
-            </div>
-            <div class="form-group" id="wiz-latent-group">
-                <label class="form-label" id="wiz-latent-label">Bottleneck / Latent Boyutu</label>
-                <input type="number" id="wiz-latent-dim" class="form-control" value="16" min="2">
-            </div>
-            <div class="form-group">
-                <label class="form-label">Aktivasyon Fonksiyonu</label>
-                <select id="wiz-activation" class="form-control">
-                    <option value="relu" selected>ReLU</option>
-                    <option value="elu">ELU</option>
-                    <option value="tanh">Tanh</option>
-                </select>
-            </div>
-        </div>
-
-        <!-- Architecture Topology Summary Box -->
-        <div id="wizard-summary-box" style="background: rgba(15, 23, 42, 0.8); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px; margin-bottom: 1.25rem; font-size: 12px; color: var(--text-secondary);">
-            <div style="font-weight: 700; color: #fff; margin-bottom: 4px;" id="wiz-summary-title">Autoencoder Akışı:</div>
-            <div id="wiz-summary-desc" style="font-family: var(--font-mono); font-size: 11px; line-height: 1.6; color: var(--accent-cyan);">
-                Input(512, 1) → Conv1D(32, k=7) → MaxPool(2) → Conv1D(64, k=5) → MaxPool(2) → Latent(16) → UpSampling1D(2) → Conv1D(64) → UpSampling1D(2) → Conv1D(32) → Output(512, 1)
-            </div>
-        </div>
-
-        <div style="display: flex; justify-content: flex-end; gap: 10px;">
-            <button class="btn btn-secondary" onclick="closeWizardModal()">İptal</button>
-            <button class="btn btn-primary" onclick="executeWizardPlacement()" style="background: linear-gradient(135deg, var(--accent-blue), #8b5cf6); border: none; font-weight: 700; padding: 8px 18px;">
-                🚀 Modeli Tuvale Yerleştir (Generate & Connect)
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeWizardModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="executeWizardPlacement()">
+                {{ icon('play') }} <span>Generate &amp; connect on canvas</span>
             </button>
         </div>
     </div>
 </div>
 
 <!-- Build & Save Keras Model Dialog Modal -->
-<div id="build-model-modal" class="modal-overlay" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75); backdrop-filter: blur(4px); z-index: 1000; align-items: center; justify-content: center;">
-    <div class="modal-content card" style="width: 480px; max-width: 90%; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; padding: 1.5rem;">
-        <h3 style="margin: 0 0 1rem 0; font-size: 16px; font-weight: 700; color: #fff;">Build & Save Keras Model</h3>
-        <div class="form-group" style="margin-bottom: 1rem;">
-            <label class="form-label">Model Adı</label>
-            <input type="text" id="save-model-name" class="form-control" value="SignalML Deep Model">
+<div id="build-model-modal" class="modal-overlay" role="dialog" aria-modal="true">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 class="modal-title">{{ icon('layers') }} <span>Build &amp; Save Keras Model</span></h3>
+            <button type="button" class="btn btn-ghost btn-sm btn-icon modal-close" onclick="closeBuildModelModal()" aria-label="Close">{{ icon('x') }}</button>
         </div>
-        <div class="form-group" style="margin-bottom: 1rem;">
-            <label class="form-label">Görev Tipi (Task Type)</label>
-            <select id="save-model-task" class="form-control" onchange="updateLossOptions(this.value)">
-                <option value="reconstruction">Reconstruction / Autoencoder / U-Net (MSE Loss)</option>
-                <option value="classification">Classification (Categorical Cross-Entropy)</option>
-                <option value="regression">Regression (Mean Squared Error)</option>
-                <option value="idec_clustering">IDEC Derin Kümeleme (Clustering + AE)</option>
-            </select>
+        <div class="modal-body">
+            <div class="form-group">
+                <label class="form-label">Model name</label>
+                <input type="text" id="save-model-name" class="form-control" value="SignalML Deep Model">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Task type</label>
+                <select id="save-model-task" class="form-control" onchange="updateLossOptions(this.value)">
+                    <option value="reconstruction">Reconstruction / Autoencoder / U-Net (MSE Loss)</option>
+                    <option value="classification">Classification (Categorical Cross-Entropy)</option>
+                    <option value="regression">Regression (Mean Squared Error)</option>
+                    <option value="idec_clustering">IDEC Deep Clustering (Clustering + AE)</option>
+                </select>
+            </div>
+            <div class="form-group m-0">
+                <label class="form-label">Optimizer</label>
+                <select id="save-model-opt" class="form-control">
+                    <option value="adam" selected>Adam (Recommended)</option>
+                    <option value="adamw">AdamW</option>
+                    <option value="rmsprop">RMSprop</option>
+                    <option value="sgd">SGD</option>
+                </select>
+            </div>
         </div>
-        <div class="form-group" style="margin-bottom: 1.25rem;">
-            <label class="form-label">Optimizer</label>
-            <select id="save-model-opt" class="form-control">
-                <option value="adam" selected>Adam (Önerilen)</option>
-                <option value="adamw">AdamW</option>
-                <option value="rmsprop">RMSprop</option>
-                <option value="sgd">SGD</option>
-            </select>
-        </div>
-        <div style="display: flex; justify-content: flex-end; gap: 8px;">
-            <button class="btn btn-secondary" onclick="closeBuildModelModal()">İptal</button>
-            <button class="btn btn-primary" onclick="executeBuildAndSave()">Compile & Save to Workspace</button>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeBuildModelModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="executeBuildAndSave()">Compile &amp; Save to Workspace</button>
         </div>
     </div>
 </div>
 
 <!-- Custom Layer Studio Modal -->
-<div id="custom-layer-modal" class="modal-overlay" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(5px); z-index: 1000; align-items: center; justify-content: center;">
-    <div class="modal-content card" style="width: 860px; max-width: 95%; max-height: 90vh; overflow-y: auto; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 1.75rem;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.75rem;">
+<div id="custom-layer-modal" class="modal-overlay" role="dialog" aria-modal="true">
+    <div class="modal modal-xl">
+        <div class="modal-header">
             <div>
-                <h2 style="margin: 0; font-size: 18px; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 8px;">
-                    <span>🧩</span> Keras Özel Katman Yöneticisi (Custom Layer Studio)
-                </h2>
-                <p style="font-size: 12px; color: var(--text-muted); margin: 4px 0 0 0;">
-                    Keras 3 / TensorFlow için özel katmanlarınızı (__init__, build, call, get_config) oluşturun ve tuvale ekleyin.
-                </p>
+                <h3 class="modal-title">{{ icon('blocks') }} <span>Custom Layer Studio</span></h3>
+                <p class="text-xs text-muted mt-1">Create custom Keras 3 / TensorFlow layers (__init__, build, call, get_config) and add them to the canvas.</p>
             </div>
-            <button class="btn btn-secondary btn-sm" onclick="closeCustomLayerModal()" style="padding: 2px 8px;">✕</button>
+            <button type="button" class="btn btn-ghost btn-sm btn-icon modal-close" onclick="closeCustomLayerModal()" aria-label="Close">{{ icon('x') }}</button>
         </div>
 
-        <div style="display: grid; grid-template-columns: 240px 1fr; gap: 16px;">
-            <!-- Left: Saved Custom Layers in Project -->
-            <div style="background: rgba(0,0,0,0.25); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; display: flex; flex-direction: column;">
-                <div style="font-weight: 600; font-size: 12px; color: #fff; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
-                    <span>Proje Katmanları</span>
-                    <button class="btn btn-primary btn-sm" onclick="createNewCustomLayerForm()" style="font-size: 10px; padding: 2px 8px;">+ Yeni</button>
+        <div class="modal-body">
+            <div class="grid-sidebar">
+                <!-- Left: Saved Custom Layers in Project -->
+                <div class="tile flex-col">
+                    <div class="row-between mb-2">
+                        <span class="fw-600 text-sm">Project layers</span>
+                        <button class="btn btn-primary btn-xs" onclick="createNewCustomLayerForm()">+ New</button>
+                    </div>
+                    <div id="custom-layers-list-container" class="stack-xs scroll-y max-h-md">
+                        <div class="text-xs text-muted text-center p-3">Loading...</div>
+                    </div>
                 </div>
-                <div id="custom-layers-list-container" style="flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; max-height: 400px;">
-                    <div style="font-size: 11px; color: var(--text-muted); text-align: center; padding: 12px;">Yükleniyor...</div>
-                </div>
-            </div>
 
-            <!-- Right: Code Editor & Metadata Form -->
-            <div style="display: flex; flex-direction: column; gap: 10px;">
-                <input type="hidden" id="cl-layer-id" value="">
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-                    <div class="form-group" style="margin: 0;">
-                        <label class="form-label" style="font-size: 12px;">Katman Adı (Display Name)</label>
-                        <input type="text" id="cl-name" class="form-control" placeholder="Örn: Signal FIR Filter Layer">
+                <!-- Right: Code Editor & Metadata Form -->
+                <div class="stack-sm">
+                    <input type="hidden" id="cl-layer-id" value="">
+                    <div class="form-row">
+                        <div class="form-group m-0">
+                            <label class="form-label">Display name</label>
+                            <input type="text" id="cl-name" class="form-control" placeholder="e.g. Signal FIR Filter Layer">
+                        </div>
+                        <div class="form-group m-0">
+                            <label class="form-label">Python class name</label>
+                            <input type="text" id="cl-class-name" class="form-control mono" placeholder="e.g. CustomSignalLayer">
+                        </div>
                     </div>
-                    <div class="form-group" style="margin: 0;">
-                        <label class="form-label" style="font-size: 12px;">Python Sınıf Adı (Class Name)</label>
-                        <input type="text" id="cl-class-name" class="form-control" placeholder="Örn: CustomSignalLayer">
+                    <div class="form-group m-0">
+                        <label class="form-label">Description (optional)</label>
+                        <input type="text" id="cl-desc" class="form-control" placeholder="Brief summary of the layer's mathematical operation">
                     </div>
-                </div>
-                <div class="form-group" style="margin: 0;">
-                    <label class="form-label" style="font-size: 12px;">Açıklama (Opsiyonel)</label>
-                    <input type="text" id="cl-desc" class="form-control" placeholder="Katmanın matematiksel işlevi hakkında kısa bilgi">
-                </div>
-                <div class="form-group" style="margin: 0;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-                        <label class="form-label" style="font-size: 12px; margin: 0;">Python / Keras Kodu (__init__, build, call, get_config)</label>
-                        <button class="btn btn-secondary btn-sm" onclick="loadDefaultCustomLayerTemplate()" style="font-size: 11px; padding: 2px 8px;">Varsayılan Şablonu Yükle</button>
+                    <div class="form-group m-0">
+                        <div class="row-between mb-1">
+                            <label class="form-label m-0">Python / Keras code (__init__, build, call, get_config)</label>
+                            <button class="btn btn-secondary btn-xs" onclick="loadDefaultCustomLayerTemplate()">Load default template</button>
+                        </div>
+                        <textarea id="cl-code" class="form-control mono text-xs" rows="12" spellcheck="false"></textarea>
                     </div>
-                    <textarea id="cl-code" class="form-control" rows="12" style="font-family: var(--font-mono); font-size: 11px; line-height: 1.5; background: #0b0f19; color: #e2e8f0; tab-size: 4;" spellcheck="false"></textarea>
-                </div>
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px;">
-                    <div>
-                        <button id="cl-btn-delete" class="btn btn-secondary btn-sm" onclick="deleteCurrentCustomLayer()" style="display: none; color: #f87171; border-color: rgba(248,113,113,0.3);">🗑️ Sil</button>
-                    </div>
-                    <div style="display: flex; gap: 8px;">
-                        <button class="btn btn-secondary btn-sm" onclick="closeCustomLayerModal()">Kapat</button>
-                        <button class="btn btn-secondary btn-sm" onclick="saveCustomLayer()" style="background: rgba(168,85,247,0.2); border-color: #a855f7; color: #c084fc; font-weight: 600;">💾 Projeye Kaydet</button>
-                        <button class="btn btn-primary btn-sm" onclick="addCustomLayerToCanvas()" style="background: linear-gradient(135deg, #2563eb, #7c3aed); font-weight: 700;">🚀 Tuvale Ekle</button>
+                    <div class="row-between pt-2">
+                        <div>
+                            <button id="cl-btn-delete" class="btn btn-danger btn-sm" hidden onclick="deleteCurrentCustomLayer()">{{ icon('trash') }} <span>Delete</span></button>
+                        </div>
+                        <div class="row">
+                            <button class="btn btn-secondary btn-sm" onclick="closeCustomLayerModal()">Close</button>
+                            <button class="btn btn-secondary btn-sm" onclick="saveCustomLayer()">{{ icon('save') }} <span>Save to project</span></button>
+                            <button class="btn btn-primary btn-sm" onclick="addCustomLayerToCanvas()">{{ icon('play') }} <span>Add to canvas</span></button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -439,256 +444,212 @@
 </div>
 
 <!-- Python Functional API Exporter Modal -->
-<div id="python-export-modal" class="modal-overlay" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(5px); z-index: 1000; align-items: center; justify-content: center;">
-    <div class="modal-content card" style="width: 900px; max-width: 95%; max-height: 90vh; overflow-y: auto; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 1.75rem;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.75rem;">
+<div id="python-export-modal" class="modal-overlay" role="dialog" aria-modal="true">
+    <div class="modal modal-xl">
+        <div class="modal-header">
             <div>
-                <h2 style="margin: 0; font-size: 18px; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 8px;">
-                    <span>🐍</span> Keras Functional API Python Kod Dışa Aktarımı
-                </h2>
-                <p style="font-size: 12px; color: var(--text-muted); margin: 4px 0 0 0;">
-                    Veri ön işleme (Input ID ayrıştırma, StandardScaler/OneHotEncoder), özel katmanlar, model inşası ve CSV export içeren eksiksiz ve çalıştırılabilir Python kodu.
-                </p>
+                <h3 class="modal-title">{{ icon('file-code') }} <span>Keras Functional API Python Code Export</span></h3>
+                <p class="text-xs text-muted mt-1">Complete, runnable Python script including data preprocessing, custom layers, model construction, and CSV export.</p>
             </div>
-            <button class="btn btn-secondary btn-sm" onclick="closePythonExportModal()" style="padding: 2px 8px;">✕</button>
+            <button type="button" class="btn btn-ghost btn-sm btn-icon modal-close" onclick="closePythonExportModal()" aria-label="Close">{{ icon('x') }}</button>
         </div>
 
-        <div style="position: relative; margin-bottom: 1rem;">
-            <div style="position: absolute; top: 10px; right: 10px; display: flex; gap: 8px; z-index: 5;">
-                <button class="btn btn-secondary btn-sm" onclick="copyPythonCode()" id="btn-copy-py" style="background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.2); font-size: 11px;">📋 Kopyala</button>
-                <button class="btn btn-primary btn-sm" onclick="downloadPythonCode()" style="background: linear-gradient(135deg, #10b981, #059669); border: none; font-size: 11px; font-weight: 600;">💾 .py Olarak İndir</button>
+        <div class="modal-body">
+            <div class="row-between mb-2">
+                <span class="text-xs text-muted mono">keras_functional_model.py</span>
+                <div class="row">
+                    <button class="btn btn-secondary btn-sm" onclick="copyPythonCode()" id="btn-copy-py">{{ icon('copy') }} <span>Copy</span></button>
+                    <button class="btn btn-primary btn-sm" onclick="downloadPythonCode()">{{ icon('download') }} <span>Download .py</span></button>
+                </div>
             </div>
-            <pre id="python-code-view" style="max-height: 55vh; overflow: auto; background: #080c14; border: 1px solid var(--border-color); border-radius: 8px; padding: 1rem; font-family: var(--font-mono); font-size: 11px; line-height: 1.5; color: #38bdf8; tab-size: 4; margin: 0; white-space: pre;"></pre>
+            <pre id="python-code-view" class="code-block max-h-lg scroll-y mono text-xs"></pre>
         </div>
 
-        <div style="display: flex; justify-content: flex-end;">
-            <button class="btn btn-secondary" onclick="closePythonExportModal()">Kapat</button>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closePythonExportModal()">Close</button>
         </div>
     </div>
 </div>
 
 <!-- IDEC Cluster Probabilities Inspector Modal -->
-<div id="idec-probabilities-modal" class="modal-overlay" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(5px); z-index: 1000; align-items: center; justify-content: center;">
-    <div class="modal-content card" style="width: 1100px; max-width: 96%; max-height: 92vh; overflow-y: auto; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 1.5rem;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.75rem;">
+<div id="idec-probabilities-modal" class="modal-overlay" role="dialog" aria-modal="true">
+    <div class="modal modal-xl">
+        <div class="modal-header">
             <div>
-                <h2 style="margin: 0; font-size: 18px; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 8px;">
-                    <span>📊</span> IDEC Sinyal Kümeleme & Latent Uzay Analiz Stüdyosu
-                </h2>
-                <p style="font-size: 12px; color: var(--text-muted); margin: 4px 0 0 0;">
-                    IDEC (Improved Deep Embedded Clustering) çift başlıklı mimari analizörü: Darboğaz (bottleneck) <em>Z</em> latent uzayı, Student-t yumuşak küme olasılıkları <em>Q</em>, ortalama sinyal dalga morfolojileri ve küme ayrışım metrikleri.
-                </p>
+                <h3 class="modal-title">{{ icon('chart-column') }} <span>IDEC Signal Clustering &amp; Latent Space Studio</span></h3>
+                <p class="text-xs text-muted mt-1">IDEC dual-head analyzer: bottleneck <em>Z</em> latent space, Student-t soft cluster probabilities <em>Q</em>, mean waveform morphologies, and separation metrics.</p>
             </div>
-            <button class="btn btn-secondary btn-sm" onclick="closeIdecProbabilitiesModal()" style="padding: 2px 8px;">✕</button>
+            <button type="button" class="btn btn-ghost btn-sm btn-icon modal-close" onclick="closeIdecProbabilitiesModal()" aria-label="Close">{{ icon('x') }}</button>
         </div>
 
-        <!-- Selection Controls Bar -->
-        <div style="display: grid; grid-template-columns: 1.3fr 1.3fr 85px 85px auto auto auto; gap: 10px; align-items: flex-end; margin-bottom: 1rem; background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px;">
-            <div class="form-group" style="margin: 0;">
-                <label class="form-label" style="font-size: 11px; font-weight: 600; color: #94a3b8; margin-bottom: 4px; display: block;">IDEC / AE Modeli</label>
-                <select id="idec-model-select" class="form-control" onchange="loadIdecProbabilities(false)" style="font-size: 12px; height: 36px;"></select>
+        <div class="modal-body">
+            <!-- Selection Controls Bar -->
+            <div class="tile cluster items-end mb-4">
+                <div class="form-group flex-1 m-0">
+                    <label class="form-label">IDEC / AE model</label>
+                    <select id="idec-model-select" class="form-control" onchange="loadIdecProbabilities(false)"></select>
+                </div>
+                <div class="form-group flex-1 m-0">
+                    <label class="form-label">Signals dataset</label>
+                    <select id="idec-dataset-select" class="form-control" onchange="loadIdecProbabilities(false)"></select>
+                </div>
+                <div class="form-group m-0">
+                    <label class="form-label" title="Cluster Count (Override)">Clusters (K)</label>
+                    <input type="number" id="idec-n-clusters-input" class="form-control mono w-auto" min="2" max="50" placeholder="Auto" onchange="loadIdecProbabilities(false)" title="Optional cluster count (empty = model/dataset default)">
+                </div>
+                <div class="form-group m-0">
+                    <label class="form-label" title="Quick Training Epochs">Quick epochs</label>
+                    <input type="number" id="idec-quick-epochs" class="form-control mono w-auto" value="10" min="1" max="100" title="Number of iterative IDEC epochs when clicking Train &amp; Analyze">
+                </div>
+                <button id="idec-btn-analyze" class="btn btn-primary" onclick="loadIdecProbabilities(false)">
+                    {{ icon('search') }} <span>Compute &amp; analyze</span>
+                </button>
+                <button id="idec-btn-train-analyze" class="btn btn-success" onclick="loadIdecProbabilities(true)" title="Train model with iterative KLD + MSE loss and refresh results">
+                    {{ icon('zap') }} <span>Train &amp; analyze</span>
+                </button>
+                <button id="idec-btn-download-csv" class="btn btn-secondary" onclick="downloadIdecProbabilitiesCSV()" disabled>
+                    {{ icon('download') }} <span>Export CSV</span>
+                </button>
             </div>
-            <div class="form-group" style="margin: 0;">
-                <label class="form-label" style="font-size: 11px; font-weight: 600; color: #94a3b8; margin-bottom: 4px; display: block;">Veri Kümesi (Signals Dataset)</label>
-                <select id="idec-dataset-select" class="form-control" onchange="loadIdecProbabilities(false)" style="font-size: 12px; height: 36px;"></select>
-            </div>
-            <div class="form-group" style="margin: 0;">
-                <label class="form-label" style="font-size: 11px; font-weight: 600; color: #94a3b8; margin-bottom: 4px; display: block;" title="Küme Sayısı (Override)">Küme (K)</label>
-                <input type="number" id="idec-n-clusters-input" class="form-control" min="2" max="50" placeholder="Oto" style="font-size: 12px; height: 36px; text-align: center;" onchange="loadIdecProbabilities(false)" title="İsteğe bağlı küme sayısı (boş = model/veri varsayılanı)">
-            </div>
-            <div class="form-group" style="margin: 0;">
-                <label class="form-label" style="font-size: 11px; font-weight: 600; color: #94a3b8; margin-bottom: 4px; display: block;" title="Hızlı Eğitim Epoch Sayısı">Hızlı Epoch</label>
-                <input type="number" id="idec-quick-epochs" class="form-control" value="10" min="1" max="100" style="font-size: 12px; height: 36px; text-align: center;" title="Eğit & Analiz Et butonuna tıklandığında çalışacak iteratif IDEC epoch sayısı">
-            </div>
-            <button id="idec-btn-analyze" class="btn btn-primary" onclick="loadIdecProbabilities(false)" style="background: linear-gradient(135deg, #2563eb, #38bdf8); border: none; font-weight: 600; font-size: 12px; height: 36px; padding: 0 14px; display: flex; align-items: center; gap: 6px; white-space: nowrap;">
-                🔍 Hesapla & Analiz Et
-            </button>
-            <button id="idec-btn-train-analyze" class="btn btn-success" onclick="loadIdecProbabilities(true)" style="background: linear-gradient(135deg, #059669, #10b981); border: none; font-weight: 600; font-size: 12px; height: 36px; padding: 0 14px; display: flex; align-items: center; gap: 6px; white-space: nowrap;" title="Modeli iteratif KLD + MSE kaybıyla eğit ve sonuçları güncelle">
-                ⚡ Eğit & Analiz Et
-            </button>
-            <button id="idec-btn-download-csv" class="btn btn-secondary" onclick="downloadIdecProbabilitiesCSV()" style="border-color: rgba(56,189,248,0.4); color: #38bdf8; font-weight: 600; font-size: 12px; height: 36px; padding: 0 14px; display: flex; align-items: center; gap: 6px; white-space: nowrap;" disabled>
-                📥 CSV İndir
-            </button>
-        </div>
 
-        <!-- Loading Banner -->
-        <div id="idec-loading-banner" style="display: none; background: rgba(30, 41, 59, 0.95); border: 1px solid rgba(56, 189, 248, 0.4); border-radius: 8px; padding: 12px 16px; margin-bottom: 1rem; align-items: center; gap: 12px;">
-            <div style="width: 20px; height: 20px; border: 3px solid rgba(56, 189, 248, 0.2); border-top-color: #38bdf8; border-radius: 50%; animation: idec-spin 0.8s linear infinite; flex-shrink: 0;"></div>
-            <div id="idec-loading-text" style="font-size: 12px; color: #38bdf8; font-weight: 600;">
-                ⏳ Sinyal darboğaz (bottleneck) öznitelikleri, Student-t olasılıkları ve PCA dağılımı hesaplanıyor...
-            </div>
-        </div>
-
-        <!-- Results Container -->
-        <div id="idec-results-container" style="display: none;">
-            <!-- Row 1: 6 KPI Cards -->
-            <div style="display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; margin-bottom: 1.25rem;">
-                <div style="background: rgba(15, 23, 42, 0.7); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px 12px; text-align: center;">
-                    <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">Toplam Sinyal</div>
-                    <div id="idec-stat-total" style="font-size: 18px; font-weight: 700; color: #fff;">-</div>
-                </div>
-                <div style="background: rgba(15, 23, 42, 0.7); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px 12px; text-align: center;">
-                    <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">Aktif Küme / K</div>
-                    <div id="idec-stat-clusters" style="font-size: 18px; font-weight: 700; color: #38bdf8;">-</div>
-                    <div id="idec-bottleneck-badge" style="font-size: 9px; color: #94a3b8; margin-top: 2px;"></div>
-                </div>
-                <div style="background: rgba(15, 23, 42, 0.7); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px 12px; text-align: center;">
-                    <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">Ortalama Güven</div>
-                    <div id="idec-stat-confidence" style="font-size: 18px; font-weight: 700; color: #34d399;">-</div>
-                </div>
-                <div style="background: rgba(15, 23, 42, 0.7); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px 12px; text-align: center;">
-                    <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">Silhouette (Latent Z)</div>
-                    <div id="idec-stat-silhouette" style="font-size: 18px; font-weight: 700; color: #a78bfa;">-</div>
-                </div>
-                <div style="background: rgba(15, 23, 42, 0.7); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px 12px; text-align: center;">
-                    <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">Davies-Bouldin</div>
-                    <div id="idec-stat-dbi" style="font-size: 18px; font-weight: 700; color: #fb923c;">-</div>
-                </div>
-                <div style="background: rgba(15, 23, 42, 0.7); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px 12px; text-align: center;">
-                    <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">Rekonstrüksiyon Hata</div>
-                    <div id="idec-stat-recon" style="font-size: 18px; font-weight: 700; color: #f472b6;">-</div>
+            <!-- Loading Banner -->
+            <div id="idec-loading-banner" class="alert alert-info mb-4" hidden>
+                {{ icon('loader', 'icon-spin') }}
+                <div id="idec-loading-text" class="alert-body">
+                    Computing signal bottleneck features, Student-t probabilities, and PCA projection...
                 </div>
             </div>
 
-            <!-- Row 2: 2D Latent Space (PCA) & Cluster Distribution Cards -->
-            <div style="display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 12px; margin-bottom: 1.25rem;">
-                <!-- Left: 2D Latent Space (PCA) Scatter Chart -->
-                <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                        <div style="font-weight: 600; font-size: 12px; color: #fff; display: flex; align-items: center; gap: 6px;">
-                            <span>🌌</span> 2D Latent Uzay (PCA) Küme Dağılımı
+            <!-- Results Container -->
+            <div id="idec-results-container" hidden>
+                <!-- Row 1: 6 KPI Cards -->
+                <div class="grid-6 mb-4">
+                    <div class="stat stat-inset">
+                        <div class="stat-label">Total signals</div>
+                        <div id="idec-stat-total" class="stat-value stat-value-sm mono">-</div>
+                    </div>
+                    <div class="stat stat-inset">
+                        <div class="stat-label">Active clusters / K</div>
+                        <div id="idec-stat-clusters" class="stat-value stat-value-sm mono text-info">-</div>
+                        <div id="idec-bottleneck-badge" class="stat-meta mono"></div>
+                    </div>
+                    <div class="stat stat-inset">
+                        <div class="stat-label">Mean confidence</div>
+                        <div id="idec-stat-confidence" class="stat-value stat-value-sm mono text-success">-</div>
+                    </div>
+                    <div class="stat stat-inset">
+                        <div class="stat-label">Silhouette (Latent Z)</div>
+                        <div id="idec-stat-silhouette" class="stat-value stat-value-sm mono">-</div>
+                    </div>
+                    <div class="stat stat-inset">
+                        <div class="stat-label">Davies-Bouldin</div>
+                        <div id="idec-stat-dbi" class="stat-value stat-value-sm mono">-</div>
+                    </div>
+                    <div class="stat stat-inset">
+                        <div class="stat-label">Reconstruction error</div>
+                        <div id="idec-stat-recon" class="stat-value stat-value-sm mono">-</div>
+                    </div>
+                </div>
+
+                <!-- Row 2: 2D Latent Space (PCA) & Cluster Distribution Cards -->
+                <div class="grid-2 mb-4">
+                    <!-- Left: 2D Latent Space (PCA) Scatter Chart -->
+                    <div class="tile">
+                        <div class="row-between mb-2">
+                            <div class="row fw-600 text-sm">
+                                {{ icon('orbit', 'icon-sm') }} <span>2D Latent Space (PCA) Cluster Projection</span>
+                            </div>
+                            <div id="idec-pca-variance-badge" class="badge badge-mono"></div>
                         </div>
-                        <div id="idec-pca-variance-badge" style="font-size: 10px; color: var(--text-muted); background: rgba(255,255,255,0.05); padding: 2px 6px; border-radius: 4px;"></div>
+                        <div id="idec-pca-chart" class="chart-box"></div>
                     </div>
-                    <div id="idec-pca-chart" style="width: 100%; height: 280px;"></div>
-                </div>
 
-                <!-- Right: Interactive Cluster Distribution Cards -->
-                <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px; display: flex; flex-direction: column;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                        <div style="font-weight: 600; font-size: 12px; color: #fff; display: flex; align-items: center; gap: 6px;">
-                            <span>🏷️</span> Küme Boyut Dağılımı & Güven Seviyeleri
-                            <span style="font-size: 10px; color: var(--text-muted); font-weight: normal;">(Karta tıklayarak dalga formunu & tabloyu inceleyin)</span>
+                    <!-- Right: Interactive Cluster Distribution Cards -->
+                    <div class="tile flex-col">
+                        <div class="row-between mb-2">
+                            <div class="row fw-600 text-sm">
+                                {{ icon('tag', 'icon-sm') }} <span>Cluster Size Distribution &amp; Confidence</span>
+                                <span class="text-xs text-muted fw-400">(Click a card to inspect waveforms)</span>
+                            </div>
+                            <button id="idec-reset-cluster-filter-btn" class="btn btn-secondary btn-xs" hidden onclick="filterIdecSamplesByCluster(null)">
+                                {{ icon('x', 'icon-xs') }} <span>Show all clusters</span>
+                            </button>
                         </div>
-                        <button id="idec-reset-cluster-filter-btn" class="btn btn-secondary btn-sm" onclick="filterIdecSamplesByCluster(null)" style="font-size: 10px; padding: 2px 8px; display: none;">
-                            ✕ Tüm Kümeleri Göster
-                        </button>
-                    </div>
-                    <div id="idec-cluster-bars" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(175px, 1fr)); gap: 8px; max-height: 265px; overflow-y: auto;"></div>
-                </div>
-            </div>
-
-            <!-- Row 3: Cluster Waveform Inspector (Group Overlay) -->
-            <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border-color); border-radius: 8px; padding: 14px; margin-bottom: 1.25rem;">
-                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 10px;">
-                    <div style="display: flex; align-items: center; gap: 10px;">
-                        <span style="font-size: 14px; font-weight: 700; color: #fff;">📈 Cluster Waveform Inspector (Group Overlay)</span>
-                        <span id="idec-active-cluster-badge" class="shape-badge" style="font-size: 11px; font-weight: 600;">Cluster 0</span>
-                    </div>
-                    <div style="display: flex; align-items: center; gap: 14px;">
-                        <label style="font-size: 12px; display: flex; align-items: center; gap: 5px; cursor: pointer; color: var(--text-secondary);">
-                            <input type="checkbox" id="idec-toggle-std-band" checked onchange="renderIdecWaveformsChart(idecCurrentAnalysisData)">
-                            <span>Show ±1σ Std Dev Envelope</span>
-                        </label>
-                        <label style="font-size: 12px; display: flex; align-items: center; gap: 5px; cursor: pointer; color: var(--text-secondary);">
-                            <input type="checkbox" id="idec-toggle-faded-lines" checked onchange="renderIdecWaveformsChart(idecCurrentAnalysisData)">
-                            <span>Show Faded Individual Signals</span>
-                        </label>
+                        <div id="idec-cluster-bars" class="grid-auto-sm gap-2 max-h-sm scroll-y"></div>
                     </div>
                 </div>
 
-                <!-- Cluster Selection Pills -->
-                <div style="margin-bottom: 10px;">
-                    <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 6px;">
-                        Bir kümeye tıklayarak o kümedeki tüm sinyalleri (arka planda yarı-saydam), ±1σ standart sapma zarfını ve belirgin grup ortalamasını inceleyin:
+                <!-- Row 3: Cluster Waveform Inspector (Group Overlay) -->
+                <div class="tile mb-4">
+                    <div class="row-between flex-wrap mb-2">
+                        <div class="row">
+                            {{ icon('chart-line', 'icon-sm') }}
+                            <span class="text-subhead">Cluster Waveform Inspector (Group Overlay)</span>
+                            <span id="idec-active-cluster-badge" class="shape-badge">Cluster 0</span>
+                        </div>
+                        <div class="cluster">
+                            <label class="check">
+                                <input type="checkbox" id="idec-toggle-std-band" checked onchange="renderIdecWaveformsChart(idecCurrentAnalysisData)">
+                                <span>Show &plusmn;1&sigma; std dev envelope</span>
+                            </label>
+                            <label class="check">
+                                <input type="checkbox" id="idec-toggle-faded-lines" checked onchange="renderIdecWaveformsChart(idecCurrentAnalysisData)">
+                                <span>Show faded individual signals</span>
+                            </label>
+                        </div>
                     </div>
-                    <div id="idec-cluster-pills-bar" style="display: flex; flex-wrap: wrap; gap: 8px;"></div>
+
+                    <!-- Cluster Selection Pills -->
+                    <div class="mb-2">
+                        <div class="text-xs text-muted mb-1">
+                            Select a cluster to inspect all signals in that group, its &plusmn;1&sigma; standard deviation envelope, and the prominent group mean:
+                        </div>
+                        <div id="idec-cluster-pills-bar" class="cluster"></div>
+                    </div>
+
+                    <!-- Group Stats Bar -->
+                    <div id="idec-cluster-group-stats" class="cluster tile mb-2 text-xs"></div>
+
+                    <!-- Highcharts Group Overlay Plot -->
+                    <div id="idec-waveforms-chart" class="chart-box-lg"></div>
                 </div>
 
-                <!-- Group Stats Bar -->
-                <div id="idec-cluster-group-stats" style="display: flex; flex-wrap: wrap; gap: 1.25rem; margin-bottom: 10px; padding: 8px 12px; background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); border-radius: 6px; font-size: 11px;"></div>
-
-                <!-- Highcharts Group Overlay Plot -->
-                <div id="idec-waveforms-chart" style="width: 100%; height: 380px;"></div>
-            </div>
-
-            <!-- Row 4: Filterable Sample Probabilities Table -->
-            <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px; margin-bottom: 1rem;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 8px;">
-                    <div style="font-weight: 600; font-size: 12px; color: #fff; display: flex; align-items: center; gap: 6px;">
-                        <span>📋</span> Örnek Sinyal Olasılık Dağılımı (Student-t Q Dağılımı)
-                        <span id="idec-table-count-badge" style="font-size: 10px; color: var(--text-muted); background: rgba(255,255,255,0.06); padding: 1px 6px; border-radius: 4px;"></span>
+                <!-- Row 4: Filterable Sample Probabilities Table -->
+                <div class="tile">
+                    <div class="row-between flex-wrap mb-2">
+                        <div class="row fw-600 text-sm">
+                            {{ icon('clipboard', 'icon-sm') }} <span>Sample Signal Probability Distribution (Student-t Q)</span>
+                            <span id="idec-table-count-badge" class="badge badge-mono"></span>
+                        </div>
+                        <div class="row">
+                            <select id="idec-sample-cluster-filter" class="form-control form-control-sm w-auto" onchange="filterIdecSamplesTable()">
+                                <option value="">All clusters</option>
+                            </select>
+                            <input type="text" id="idec-sample-search" class="form-control form-control-sm w-auto" placeholder="Search Input ID..." oninput="filterIdecSamplesTable()">
+                        </div>
                     </div>
-                    <div style="display: flex; align-items: center; gap: 8px;">
-                        <select id="idec-sample-cluster-filter" class="form-control" onchange="filterIdecSamplesTable()" style="font-size: 11px; height: 30px; width: 140px; padding: 2px 8px;">
-                            <option value="">Tüm Kümeler</option>
-                        </select>
-                        <input type="text" id="idec-sample-search" class="form-control" placeholder="Input ID ara..." oninput="filterIdecSamplesTable()" style="font-size: 11px; height: 30px; width: 150px; padding: 2px 8px;">
+                    <div class="table-wrap max-h-sm scroll-y">
+                        <table class="data-table table-compact">
+                            <thead>
+                                <tr>
+                                    <th>Input ID</th>
+                                    <th>Assigned Cluster</th>
+                                    <th>Confidence</th>
+                                    <th>Cluster Probability Distribution [P(c)]</th>
+                                </tr>
+                            </thead>
+                            <tbody id="idec-samples-tbody"></tbody>
+                        </table>
                     </div>
-                </div>
-                <div style="max-height: 280px; overflow-y: auto;">
-                    <table class="data-table" style="width: 100%; font-size: 11px; border-collapse: collapse;">
-                        <thead>
-                            <tr style="border-bottom: 1px solid var(--border-color); color: var(--text-muted); text-align: left; position: sticky; top: 0; background: #0f172a; z-index: 2;">
-                                <th style="padding: 8px 6px;">Input ID</th>
-                                <th style="padding: 8px 6px;">Atanan Küme</th>
-                                <th style="padding: 8px 6px;">Güven Skoru</th>
-                                <th style="padding: 8px 6px;">Küme Olasılık Dağılımı [P(c)]</th>
-                            </tr>
-                        </thead>
-                        <tbody id="idec-samples-tbody"></tbody>
-                    </table>
                 </div>
             </div>
         </div>
 
-        <div style="display: flex; justify-content: flex-end; margin-top: 10px;">
-            <button class="btn btn-secondary" onclick="closeIdecProbabilitiesModal()">Kapat</button>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeIdecProbabilitiesModal()">Close</button>
         </div>
     </div>
 </div>
-
-<style>
-.wizard-card {
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    padding: 12px;
-    cursor: pointer;
-    transition: all 0.15s ease;
-}
-.wizard-card:hover {
-    border-color: var(--accent-cyan);
-    background: rgba(56, 189, 248, 0.05);
-}
-.wizard-card.active {
-    border-color: var(--accent-blue);
-    background: rgba(59, 130, 246, 0.12);
-    box-shadow: 0 0 10px rgba(59, 130, 246, 0.3);
-}
-@keyframes idec-spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-}
-.idec-cluster-card {
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid var(--border-color);
-    border-radius: 6px;
-    padding: 8px 10px;
-    cursor: pointer;
-    transition: all 0.15s ease;
-}
-.idec-cluster-card:hover {
-    background: rgba(255, 255, 255, 0.07);
-    border-color: rgba(56, 189, 248, 0.5);
-    transform: translateY(-1px);
-}
-.idec-cluster-card.active {
-    border-color: #38bdf8 !important;
-    background: rgba(56, 189, 248, 0.12) !important;
-    box-shadow: 0 0 10px rgba(56, 189, 248, 0.3);
-}
-</style>
 {% endblock %}
 
 {% block scripts %}
@@ -786,7 +747,7 @@
                 if (data.nodes || data.graph?.nodes || data.class_name || data.config?.layers || data.layers) {
                     if (nnEditorInstance) {
                         nnEditorInstance.loadGraph(data);
-                        SignalML.toast(`Model mimarisi '${filename}' tuvale aktarıldı!`, "success");
+                        SignalML.toast(`Model architecture '${filename}' loaded onto canvas`, "success");
                         const stem = filename.replace(/\.json$/i, "").replace(/_graph$/i, "");
                         const nameInput = document.getElementById("save-model-name");
                         if (nameInput) nameInput.value = stem;
@@ -797,20 +758,20 @@
                 // If JSON isn't recognized directly, send to backend API to parse
                 await uploadModelToBackend(file);
             } catch (e) {
-                SignalML.toast(`JSON okuma hatası: ${e.message}`, "error");
+                SignalML.toast(`JSON read error: ${e.message}`, "error");
             }
         }
         // 2. Keras model binary files (.keras, .h5)
         else if (lowerName.endsWith(".keras") || lowerName.endsWith(".h5")) {
             await uploadModelToBackend(file);
         } else {
-            SignalML.toast("Desteklenmeyen dosya formatı. Lütfen .json, .keras veya .h5 dosyası yükleyin.", "error");
+            SignalML.toast("Unsupported file format. Please upload a .json, .keras, or .h5 file.", "error");
         }
     }
 
     async function uploadModelToBackend(file) {
         try {
-            SignalML.toast(`'${file.name}' yükleniyor ve çözümleniyor...`, "info");
+            SignalML.toast(`Uploading and parsing '${file.name}'...`, "info");
             const formData = new FormData();
             formData.append("file", file);
             formData.append("project_id", getActiveProjectId());
@@ -821,24 +782,24 @@
 
             if (!res.ok) {
                 const err = await SignalML.safeJson(res);
-                throw new Error(err.detail || "Model import başarısız");
+                throw new Error(err.detail || "Model import failed");
             }
 
             const data = await SignalML.safeJson(res);
             if (data.graph && nnEditorInstance) {
                 nnEditorInstance.loadGraph(data.graph);
-                const paramsStr = data.total_params ? ` (${data.total_params.toLocaleString()} parametre)` : "";
-                SignalML.toast(`'${data.name}' modeli${paramsStr} başarıyla import edildi ve tuvale aktarıldı!`, "success");
+                const paramsStr = data.total_params ? ` (${data.total_params.toLocaleString()} params)` : "";
+                SignalML.toast(`Model '${data.name}'${paramsStr} imported onto canvas`, "success");
 
                 const nameInput = document.getElementById("save-model-name");
                 if (nameInput) nameInput.value = data.name;
 
                 populateSavedModelsDropdown();
             } else {
-                SignalML.toast(`Model başarıyla import edildi: ${data.name}`, "success");
+                SignalML.toast(`Model imported: ${data.name}`, "success");
             }
         } catch (e) {
-            SignalML.toast(`Model import hatası: ${e.message}`, "error");
+            SignalML.toast(`Model import error: ${e.message}`, "error");
         }
     }
 
@@ -850,7 +811,7 @@
             if (res.ok) {
                 const models = await SignalML.safeJson(res);
                 if (Array.isArray(models)) {
-                    sel.innerHTML = `<option value="">📂 Kayıtlı Model Yükle (${models.length})...</option>` +
+                    sel.innerHTML = `<option value="">Load saved model (${models.length})...</option>` +
                         models.map(m => `<option value="${m.id}">${m.name} (${(m.trainable_params || 0).toLocaleString()} p)</option>`).join("");
 
                     // Check URL query parameters (?model_id=... or ?id=...) and auto-load that model if present
@@ -871,12 +832,12 @@
         const updateBtn = document.getElementById("update-saved-model-btn");
         const deleteBtn = document.getElementById("delete-saved-model-btn");
         if (!modelId) {
-            if (updateBtn) updateBtn.style.display = "none";
-            if (deleteBtn) deleteBtn.style.display = "none";
+            if (updateBtn) { updateBtn.hidden = true; updateBtn.style.display = "none"; }
+            if (deleteBtn) { deleteBtn.hidden = true; deleteBtn.style.display = "none"; }
             return;
         }
-        if (updateBtn) updateBtn.style.display = "inline-flex";
-        if (deleteBtn) deleteBtn.style.display = "inline-flex";
+        if (updateBtn) { updateBtn.hidden = false; updateBtn.style.display = "inline-flex"; }
+        if (deleteBtn) { deleteBtn.hidden = false; deleteBtn.style.display = "inline-flex"; }
 
         try {
             const res = await fetch(`/api/models/${modelId}`);
@@ -884,7 +845,7 @@
                 const model = await SignalML.safeJson(res);
                 if (model.graph && nnEditorInstance) {
                     nnEditorInstance.loadGraph(model.graph);
-                    SignalML.toast(`'${model.name}' modeli tuvale yüklendi!`, "success");
+                    SignalML.toast(`Model '${model.name}' loaded onto canvas`, "success");
                     const nameInput = document.getElementById("save-model-name");
                     if (nameInput) nameInput.value = model.name;
                     const taskInput = document.getElementById("save-model-task");
@@ -892,7 +853,7 @@
                 }
             }
         } catch (e) {
-            SignalML.toast(`Model yüklenemedi: ${e.message}`, "error");
+            SignalML.toast(`Failed to load model: ${e.message}`, "error");
         }
     }
 
@@ -900,7 +861,7 @@
         const sel = document.getElementById("load-saved-model-select");
         const modelId = sel ? sel.value : null;
         if (!modelId) {
-            SignalML.toast("Güncellenecek kayıtlı bir model seçilmedi!", "warning");
+            SignalML.toast("No saved model selected to update", "warning");
             return;
         }
 
@@ -911,7 +872,7 @@
 
         const graphData = nnEditorInstance.serializeGraph();
 
-        SignalML.toast("Kayıtlı model güncelleniyor ve yeniden derleniyor...", "info");
+        SignalML.toast("Updating and recompiling saved model...", "info");
 
         try {
             const res = await fetch(`/api/models/${modelId}`, {
@@ -926,15 +887,15 @@
 
             if (!res.ok) {
                 const err = await SignalML.safeJson(res);
-                throw new Error(err.detail || "Model güncelleme başarısız");
+                throw new Error(err.detail || "Model update failed");
             }
 
             const data = await SignalML.safeJson(res);
-            SignalML.toast(`'${data.name}' modeli başarıyla güncellendi!`, "success");
+            SignalML.toast(`Model '${data.name}' updated`, "success");
             populateSavedModelsDropdown();
             if (sel) sel.value = modelId;
         } catch (e) {
-            SignalML.toast(`Model güncelleme hatası: ${e.message}`, "error");
+            SignalML.toast(`Model update error: ${e.message}`, "error");
         }
     }
 
@@ -942,11 +903,11 @@
         const sel = document.getElementById("load-saved-model-select");
         const modelId = sel ? sel.value : null;
         if (!modelId) {
-            SignalML.toast("Silinecek bir model seçilmedi!", "warning");
+            SignalML.toast("No model selected to delete", "warning");
             return;
         }
 
-        if (!confirm("Bu kayıtlı modeli silmek istediğinize emin misiniz?")) return;
+        if (!confirm("Delete this saved model?")) return;
 
         try {
             const res = await fetch(`/api/models/${modelId}`, {
@@ -955,42 +916,61 @@
 
             if (!res.ok) {
                 const err = await SignalML.safeJson(res);
-                throw new Error(err.detail || "Model silme başarısız");
+                throw new Error(err.detail || "Model deletion failed");
             }
 
-            SignalML.toast("Kayıtlı model başarıyla silindi!", "success");
+            SignalML.toast("Saved model deleted", "success");
             if (sel) sel.value = "";
             const updateBtn = document.getElementById("update-saved-model-btn");
             const deleteBtn = document.getElementById("delete-saved-model-btn");
-            if (updateBtn) updateBtn.style.display = "none";
-            if (deleteBtn) deleteBtn.style.display = "none";
+            if (updateBtn) { updateBtn.hidden = true; updateBtn.style.display = "none"; }
+            if (deleteBtn) { deleteBtn.hidden = true; deleteBtn.style.display = "none"; }
 
             populateSavedModelsDropdown();
         } catch (e) {
-            SignalML.toast(`Model silme hatası: ${e.message}`, "error");
+            SignalML.toast(`Model deletion error: ${e.message}`, "error");
         }
     }
 
     function toggleExpandCanvas() {
         const layout = document.querySelector(".editor-layout");
         if (layout) {
-            layout.classList.toggle("expanded-canvas");
-            window.dispatchEvent(new Event("resize"));
+            const expanded = layout.classList.toggle("expanded-canvas");
+            const btn = document.getElementById("expand-canvas-btn");
+            if (btn && window.SignalML && typeof window.SignalML.icon === "function") {
+                btn.innerHTML = expanded
+                    ? `${window.SignalML.icon("minimize-2")} <span>Collapse</span>`
+                    : `${window.SignalML.icon("maximize-2")} <span>Expand</span>`;
+            }
+            if (nnEditorInstance && nnEditorInstance.canvas) {
+                nnEditorInstance.canvas.resize();
+            }
+            requestAnimationFrame(() => {
+                if (nnEditorInstance && nnEditorInstance.canvas) {
+                    nnEditorInstance.canvas.resize();
+                }
+                window.dispatchEvent(new Event("resize"));
+            });
         }
     }
 
     function clearCanvasGraph() {
         if (!nnEditorInstance || !nnEditorInstance.graph) return;
-        if (confirm("Tuvaldeki tüm katman düğümlerini temizlemek istediğinizden emin misiniz?")) {
+        if (confirm("Clear all layer nodes on the canvas?")) {
             nnEditorInstance.graph.clear();
             if (nnEditorInstance.canvas) nnEditorInstance.canvas.setDirty(true, true);
             nnEditorInstance.clearInspector();
-            SignalML.toast("Tuval temizlendi", "info");
+            SignalML.toast("Canvas cleared", "info");
         }
     }
 
     document.addEventListener("DOMContentLoaded", () => {
         populateSavedModelsDropdown();
+        try {
+            if (new URLSearchParams(window.location.search).get("expanded") === "1") {
+                toggleExpandCanvas();
+            }
+        } catch (err) {}
     });
 
     // Architecture Wizard Handlers
@@ -1033,13 +1013,13 @@
         const latentLabel = document.getElementById("wiz-latent-label");
         const latentInput = document.getElementById("wiz-latent-dim");
         if (type.includes("classifier") || type === "bilstm" || type === "transformer_1d" || type === "hybrid_cnn_tabular") {
-            latentLabel.textContent = "Sınıf Sayısı (Number of Classes)";
+            latentLabel.textContent = "Number of classes";
             latentInput.value = "4";
         } else if (type === "idec_cnn" || type === "idec_dense") {
-            latentLabel.textContent = "Bottleneck (Latent Z) & Küme Sayısı";
+            latentLabel.textContent = "Bottleneck (Latent Z) & clusters";
             latentInput.value = "8";
         } else {
-            latentLabel.textContent = "Bottleneck / Latent Boyutu";
+            latentLabel.textContent = "Bottleneck / latent dim";
             latentInput.value = "16";
         }
         updateWizardSummary();
@@ -1053,32 +1033,32 @@
         const descEl = document.getElementById("wiz-summary-desc");
 
         if (selectedWizardTemplate === "conv_ae") {
-            titleEl.textContent = "1D Convolutional Autoencoder (Sinyal Yeniden Yapılandırma):";
-            descEl.innerHTML = `Input(${seq}, 1) &rarr; Conv1D(${base}, k=7) &rarr; MaxPool(2) &rarr; Conv1D(${base*2}, k=5) &rarr; MaxPool(2) &rarr; <span style="color:#fbbf24">Bottleneck(${latent})</span> &rarr; UpSampling1D(2) &rarr; Conv1D(${base*2}) &rarr; UpSampling1D(2) &rarr; Conv1D(${base}) &rarr; <span style="color:#34d399">Output(${seq}, 1)</span>`;
+            titleEl.textContent = "1D Convolutional Autoencoder (Signal Reconstruction):";
+            descEl.innerHTML = `Input(${seq}, 1) &rarr; Conv1D(${base}, k=7) &rarr; MaxPool(2) &rarr; Conv1D(${base*2}, k=5) &rarr; MaxPool(2) &rarr; <span class="text-warning">Bottleneck(${latent})</span> &rarr; UpSampling1D(2) &rarr; Conv1D(${base*2}) &rarr; UpSampling1D(2) &rarr; Conv1D(${base}) &rarr; <span class="text-success">Output(${seq}, 1)</span>`;
         } else if (selectedWizardTemplate === "unet_1d") {
-            titleEl.textContent = "1D U-Net (Skip Connections ile İyileştirme / Segmentasyon):";
-            descEl.innerHTML = `Encoder L1(${base}) &rarr; Encoder L2(${base*2}) &rarr; <span style="color:#fbbf24">Bottleneck(${base*4})</span> &rarr; Decoder L2 + <span style="color:#fbbf24">Skip(L2)</span> &rarr; Decoder L1 + <span style="color:#fbbf24">Skip(L1)</span> &rarr; <span style="color:#34d399">U-Net Output(${seq}, 1)</span>`;
+            titleEl.textContent = "1D U-Net (Skip Connections for Enhancement / Segmentation):";
+            descEl.innerHTML = `Encoder L1(${base}) &rarr; Encoder L2(${base*2}) &rarr; <span class="text-warning">Bottleneck(${base*4})</span> &rarr; Decoder L2 + <span class="text-warning">Skip(L2)</span> &rarr; Decoder L1 + <span class="text-warning">Skip(L1)</span> &rarr; <span class="text-success">U-Net Output(${seq}, 1)</span>`;
         } else if (selectedWizardTemplate === "dense_ae") {
-            titleEl.textContent = "Dense / MLP Autoencoder (Tam Bağlantılı):";
-            descEl.innerHTML = `Input(${seq}, 1) &rarr; Flatten &rarr; Dense(128) &rarr; <span style="color:#fbbf24">Latent Code(${latent})</span> &rarr; Dense(128) &rarr; Dense(${seq}) &rarr; Reshape(${seq}, 1) &rarr; Output`;
+            titleEl.textContent = "Dense / MLP Autoencoder (Fully Connected):";
+            descEl.innerHTML = `Input(${seq}, 1) &rarr; Flatten &rarr; Dense(128) &rarr; <span class="text-warning">Latent Code(${latent})</span> &rarr; Dense(128) &rarr; Dense(${seq}) &rarr; Reshape(${seq}, 1) &rarr; Output`;
         } else if (selectedWizardTemplate === "cnn_classifier") {
-            titleEl.textContent = "1D CNN Sinyal Sınıflandırıcı:";
-            descEl.innerHTML = `Input(${seq}, 1) &rarr; Conv1D(${base}) &rarr; MaxPool(2) &rarr; Conv1D(${base*2}) &rarr; GlobalMaxPool &rarr; Dense(64) &rarr; Dropout(0.3) &rarr; <span style="color:#34d399">Softmax(${latent})</span>`;
+            titleEl.textContent = "1D CNN Signal Classifier:";
+            descEl.innerHTML = `Input(${seq}, 1) &rarr; Conv1D(${base}) &rarr; MaxPool(2) &rarr; Conv1D(${base*2}) &rarr; GlobalMaxPool &rarr; Dense(64) &rarr; Dropout(0.3) &rarr; <span class="text-success">Softmax(${latent})</span>`;
         } else if (selectedWizardTemplate === "bilstm") {
-            titleEl.textContent = "Bidirectional LSTM Zaman Serisi:";
-            descEl.innerHTML = `Input(${seq}, 1) &rarr; BiLSTM(64) &rarr; LSTM(32) &rarr; Dense(32) &rarr; <span style="color:#34d399">Softmax Output(${latent})</span>`;
+            titleEl.textContent = "Bidirectional LSTM Time Series:";
+            descEl.innerHTML = `Input(${seq}, 1) &rarr; BiLSTM(64) &rarr; LSTM(32) &rarr; Dense(32) &rarr; <span class="text-success">Softmax Output(${latent})</span>`;
         } else if (selectedWizardTemplate === "transformer_1d") {
             titleEl.textContent = "1D Transformer Self-Attention:";
-            descEl.innerHTML = `Input(${seq}, 1) &rarr; Conv1D(64) &rarr; PositionalEncoding &rarr; MultiHeadAttention &rarr; Add(Residual) &rarr; LayerNorm &rarr; GlobalAvgPool &rarr; <span style="color:#34d399">Output(${latent})</span>`;
+            descEl.innerHTML = `Input(${seq}, 1) &rarr; Conv1D(64) &rarr; PositionalEncoding &rarr; MultiHeadAttention &rarr; Add(Residual) &rarr; LayerNorm &rarr; GlobalAvgPool &rarr; <span class="text-success">Output(${latent})</span>`;
         } else if (selectedWizardTemplate === "idec_cnn") {
-            titleEl.textContent = "1D-CNN IDEC (Clustering + Autoencoder Çift Çıkış):";
-            descEl.innerHTML = `Input(${seq}, 1) &rarr; Conv1D(${base}, k=7) &rarr; MaxPool(2) &rarr; Conv1D(${base*2}, k=5) &rarr; MaxPool(2) &rarr; Flatten &rarr; <span style="color:#fbbf24">Bottleneck Latent(${latent})</span> &rarr; <span style="color:#38bdf8">[Çift Çıkış: ClusteringLayer(${latent}) (KLD) + 1D-CNN Decoder (MSE)]</span>`;
+            titleEl.textContent = "1D-CNN IDEC (Clustering + Autoencoder Dual Output):";
+            descEl.innerHTML = `Input(${seq}, 1) &rarr; Conv1D(${base}, k=7) &rarr; MaxPool(2) &rarr; Conv1D(${base*2}, k=5) &rarr; MaxPool(2) &rarr; Flatten &rarr; <span class="text-warning">Bottleneck Latent(${latent})</span> &rarr; <span class="text-info">[Dual Output: ClusteringLayer(${latent}) (KLD) + 1D-CNN Decoder (MSE)]</span>`;
         } else if (selectedWizardTemplate === "idec_dense") {
-            titleEl.textContent = "Dense / MLP IDEC (Clustering + Autoencoder Çift Çıkış):";
-            descEl.innerHTML = `Input(${seq}, 1) &rarr; Flatten &rarr; Dense(128) &rarr; Dense(64) &rarr; <span style="color:#fbbf24">Bottleneck Latent(${latent})</span> &rarr; <span style="color:#c084fc">[Çift Çıkış: ClusteringLayer(${latent}) (KLD) + Dense Decoder (MSE)]</span>`;
+            titleEl.textContent = "Dense / MLP IDEC (Clustering + Autoencoder Dual Output):";
+            descEl.innerHTML = `Input(${seq}, 1) &rarr; Flatten &rarr; Dense(128) &rarr; Dense(64) &rarr; <span class="text-warning">Bottleneck Latent(${latent})</span> &rarr; <span class="text-accent">[Dual Output: ClusteringLayer(${latent}) (KLD) + Dense Decoder (MSE)]</span>`;
         } else if (selectedWizardTemplate === "hybrid_cnn_tabular") {
-            titleEl.textContent = "Hibrit Çok Girişli 1D-CNN + Tabular Modeli:";
-            descEl.innerHTML = `<span style="color:#38bdf8">Giriş 1: Sinyal(${seq}, 1) &rarr; Conv1D(${base}) &rarr; GlobalAvgPool</span> + <span style="color:#fbbf24">Giriş 2: Tabular(16) &rarr; Dense(32)</span> &rarr; <span style="color:#34d399">Concatenate &rarr; Fusion Dense(64) &rarr; Output(${latent})</span>`;
+            titleEl.textContent = "Hybrid Multi-Input 1D-CNN + Tabular Model:";
+            descEl.innerHTML = `<span class="text-info">Input 1: Signal(${seq}, 1) &rarr; Conv1D(${base}) &rarr; GlobalAvgPool</span> + <span class="text-warning">Input 2: Tabular(16) &rarr; Dense(32)</span> &rarr; <span class="text-success">Concatenate &rarr; Fusion Dense(64) &rarr; Output(${latent})</span>`;
         }
     }
 
@@ -1097,7 +1077,7 @@
         });
 
         closeWizardModal();
-        SignalML.toast(`Model Sihirbazı: ${selectedWizardTemplate.toUpperCase()} mimarisi başarıyla tuvale yerleştirildi!`, "success");
+        SignalML.toast(`Architecture Wizard: ${selectedWizardTemplate.toUpperCase()} placed on canvas`, "success");
     }
 
     // Build Model Modal Handlers
@@ -1131,7 +1111,7 @@
         const opt = document.getElementById("save-model-opt").value;
 
         if (!name) {
-            SignalML.toast("Model adı gereklidir", "error");
+            SignalML.toast("Model name is required", "error");
             return;
         }
 
@@ -1161,15 +1141,15 @@
             if (res.ok) {
                 currentCustomLayers = await SignalML.safeJson(res);
                 if (!currentCustomLayers || currentCustomLayers.length === 0) {
-                    container.innerHTML = `<div style="font-size: 11px; color: var(--text-muted); text-align: center; padding: 12px;">Henüz kayıtlı özel katman yok. Yeni oluşturabilirsiniz.</div>`;
+                    container.innerHTML = `<div class="text-xs text-muted text-center p-3">No saved custom layers yet. Create a new one.</div>`;
                     createNewCustomLayerForm();
                 } else {
                     let html = "";
                     currentCustomLayers.forEach((l, idx) => {
                         html += `
-                            <div class="custom-layer-item" onclick="selectCustomLayer(${idx})" style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); border-radius: 6px; padding: 8px 10px; cursor: pointer; transition: all 0.15s ease;">
-                                <div style="font-weight: 600; font-size: 12px; color: #fff;">${escapeHtml(l.name)}</div>
-                                <div style="font-size: 10px; color: #a855f7; font-family: var(--font-mono);">${escapeHtml(l.class_name)}</div>
+                            <div class="custom-layer-item" onclick="selectCustomLayer(${idx})">
+                                <div class="fw-600 text-sm text-primary">${escapeHtml(l.name)}</div>
+                                <div class="text-xs text-accent mono">${escapeHtml(l.class_name)}</div>
                             </div>
                         `;
                     });
@@ -1178,7 +1158,7 @@
                 }
             }
         } catch (e) {
-            container.innerHTML = `<div style="font-size: 11px; color: #f87171; padding: 8px;">Hata: ${e.message}</div>`;
+            container.innerHTML = `<div class="text-xs text-danger p-2">Error: ${e.message}</div>`;
         }
     }
 
@@ -1190,16 +1170,17 @@
                 document.getElementById("cl-code").value = data.template;
             }
         } catch (e) {
-            SignalML.toast("Şablon yüklenemedi: " + e.message, "error");
+            SignalML.toast("Failed to load template: " + e.message, "error");
         }
     }
 
     function createNewCustomLayerForm() {
         document.getElementById("cl-layer-id").value = "";
-        document.getElementById("cl-name").value = "Yeni Özel Katman";
+        document.getElementById("cl-name").value = "New Custom Layer";
         document.getElementById("cl-class-name").value = "CustomSignalLayer";
-        document.getElementById("cl-desc").value = "Özel Keras sinyal katmanı";
-        document.getElementById("cl-btn-delete").style.display = "none";
+        document.getElementById("cl-desc").value = "Custom Keras signal layer";
+        const delBtn = document.getElementById("cl-btn-delete");
+        if (delBtn) { delBtn.hidden = true; delBtn.style.display = "none"; }
         loadDefaultCustomLayerTemplate();
     }
 
@@ -1207,8 +1188,7 @@
         const l = currentCustomLayers[idx];
         if (!l) return;
         document.querySelectorAll(".custom-layer-item").forEach((el, i) => {
-            el.style.borderColor = (i === idx) ? "var(--accent-blue)" : "var(--border-color)";
-            el.style.background = (i === idx) ? "rgba(37, 99, 235, 0.15)" : "rgba(255,255,255,0.03)";
+            el.classList.toggle("active", i === idx);
         });
 
         document.getElementById("cl-layer-id").value = l.id;
@@ -1216,7 +1196,8 @@
         document.getElementById("cl-class-name").value = l.class_name || "CustomSignalLayer";
         document.getElementById("cl-desc").value = l.description || "";
         document.getElementById("cl-code").value = l.code || "";
-        document.getElementById("cl-btn-delete").style.display = "inline-block";
+        const delBtn = document.getElementById("cl-btn-delete");
+        if (delBtn) { delBtn.hidden = false; delBtn.style.display = "inline-flex"; }
     }
 
     async function saveCustomLayer() {
@@ -1228,7 +1209,7 @@
         const projectId = getActiveProjectId();
 
         if (!name || !className || !code) {
-            SignalML.toast("Katman adı, sınıf adı ve Python kodu gereklidir", "error");
+            SignalML.toast("Layer name, class name, and Python code are required", "error");
             return;
         }
 
@@ -1257,30 +1238,30 @@
             }
 
             if (res.ok) {
-                SignalML.toast(`'${name}' katmanı başarıyla kaydedildi!`, "success");
+                SignalML.toast(`Layer '${name}' saved`, "success");
                 await loadCustomLayersList();
             } else {
                 const err = await SignalML.safeJson(res);
-                SignalML.toast("Kayıt hatası: " + (err.detail || "Doğrulama hatası"), "error");
+                SignalML.toast("Save error: " + (err.detail || "Validation error"), "error");
             }
         } catch (e) {
-            SignalML.toast("Ağ hatası: " + e.message, "error");
+            SignalML.toast("Network error: " + e.message, "error");
         }
     }
 
     async function deleteCurrentCustomLayer() {
         const layerId = document.getElementById("cl-layer-id").value;
         if (!layerId) return;
-        if (!confirm("Bu özel katmanı silmek istediğinizden emin misiniz?")) return;
+        if (!confirm("Delete this custom layer?")) return;
 
         try {
             const res = await fetch(`/api/models/custom_layers/${layerId}`, { method: "DELETE" });
             if (res.ok) {
-                SignalML.toast("Katman silindi", "info");
+                SignalML.toast("Custom layer deleted", "info");
                 await loadCustomLayersList();
             }
         } catch (e) {
-            SignalML.toast("Silme hatası: " + e.message, "error");
+            SignalML.toast("Delete error: " + e.message, "error");
         }
     }
 
@@ -1298,7 +1279,7 @@
             nnEditorInstance.graph.add(node);
             nnEditorInstance.validateGraph();
             closeCustomLayerModal();
-            SignalML.toast(`'${className}' katmanı tuvale eklendi!`, "success");
+            SignalML.toast(`Layer '${className}' added to canvas`, "success");
         }
     }
 
@@ -1310,7 +1291,7 @@
     async function openPythonExportModal() {
         document.getElementById("python-export-modal").style.display = "flex";
         const codeView = document.getElementById("python-code-view");
-        codeView.textContent = "# Python Functional API kodu derleniyor...";
+        codeView.textContent = "# Compiling Python Functional API code...";
 
         const graph = nnEditorInstance.serializeGraph();
         const modelName = document.getElementById("save-model-name")?.value || "SignalML_Functional_Model";
@@ -1333,10 +1314,10 @@
                 codeView.textContent = data.code;
             } else {
                 const err = await SignalML.safeJson(res);
-                codeView.textContent = `# Hata: ${err.detail || "Python kodu üretilemedi"}`;
+                codeView.textContent = `# Error: ${err.detail || "Failed to generate Python code"}`;
             }
         } catch (e) {
-            codeView.textContent = `# Ağ Hatası: ${e.message}`;
+            codeView.textContent = `# Network Error: ${e.message}`;
         }
     }
 
@@ -1349,13 +1330,14 @@
         navigator.clipboard.writeText(currentGeneratedPythonCode).then(() => {
             const btn = document.getElementById("btn-copy-py");
             if (btn) {
-                const orig = btn.textContent;
-                btn.textContent = "✓ Kopyalandı!";
-                setTimeout(() => { btn.textContent = orig; }, 1800);
+                const origHtml = btn.innerHTML;
+                const checkIcon = (window.SignalML && typeof window.SignalML.icon === "function") ? window.SignalML.icon("check") : "";
+                btn.innerHTML = `${checkIcon} <span>Copied</span>`;
+                setTimeout(() => { btn.innerHTML = origHtml; }, 1800);
             }
-            SignalML.toast("Python kodu panoya kopyalandı!", "success");
+            SignalML.toast("Python code copied to clipboard", "success");
         }).catch(err => {
-            SignalML.toast("Kopyalama başarısız: " + err, "error");
+            SignalML.toast("Copy failed: " + err, "error");
         });
     }
 
@@ -1371,11 +1353,11 @@
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        SignalML.toast(`'${a.download}' dosyası indirildi!`, "success");
+        SignalML.toast(`Downloaded '${a.download}'`, "success");
     }
 
     // ==========================================
-    // IDEC Sinyal Kümeleme & Latent Uzay Analiz Stüdyosu Handlers
+    // IDEC Signal Clustering & Latent Space Studio Handlers
     // ==========================================
     let idecLoadedModelsList = [];
     let idecCurrentAnalysisData = null;
@@ -1383,9 +1365,9 @@
     let idecPcaChartInstance = null;
     let idecWaveformsChartInstance = null;
     const idecPaletteColors = [
-        "#38bdf8", "#818cf8", "#c084fc", "#f472b6",
-        "#fb923c", "#facc15", "#4ade80", "#2dd4bf",
-        "#e879f9", "#34d399", "#60a5fa", "#a3e635"
+        "#0090ff", "#30a46c", "#ffc53d", "#e5484d",
+        "#8e4ec6", "#00b8d9", "#f76b15", "#a0a7b4",
+        "#3b9eff", "#46a758", "#f5d90a", "#e54d2e"
     ];
 
     async function openIdecProbabilitiesModal() {
@@ -1405,8 +1387,8 @@
         const datasetSelect = document.getElementById("idec-dataset-select");
         if (!modelSelect || !datasetSelect) return;
 
-        modelSelect.innerHTML = `<option value="">Model yükleniyor...</option>`;
-        datasetSelect.innerHTML = `<option value="">Veri kümesi yükleniyor...</option>`;
+        modelSelect.innerHTML = `<option value="">Loading models...</option>`;
+        datasetSelect.innerHTML = `<option value="">Loading datasets...</option>`;
 
         try {
             const [modelsRes, datasetsRes] = await Promise.all([
@@ -1418,7 +1400,7 @@
             if (modelsRes.ok) {
                 const models = await SignalML.safeJson(modelsRes);
                 if (!models || models.length === 0) {
-                    modelSelect.innerHTML = `<option value="">Kayıtlı model bulunamadı</option>`;
+                    modelSelect.innerHTML = `<option value="">No saved models found</option>`;
                 } else {
                     const currentLoadedModelId = document.getElementById("load-saved-model-select")?.value || null;
                     const preferredModelId = currentLoadedModelId || SignalML.activeModel || null;
@@ -1450,12 +1432,12 @@
             if (datasetsRes.ok) {
                 const datasets = await SignalML.safeJson(datasetsRes);
                 if (!datasets || datasets.length === 0) {
-                    datasetSelect.innerHTML = `<option value="">Kayıtlı veri kümesi bulunamadı</option>`;
+                    datasetSelect.innerHTML = `<option value="">No saved datasets found</option>`;
                 } else {
                     const preferredDatasetId = SignalML.activeDataset || (datasets[0] ? datasets[0].id : "");
                     datasetSelect.innerHTML = datasets.map(d => {
                         const isSelected = d.id === preferredDatasetId ? "selected" : "";
-                        return `<option value="${d.id}" ${isSelected}>${escapeHtml(d.name)} (${d.row_count || 0} satır, ${d.col_count || 0} sütun)</option>`;
+                        return `<option value="${d.id}" ${isSelected}>${escapeHtml(d.name)} (${d.row_count || 0} rows, ${d.col_count || 0} cols)</option>`;
                     }).join("");
                 }
             }
@@ -1465,7 +1447,7 @@
                 loadIdecProbabilities(false);
             }
         } catch (e) {
-            SignalML.toast("Seçenekler yüklenemedi: " + e.message, "error");
+            SignalML.toast("Failed to load options: " + e.message, "error");
         }
     }
 
@@ -1485,7 +1467,7 @@
         const datasetId = datasetSelect ? datasetSelect.value : null;
 
         if (!modelId || !datasetId) {
-            SignalML.toast("Lütfen bir model ve veri kümesi seçin", "warning");
+            SignalML.toast("Please select a model and dataset", "warning");
             return;
         }
 
@@ -1496,14 +1478,14 @@
         if (btnAnalyze) btnAnalyze.disabled = true;
         if (btnTrainAnalyze) btnTrainAnalyze.disabled = true;
         if (btnCsv) btnCsv.disabled = true;
-        if (banner) banner.style.display = "flex";
+        if (banner) { banner.hidden = false; banner.style.display = "flex"; }
 
         try {
             // Optional training step
             let trainingResultData = null;
             if (trainFirst) {
                 if (loadingText) {
-                    loadingText.textContent = `⚡ IDEC kümeleme modeli ve rekonstrüksiyon katmanları eğitiliyor (${epochs} epoch)...`;
+                    loadingText.textContent = `Training IDEC clustering model and reconstruction layers (${epochs} epochs)...`;
                 }
                 try {
                     const trainRes = await fetch("/api/clustering/run", {
@@ -1523,7 +1505,7 @@
                     });
                     if (trainRes.ok) {
                         trainingResultData = await SignalML.safeJson(trainRes);
-                        SignalML.toast(`IDEC modeli ${epochs} epoch eğitildi ve ağırlıklar güncellendi!`, "success");
+                        SignalML.toast(`IDEC model trained for ${epochs} epochs`, "success");
                     } else {
                         const err = await SignalML.safeJson(trainRes);
                         console.warn("IDEC training warning:", err);
@@ -1534,7 +1516,7 @@
             }
 
             if (loadingText) {
-                loadingText.textContent = "⏳ Sinyal darboğaz (bottleneck) öznitelikleri, Student-t olasılıkları ve PCA dağılımı hesaplanıyor...";
+                loadingText.textContent = "Computing signal bottleneck features, Student-t probabilities, and PCA projection...";
             }
 
             let probUrl = `/api/models/${modelId}/idec_probabilities/${datasetId}`;
@@ -1545,7 +1527,7 @@
             const res = await fetch(probUrl);
             if (!res.ok) {
                 const err = await SignalML.safeJson(res);
-                SignalML.toast("Hesaplama Hatası: " + (err.detail || "IDEC olasılıkları alınamadı"), "error");
+                SignalML.toast("Calculation error: " + (err.detail || "Failed to fetch IDEC probabilities"), "error");
                 return;
             }
 
@@ -1567,7 +1549,7 @@
             idecCurrentAnalysisData = data;
             idecSelectedClusterFilter = null;
 
-            if (container) container.style.display = "block";
+            if (container) { container.hidden = false; container.style.display = "block"; }
             if (btnCsv) btnCsv.disabled = false;
 
             // 1. Populate KPI Cards
@@ -1595,21 +1577,21 @@
             }, 50);
 
         } catch (e) {
-            SignalML.toast("Ağ Hatası: " + e.message, "error");
+            SignalML.toast("Network error: " + e.message, "error");
         } finally {
-            if (banner) banner.style.display = "none";
+            if (banner) { banner.hidden = true; banner.style.display = "none"; }
             if (btnAnalyze) btnAnalyze.disabled = false;
             if (btnTrainAnalyze) btnTrainAnalyze.disabled = false;
         }
     }
 
     function renderIdecKpis(data) {
-        // 1. Toplam Sinyal
+        // 1. Total Signals
         const totalSamples = data.total_samples || data.num_samples || (data.samples ? data.samples.length : 0);
         const totalEl = document.getElementById("idec-stat-total");
         if (totalEl) totalEl.textContent = totalSamples || "-";
 
-        // 2. Aktif Küme / K + bottleneck badge
+        // 2. Active Clusters / K + bottleneck badge
         const clusterCounts = data.cluster_counts || data.cluster_distribution || {};
         const activeK = Object.keys(clusterCounts).length || data.n_clusters || "-";
         const targetK = data.n_clusters || activeK;
@@ -1619,10 +1601,10 @@
         const bottleneckBadge = document.getElementById("idec-bottleneck-badge");
         if (bottleneckBadge) {
             const bDim = data.bottleneck_dim || (data.summary && data.summary.bottleneck_dim) || null;
-            bottleneckBadge.textContent = bDim ? `Latent Z: ${bDim}D` : "Student-t Q Olasılığı";
+            bottleneckBadge.textContent = bDim ? `Latent Z: ${bDim}D` : "Student-t Q";
         }
 
-        // 3. Ortalama Güven (Confidence)
+        // 3. Mean Confidence
         let meanConf = (data.mean_confidence !== undefined && data.mean_confidence !== null)
             ? data.mean_confidence
             : (data.metrics?.mean_cluster_confidence !== undefined ? data.metrics.mean_cluster_confidence : null);
@@ -1631,10 +1613,10 @@
         }
         const confEl = document.getElementById("idec-stat-confidence");
         if (confEl) {
-            confEl.textContent = meanConf !== null ? `%${Math.round(meanConf * 100)}` : "-";
+            confEl.textContent = meanConf !== null ? `${Math.round(meanConf * 100)}%` : "-";
         }
 
-        // 4. Silhouette Skoru (Latent Z)
+        // 4. Silhouette Score (Latent Z)
         const silVal = data.metrics?.silhouette_score ?? data.silhouette_score;
         const silEl = document.getElementById("idec-stat-silhouette");
         if (silEl) {
@@ -1645,7 +1627,7 @@
             }
         }
 
-        // 5. Davies-Bouldin İndeksi
+        // 5. Davies-Bouldin Index
         const dbiVal = data.metrics?.davies_bouldin_index ?? data.davies_bouldin_index;
         const dbiEl = document.getElementById("idec-stat-dbi");
         if (dbiEl) {
@@ -1656,7 +1638,7 @@
             }
         }
 
-        // 6. Rekonstrüksiyon MSE / MAE
+        // 6. Reconstruction MSE / MAE
         const reconVal = data.metrics?.reconstruction_mse ?? data.reconstruction_mse ?? data.metrics?.loss;
         const reconEl = document.getElementById("idec-stat-recon");
         if (reconEl) {
@@ -1719,7 +1701,7 @@
 
         const badgeEl = document.getElementById("idec-pca-variance-badge");
         if (badgeEl) {
-            badgeEl.textContent = `Açıklanan Varyans: %${totalVarPct} (PC1: %${pc1Pct}, PC2: %${pc2Pct})`;
+            badgeEl.textContent = `Explained variance: ${totalVarPct}% (PC1: ${pc1Pct}%, PC2: ${pc2Pct}%)`;
         }
 
         // Group points by cluster
@@ -1735,7 +1717,7 @@
             const c = Number(cStr);
             const color = idecPaletteColors[c % idecPaletteColors.length];
             return {
-                name: `Küme ${c}`,
+                name: `Cluster ${c}`,
                 color: color,
                 data: clusterGroups[c].map(pt => ({
                     x: pt.x,
@@ -1757,28 +1739,17 @@
             title: { text: null },
             credits: { enabled: false },
             xAxis: {
-                title: { text: `PC1 (${pc1Pct}%)`, style: { color: "#94a3b8", fontSize: "11px" } },
-                labels: { style: { color: "#94a3b8", fontSize: "10px" } },
-                gridLineColor: "#1e293b"
+                title: { text: `PC1 (${pc1Pct}%)` }
             },
             yAxis: {
-                title: { text: `PC2 (${pc2Pct}%)`, style: { color: "#94a3b8", fontSize: "11px" } },
-                labels: { style: { color: "#94a3b8", fontSize: "10px" } },
-                gridLineColor: "#1e293b"
-            },
-            legend: {
-                itemStyle: { color: "#94a3b8", fontSize: "11px" },
-                itemHoverStyle: { color: "#fff" }
+                title: { text: `PC2 (${pc2Pct}%)` }
             },
             tooltip: {
-                backgroundColor: "#0f172a",
-                borderColor: "#334155",
-                style: { color: "#f8fafc" },
                 formatter: function() {
                     const pt = this.point;
                     const idStr = pt.input_id ? `<b>${escapeHtml(pt.input_id)}</b><br/>` : "";
-                    const confStr = pt.confidence ? `%${Math.round(pt.confidence * 100)}` : "-";
-                    return `${idStr}Küme: <b style="color:${this.series.color}">Küme ${pt.cluster}</b><br/>Güven: <b>${confStr}</b><br/>(PC1: ${pt.x.toFixed(3)}, PC2: ${pt.y.toFixed(3)})`;
+                    const confStr = pt.confidence ? `${Math.round(pt.confidence * 100)}%` : "-";
+                    return `${idStr}Cluster: <b>Cluster ${pt.cluster}</b><br/>Confidence: <b>${confStr}</b><br/>(PC1: ${pt.x.toFixed(3)}, PC2: ${pt.y.toFixed(3)})`;
                 }
             },
             plotOptions: {
@@ -1786,11 +1757,11 @@
                     marker: {
                         radius: 4,
                         symbol: "circle",
-                        states: { hover: { enabled: true, lineColor: "#fff", lineWidth: 1, radius: 6 } }
+                        states: { hover: { enabled: true, lineWidth: 1, radius: 6 } }
                     }
                 }
             },
-            series: seriesList.length > 0 ? seriesList : [{ name: "Veri Yok", data: [] }]
+            series: seriesList.length > 0 ? seriesList : [{ name: "No data", data: [] }]
         });
     }
 
@@ -1833,24 +1804,20 @@
             let pillsHtml = activeClusterKeys.map(cStr => {
                 const cId = Number(cStr);
                 const count = counts[cStr] || 0;
-                const color = idecPaletteColors[cId % idecPaletteColors.length];
                 const isSelected = idecActiveWaveformCluster === cId;
-                const bg = isSelected ? `${color}33` : "rgba(255,255,255,0.03)";
-                const shadow = isSelected ? `0 0 12px ${color}66` : "none";
                 return `
-                    <button type="button" class="btn btn-sm" onclick="selectIdecWaveformCluster(${cId})"
-                        style="border: 1px solid ${color}; background: ${bg}; box-shadow: ${shadow}; color: #fff; font-size: 12px; padding: 5px 12px; border-radius: 6px; cursor: pointer; transition: all 0.15s ease;">
-                        <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: ${color}; margin-right: 6px;"></span>
-                        <strong>Cluster ${cId}</strong> (${count} signals)
+                    <button type="button" class="btn ${isSelected ? 'btn-primary' : 'btn-secondary'} btn-sm" onclick="selectIdecWaveformCluster(${cId})">
+                        <span class="status-dot is-accent"></span>
+                        <strong>Cluster ${cId}</strong> <span class="mono">(${count})</span>
                     </button>
                 `;
             }).join("");
 
             const isAllSelected = idecActiveWaveformCluster === "all";
+            const chartIcon = (window.SignalML && typeof window.SignalML.icon === "function") ? window.SignalML.icon("chart-line", "icon-sm") : "";
             pillsHtml += `
-                <button type="button" class="btn btn-sm" onclick="selectIdecWaveformCluster('all')"
-                    style="border: 1px solid #94a3b8; background: ${isAllSelected ? 'rgba(148, 163, 184, 0.25)' : 'rgba(255,255,255,0.03)'}; color: #fff; font-size: 12px; padding: 5px 12px; border-radius: 6px; cursor: pointer; transition: all 0.15s ease;">
-                    <span>📊</span> <strong>Tüm Kümelerin Ortalaması (All Means)</strong>
+                <button type="button" class="btn ${isAllSelected ? 'btn-primary' : 'btn-secondary'} btn-sm" onclick="selectIdecWaveformCluster('all')">
+                    ${chartIcon} <span>All cluster means</span>
                 </button>
             `;
             pillsBar.innerHTML = pillsHtml;
@@ -1866,14 +1833,12 @@
         if (idecActiveWaveformCluster === "all") {
             if (badgeEl) {
                 badgeEl.textContent = "All Clusters Mean";
-                badgeEl.style.borderColor = "#38bdf8";
-                badgeEl.style.color = "#38bdf8";
             }
             if (statsBarEl) {
                 statsBarEl.innerHTML = `
-                    <div><strong>Görünüm:</strong> <span style="color: #38bdf8; font-weight: 700;">Tüm Küme Ortalamaları (${activeClusterKeys.length} Küme)</span></div>
-                    <div><strong>Toplam Sinyal:</strong> ${data.total_samples || "-"}</div>
-                    <div><strong>Ortalama Güven:</strong> %${Math.round((data.mean_confidence || 0) * 100)}</div>
+                    <div><strong>View:</strong> <span class="text-info fw-600">All cluster means (${activeClusterKeys.length} clusters)</span></div>
+                    <div><strong>Total signals:</strong> <span class="mono">${data.total_samples || "-"}</span></div>
+                    <div><strong>Mean confidence:</strong> <span class="mono">${Math.round((data.mean_confidence || 0) * 100)}%</span></div>
                 `;
             }
             activeClusterKeys.forEach(cStr => {
@@ -1887,7 +1852,7 @@
                     name: `Cluster ${c} Mean (N=${counts[cStr] || 0})`,
                     type: "line",
                     color: color,
-                    lineWidth: 2.5,
+                    lineWidth: 2,
                     data: pts
                 });
             });
@@ -1901,23 +1866,21 @@
             const sampleCount = st.count !== undefined ? st.count : (counts[c] || 0);
             const renderedCount = st.rendered_count !== undefined ? st.rendered_count : ((st.waveforms || []).length);
             const seqLen = st.sequence_length || meanWf.length || 0;
-            const confPct = st.mean_confidence !== undefined ? `%${Math.round(st.mean_confidence * 100)}` : "-";
+            const confPct = st.mean_confidence !== undefined ? `${Math.round(st.mean_confidence * 100)}%` : "-";
 
             if (badgeEl) {
                 badgeEl.textContent = `Cluster ${c}`;
-                badgeEl.style.borderColor = clusterColor;
-                badgeEl.style.color = clusterColor;
             }
 
             if (statsBarEl) {
                 statsBarEl.innerHTML = `
-                    <div><strong>Group Sample Count:</strong> <span style="color: ${clusterColor}; font-weight: 700;">${sampleCount}</span></div>
-                    <div><strong>Shown in Overlay:</strong> ${renderedCount} signals</div>
-                    <div><strong>Sequence Length:</strong> ${seqLen} points</div>
-                    <div><strong>Mean Peak:</strong> ${stInner.peak_mean !== undefined ? Number(stInner.peak_mean).toFixed(3) : '—'}</div>
-                    <div><strong>Mean Trough:</strong> ${stInner.trough_mean !== undefined ? Number(stInner.trough_mean).toFixed(3) : '—'}</div>
-                    <div><strong>Group Variance (Avg Std):</strong> ${stInner.overall_std !== undefined ? Number(stInner.overall_std).toFixed(3) : '—'}</div>
-                    <div><strong>Mean Confidence:</strong> <span style="color: #34d399; font-weight: 700;">${confPct}</span></div>
+                    <div><strong>Group samples:</strong> <span class="mono fw-600">${sampleCount}</span></div>
+                    <div><strong>Shown in overlay:</strong> <span class="mono">${renderedCount}</span></div>
+                    <div><strong>Sequence length:</strong> <span class="mono">${seqLen}</span></div>
+                    <div><strong>Mean peak:</strong> <span class="mono">${stInner.peak_mean !== undefined ? Number(stInner.peak_mean).toFixed(3) : '—'}</span></div>
+                    <div><strong>Mean trough:</strong> <span class="mono">${stInner.trough_mean !== undefined ? Number(stInner.trough_mean).toFixed(3) : '—'}</span></div>
+                    <div><strong>Group std:</strong> <span class="mono">${stInner.overall_std !== undefined ? Number(stInner.overall_std).toFixed(3) : '—'}</span></div>
+                    <div><strong>Mean confidence:</strong> <span class="text-success mono fw-600">${confPct}</span></div>
                 `;
             }
 
@@ -1939,15 +1902,15 @@
                 });
             }
 
-            // 2. Standard deviation confidence band (±1σ)
+            // 2. Standard deviation confidence band (+1/-1 sigma)
             const upperStd = st.upper_std || (st.std_waveform ? meanWf.map((m, i) => m + (st.std_waveform[i] || 0)) : null);
             const lowerStd = st.lower_std || (st.std_waveform ? meanWf.map((m, i) => m - (st.std_waveform[i] || 0)) : null);
             if (showStd && upperStd && lowerStd && upperStd.length === meanWf.length) {
                 seriesList.push({
-                    name: "+1σ Upper Bound",
+                    name: "+1 sigma Upper Bound",
                     type: "line",
                     data: xArr.map((xv, idx) => [xv, upperStd[idx]]),
-                    color: "#94a3b8",
+                    color: "#777b84",
                     dashStyle: "Dash",
                     lineWidth: 1,
                     opacity: 0.55,
@@ -1955,10 +1918,10 @@
                     zIndex: 5
                 });
                 seriesList.push({
-                    name: "-1σ Lower Bound",
+                    name: "-1 sigma Lower Bound",
                     type: "line",
                     data: xArr.map((xv, idx) => [xv, lowerStd[idx]]),
-                    color: "#94a3b8",
+                    color: "#777b84",
                     dashStyle: "Dash",
                     lineWidth: 1,
                     opacity: 0.55,
@@ -1971,17 +1934,12 @@
             if (meanWf.length > 0) {
                 const meanPoints = xArr.map((xVal, idx) => [xVal, meanWf[idx]]);
                 seriesList.push({
-                    name: `Group Mean / Ortalama (N=${sampleCount})`,
+                    name: `Group Mean (N=${sampleCount})`,
                     type: "line",
                     data: meanPoints,
-                    color: "#ffffff",
-                    lineWidth: 3.5,
+                    color: clusterColor,
+                    lineWidth: 3,
                     zIndex: 100,
-                    shadow: {
-                        color: clusterColor,
-                        width: 6,
-                        opacity: 0.7
-                    },
                     marker: { enabled: false }
                 });
             }
@@ -1999,23 +1957,12 @@
             title: { text: null },
             credits: { enabled: false },
             xAxis: {
-                title: { text: "Time Points / Sequence Index", style: { color: "#94a3b8", fontSize: "11px" } },
-                labels: { style: { color: "#94a3b8", fontSize: "10px" } },
-                gridLineColor: "#1e293b"
+                title: { text: "Time Points / Sequence Index" }
             },
             yAxis: {
-                title: { text: "Signal Amplitude", style: { color: "#94a3b8", fontSize: "11px" } },
-                labels: { style: { color: "#94a3b8", fontSize: "10px" } },
-                gridLineColor: "#1e293b"
-            },
-            legend: {
-                itemStyle: { color: "#f1f5f9", fontSize: "11px" },
-                itemHoverStyle: { color: "#fff" }
+                title: { text: "Signal Amplitude" }
             },
             tooltip: {
-                backgroundColor: "#191f2e",
-                borderColor: "#334155",
-                style: { color: "#f8fafc" },
                 valueDecimals: 4,
                 shared: true
             },
@@ -2024,7 +1971,7 @@
                     marker: { enabled: false }
                 }
             },
-            series: seriesList.length > 0 ? seriesList : [{ name: "Dalga Formu Yok", data: [] }]
+            series: seriesList.length > 0 ? seriesList : [{ name: "No waveforms", data: [] }]
         });
     }
 
@@ -2052,14 +1999,14 @@
 
             let meanConfStr = "-";
             if (clusterStats[c] && clusterStats[c].mean_confidence !== undefined) {
-                meanConfStr = `%${Math.round(clusterStats[c].mean_confidence * 100)}`;
+                meanConfStr = `${Math.round(clusterStats[c].mean_confidence * 100)}%`;
             } else if (clusterStats[cStr] && clusterStats[cStr].mean_confidence !== undefined) {
-                meanConfStr = `%${Math.round(clusterStats[cStr].mean_confidence * 100)}`;
+                meanConfStr = `${Math.round(clusterStats[cStr].mean_confidence * 100)}%`;
             } else if (data.samples) {
                 const clusterSamples = data.samples.filter(s => s.assigned_cluster === c);
                 if (clusterSamples.length > 0) {
                     const avg = clusterSamples.reduce((acc, s) => acc + (s.confidence || 0), 0) / clusterSamples.length;
-                    meanConfStr = `%${Math.round(avg * 100)}`;
+                    meanConfStr = `${Math.round(avg * 100)}%`;
                 }
             }
 
@@ -2068,28 +2015,29 @@
                 <div class="idec-cluster-card ${isActive ? 'active' : ''}" 
                      data-cluster="${c}"
                      onclick="filterIdecSamplesByCluster(${c})"
-                     title="Küme ${c} dalga formlarını ve örneklerini incele">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                        <span style="font-weight: 700; color: ${color}; font-size: 12px; display: flex; align-items: center; gap: 6px;">
-                            <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: ${color};"></span>
-                            Küme ${c}
+                     title="Inspect Cluster ${c} waveforms and samples">
+                    <div class="row-between mb-1">
+                        <span class="row fw-600 text-sm">
+                            <span class="status-dot is-accent"></span>
+                            <span>Cluster ${c}</span>
                         </span>
-                        <span style="background: rgba(255,255,255,0.08); border-radius: 4px; padding: 1px 6px; font-size: 11px; color: ${color}; font-weight: 600;">
-                            ${count} sinyal (%${pct})
-                        </span>
+                        <span class="badge badge-mono">${count} (${pct}%)</span>
                     </div>
-                    <div style="height: 4px; background: rgba(255,255,255,0.08); border-radius: 2px; overflow: hidden; margin-bottom: 6px;">
-                        <div style="height: 100%; width: ${pct}%; background: ${color}; border-radius: 2px;"></div>
+                    <div class="progress progress-sm mb-1">
+                        <div class="progress-bar" data-pct="${pct}"></div>
                     </div>
-                    <div style="font-size: 10px; color: var(--text-muted); display: flex; justify-content: space-between;">
-                        <span>Ort. Güven:</span>
-                        <span style="color: #34d399; font-weight: 600;">${meanConfStr}</span>
+                    <div class="row-between text-xs text-muted">
+                        <span>Mean confidence:</span>
+                        <span class="text-success mono fw-600">${meanConfStr}</span>
                     </div>
                 </div>
             `;
         });
 
         container.innerHTML = html;
+        container.querySelectorAll(".progress-bar[data-pct]").forEach(el => {
+            el.style.width = `${el.dataset.pct}%`;
+        });
     }
 
     function populateIdecFilterDropdown(data) {
@@ -2099,12 +2047,12 @@
         const counts = data.cluster_counts || data.cluster_distribution || {};
         const clusterKeys = Object.keys(counts).sort((a, b) => Number(a) - Number(b));
 
-        let opts = `<option value="">Tüm Kümeler</option>`;
+        let opts = `<option value="">All clusters</option>`;
         clusterKeys.forEach(cStr => {
             const c = Number(cStr);
             const count = counts[cStr] || 0;
             const isSelected = idecSelectedClusterFilter === c ? "selected" : "";
-            opts += `<option value="${c}" ${isSelected}>Küme ${c} (${count} sinyal)</option>`;
+            opts += `<option value="${c}" ${isSelected}>Cluster ${c} (${count} signals)</option>`;
         });
 
         filterSelect.innerHTML = opts;
@@ -2130,7 +2078,9 @@
 
         const resetBtn = document.getElementById("idec-reset-cluster-filter-btn");
         if (resetBtn) {
-            resetBtn.style.display = idecSelectedClusterFilter !== null ? "inline-block" : "none";
+            const show = idecSelectedClusterFilter !== null;
+            resetBtn.hidden = !show;
+            resetBtn.style.display = show ? "inline-flex" : "none";
         }
 
         // Update card active classes
@@ -2163,7 +2113,9 @@
 
         const resetBtn = document.getElementById("idec-reset-cluster-filter-btn");
         if (resetBtn) {
-            resetBtn.style.display = selectedCluster !== null ? "inline-block" : "none";
+            const show = selectedCluster !== null;
+            resetBtn.hidden = !show;
+            resetBtn.style.display = show ? "inline-flex" : "none";
         }
 
         const query = searchInput ? searchInput.value.toLowerCase().trim() : "";
@@ -2180,11 +2132,11 @@
         });
 
         if (countBadge) {
-            countBadge.textContent = `(Gösterilen: ${filtered.length} / ${allSamples.length})`;
+            countBadge.textContent = `${filtered.length} / ${allSamples.length}`;
         }
 
         if (filtered.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="4" style="padding: 16px; text-align: center; color: var(--text-muted);">Eşleşen örnek sinyal bulunamadı.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="4" class="text-center text-muted p-4">No matching signal samples found.</td></tr>`;
             return;
         }
 
@@ -2195,34 +2147,34 @@
 
             const probBadges = (s.probabilities || []).map((p, c) => {
                 const isMax = c === s.assigned_cluster;
-                const style = isMax
-                    ? 'background: rgba(56, 189, 248, 0.25); color: #38bdf8; font-weight: 700; border: 1px solid rgba(56, 189, 248, 0.5);'
-                    : 'background: rgba(255,255,255,0.04); color: #94a3b8; border: 1px solid rgba(255,255,255,0.05);';
-                return `<span style="display: inline-block; padding: 2px 5px; margin: 1px 3px 1px 0; border-radius: 4px; font-size: 10px; ${style}">c${c}: %${Math.round(p * 100)}</span>`;
+                return `<span class="badge ${isMax ? 'badge-accent' : 'badge-mono'} mr-1">c${c}: ${Math.round(p * 100)}%</span>`;
             }).join("");
 
             rowsHtml += `
-                <tr style="border-bottom: 1px solid rgba(255,255,255,0.04); transition: background 0.15s ease;" onmouseenter="this.style.background='rgba(255,255,255,0.02)'" onmouseleave="this.style.background='transparent'">
-                    <td style="padding: 8px 6px; font-family: var(--font-mono); color: #fff; font-size: 11px;">${escapeHtml(s.id)}</td>
-                    <td style="padding: 8px 6px;">
-                        <span class="shape-badge" style="background: rgba(56,189,248,0.12); border: 1px solid ${clusterColor}; color: ${clusterColor}; font-weight: 600; padding: 2px 8px;">
-                            Küme ${s.assigned_cluster}
+                <tr>
+                    <td class="mono">${escapeHtml(s.id)}</td>
+                    <td>
+                        <span class="badge badge-mono badge-accent">
+                            Cluster ${s.assigned_cluster}
                         </span>
                     </td>
-                    <td style="padding: 8px 6px;">
-                        <div style="display: flex; align-items: center; gap: 8px;">
-                            <span style="color: #34d399; font-weight: 600; min-width: 36px; font-size: 11px;">%${confPct}</span>
-                            <div style="width: 70px; height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; overflow: hidden;">
-                                <div style="width: ${confPct}%; height: 100%; background: #34d399; border-radius: 2px;"></div>
+                    <td>
+                        <div class="row">
+                            <span class="text-success mono fw-600">${confPct}%</span>
+                            <div class="progress progress-sm flex-1">
+                                <div class="progress-bar is-success" data-pct="${confPct}"></div>
                             </div>
                         </div>
                     </td>
-                    <td style="padding: 8px 6px; font-family: var(--font-mono); font-size: 10px;">${probBadges}</td>
+                    <td class="mono">${probBadges}</td>
                 </tr>
             `;
         });
 
         tbody.innerHTML = rowsHtml;
+        tbody.querySelectorAll(".progress-bar[data-pct]").forEach(el => {
+            el.style.width = `${el.dataset.pct}%`;
+        });
     }
 
     function downloadIdecProbabilitiesCSV() {
@@ -2233,7 +2185,7 @@
         const modelId = modelSelect ? modelSelect.value : null;
         const datasetId = datasetSelect ? datasetSelect.value : null;
         if (!modelId || !datasetId) {
-            SignalML.toast("Lütfen CSV indirmek için model ve veri kümesi seçin", "warning");
+            SignalML.toast("Please select a model and dataset to export CSV", "warning");
             return;
         }
 
@@ -2244,7 +2196,7 @@
         }
 
         window.location.href = url;
-        SignalML.toast("IDEC küme olasılıkları CSV indirme başlatıldı!", "success");
+        SignalML.toast("Downloading IDEC cluster probabilities CSV...", "success");
     }
 
     document.addEventListener("DOMContentLoaded", () => {
@@ -2280,7 +2232,7 @@
                 e.preventDefault();
                 e.stopPropagation();
                 dragCounter++;
-                if (dropOverlay) dropOverlay.style.display = "flex";
+                if (dropOverlay) { dropOverlay.hidden = false; dropOverlay.style.display = "flex"; }
             });
 
             canvasWrapper.addEventListener("dragover", (e) => {
@@ -2295,7 +2247,7 @@
                 dragCounter--;
                 if (dragCounter <= 0) {
                     dragCounter = 0;
-                    if (dropOverlay) dropOverlay.style.display = "none";
+                    if (dropOverlay) { dropOverlay.hidden = true; dropOverlay.style.display = "none"; }
                 }
             });
 
@@ -2303,7 +2255,7 @@
                 e.preventDefault();
                 e.stopPropagation();
                 dragCounter = 0;
-                if (dropOverlay) dropOverlay.style.display = "none";
+                if (dropOverlay) { dropOverlay.hidden = true; dropOverlay.style.display = "none"; }
 
                 const files = e.dataTransfer?.files;
                 if (files && files.length > 0) {

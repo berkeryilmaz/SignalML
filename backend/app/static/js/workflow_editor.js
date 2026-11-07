@@ -17,18 +17,31 @@ class WorkflowEditor {
         canvasElement.height = canvasElement.parentElement.clientHeight;
 
         this.canvas = new LGraphCanvas(canvasElement, this.graph);
-        this.canvas.background_color = "#10141d";
-        this.canvas.grid_color = "#1a2233";
+        if (window.SignalML && typeof window.SignalML.applyGraphTheme === "function") {
+            window.SignalML.applyGraphTheme(this.canvas);
+        }
 
         this.registerWorkflowNodes();
         this.setupDefaultGraph();
+        if (window.SignalML && typeof window.SignalML.applyGraphTheme === "function") {
+            window.SignalML.applyGraphTheme(this.canvas);
+        }
+        window.addEventListener("signalml:themechange", () => {
+            if (window.SignalML && typeof window.SignalML.applyGraphTheme === "function") {
+                window.SignalML.applyGraphTheme(this.canvas);
+            }
+        });
         this.setupEventHandlers();
 
         this.graph.start();
     }
 
     registerWorkflowNodes() {
-        const registerWfNode = (type, title, inputs, outputs, properties) => {
+        if (typeof LiteGraph !== "undefined" && typeof LiteGraph.clearRegisteredTypes === "function") {
+            LiteGraph.clearRegisteredTypes();
+        }
+
+        const registerWfNode = (type, title, inputs, outputs, properties, category = "Signal Preprocessing") => {
             function WfNode() {
                 for (let inp of inputs) {
                     this.addInput(inp.name, inp.type || "Any");
@@ -42,32 +55,41 @@ class WorkflowEditor {
             }
             WfNode.title = title;
             LiteGraph.registerNodeType(type, WfNode);
+            WfNode.type = type;
+            WfNode.category = category;
+            WfNode.skip_list = false;
         };
 
         // 1. Data Source
-        registerWfNode("data_source", "Data Source", [], [{ name: "dataset", type: "Dataset" }], { dataset_id: "" });
+        registerWfNode("data_source", "Data Source", [], [{ name: "dataset", type: "Dataset" }], { dataset_id: "" }, "Data & I/O");
 
         // 2. CSV / TXT Parser
-        registerWfNode("csv_parser", "CSV / TXT Parser", [{ name: "raw_data", type: "Dataset" }], [{ name: "signals", type: "Signal" }, { name: "labels", type: "Label Array" }], { delimiter: ",", has_header: false });
+        registerWfNode("csv_parser", "CSV / TXT Parser", [{ name: "raw_data", type: "Dataset" }], [{ name: "signals", type: "Signal" }, { name: "labels", type: "Label Array" }], { delimiter: ",", has_header: false }, "Data & I/O");
 
         // 3. Preprocessing
-        registerWfNode("fixed_length", "To Fixed Length", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { target_length: 512, pad_mode: "constant", truncate_pos: "end" });
-        registerWfNode("signal_truncate", "Signal Truncate", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { target_length: 512, position: "end" });
-        registerWfNode("signal_pad", "Signal Pad", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { target_length: 1024, mode: "constant", constant_value: 0.0 });
-        registerWfNode("peak_window", "Peak Window", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { left_m: 100, right_k: 200, mode: "max_abs" });
-        registerWfNode("normalize", "Normalize", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { method: "zscore", per_signal: true });
+        registerWfNode("fixed_length", "To Fixed Length", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { target_length: 512, pad_mode: "constant", truncate_pos: "end" }, "Signal Preprocessing");
+        registerWfNode("signal_truncate", "Signal Truncate", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { target_length: 512, position: "end" }, "Signal Preprocessing");
+        registerWfNode("signal_pad", "Signal Pad", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { target_length: 1024, mode: "constant", constant_value: 0.0 }, "Signal Preprocessing");
+        registerWfNode("peak_window", "Peak Window", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { left_m: 100, right_k: 200, mode: "max_abs" }, "Signal Preprocessing");
+        registerWfNode("reverse_signals", "Reverse Filter", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { mode: "polarity" }, "Signal Preprocessing");
+        registerWfNode("subtract_median", "Median Baseline", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { per_signal: true }, "Signal Preprocessing");
+        registerWfNode("subtract_mode", "Mode Baseline", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { bins: 100, per_signal: true }, "Signal Preprocessing");
+        registerWfNode("subtract_gaussian_peak", "Gaussian Peak Baseline", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { bins: 100, fit_window_bins: 5, per_signal: true }, "Signal Preprocessing");
+        registerWfNode("scale_min", "Min Scaler", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { mode: "divide_abs_min", per_signal: true }, "Signal Preprocessing");
+        registerWfNode("scale_max", "Max Scaler", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { mode: "divide_max", per_signal: true }, "Signal Preprocessing");
+        registerWfNode("normalize", "Normalize", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { method: "zscore", per_signal: true }, "Signal Preprocessing");
 
         // 4. Feature Extractor
-        registerWfNode("feature_extractor", "Feature Extractor", [{ name: "model", type: "Model" }, { name: "signals", type: "Signal" }], [{ name: "features", type: "Feature Matrix" }], { layer_name: "", batch_size: 32 });
+        registerWfNode("feature_extractor", "Feature Extractor", [{ name: "model", type: "Model" }, { name: "signals", type: "Signal" }], [{ name: "features", type: "Feature Matrix" }], { layer_name: "", batch_size: 32 }, "Features & Models");
 
         // 5. Clustering & PCA
-        registerWfNode("clustering_kmeans", "K-Means Clustering", [{ name: "features", type: "Feature Matrix" }], [{ name: "cluster_results", type: "Cluster Results" }], { n_clusters: 3 });
-        registerWfNode("clustering_dbscan", "DBSCAN Clustering", [{ name: "features", type: "Feature Matrix" }], [{ name: "cluster_results", type: "Cluster Results" }], { eps: 0.5, min_samples: 5 });
-        registerWfNode("clustering_idec", "IDEC Deep Clustering", [{ name: "features", type: "Feature Matrix" }], [{ name: "cluster_results", type: "Cluster Results" }], { n_clusters: 5, epochs: 15, pretrain_epochs: 5, gamma: 0.1 });
-        registerWfNode("pca_analysis", "PCA Analysis", [{ name: "features", type: "Feature Matrix" }], [{ name: "pca_coords", type: "PCA Coordinates" }], { n_components: 3 });
+        registerWfNode("clustering_kmeans", "K-Means Clustering", [{ name: "features", type: "Feature Matrix" }], [{ name: "cluster_results", type: "Cluster Results" }], { n_clusters: 3 }, "Clustering & PCA");
+        registerWfNode("clustering_dbscan", "DBSCAN Clustering", [{ name: "features", type: "Feature Matrix" }], [{ name: "cluster_results", type: "Cluster Results" }], { eps: 0.5, min_samples: 5 }, "Clustering & PCA");
+        registerWfNode("clustering_idec", "IDEC Deep Clustering", [{ name: "features", type: "Feature Matrix" }], [{ name: "cluster_results", type: "Cluster Results" }], { n_clusters: 5, epochs: 15, pretrain_epochs: 5, gamma: 0.1 }, "Clustering & PCA");
+        registerWfNode("pca_analysis", "PCA Analysis", [{ name: "features", type: "Feature Matrix" }], [{ name: "pca_coords", type: "PCA Coordinates" }], { n_components: 3 }, "Clustering & PCA");
 
         // 6. Signal Export
-        registerWfNode("signal_export", "Signal Export", [{ name: "signals", type: "Signal" }, { name: "labels", type: "Label Array" }], [], { target_length: 512, output_format: "csv", filename: "exported_signals" });
+        registerWfNode("signal_export", "Signal Export", [{ name: "signals", type: "Signal" }, { name: "labels", type: "Label Array" }], [], { target_length: 512, output_format: "csv", filename: "exported_signals" }, "Exports");
     }
 
     setupDefaultGraph() {
@@ -114,9 +136,8 @@ class WorkflowEditor {
         window.addEventListener("resize", () => {
             const canvasEl = document.getElementById(this.canvasId);
             if (canvasEl && canvasEl.parentElement) {
-                canvasEl.width = canvasEl.parentElement.clientWidth;
-                canvasEl.height = canvasEl.parentElement.clientHeight;
-                this.canvas.resize();
+                this.canvas.resize(canvasEl.parentElement.clientWidth, canvasEl.parentElement.clientHeight);
+                this.canvas.draw(true, true);
             }
         });
     }
@@ -126,15 +147,15 @@ class WorkflowEditor {
         if (!body) return;
 
         let html = `
-            <div style="margin-bottom: 1rem;">
-                <div style="font-size: 16px; font-weight: 700; color: #fff;">${node.title}</div>
-                <div style="font-size: 12px; color: var(--text-muted); font-family: var(--font-mono);">Type: ${node.type} | ID: ${node.id}</div>
+            <div class="mb-3">
+                <div class="text-subhead">${node.title}</div>
+                <div class="text-xs text-muted mono">Type: ${node.type} | ID: ${node.id}</div>
             </div>
-            <hr style="border: none; border-top: 1px solid var(--border-color); margin-bottom: 1rem;">
+            <hr class="divider mb-3">
         `;
 
         if (node.properties && Object.keys(node.properties).length > 0) {
-            html += `<div style="font-weight: 600; font-size: 13px; margin-bottom: 0.5rem;">Node Configuration</div>`;
+            html += `<div class="section-title">Node Configuration</div>`;
             
             if (node.type === "normalize") {
                 const curMethod = String(node.properties.method || "zscore").toLowerCase();
@@ -143,19 +164,24 @@ class WorkflowEditor {
                     <div class="form-group">
                         <label class="form-label">Normalization Method</label>
                         <select class="form-control wf-prop-input" data-prop="method">
-                            <option value="zscore" ${curMethod === 'zscore' ? 'selected' : ''}>Z-Score Standardization ((x - μ) / σ)</option>
+                            <option value="zscore" ${curMethod === 'zscore' ? 'selected' : ''}>Z-Score Standardization ((x - mu) / sigma)</option>
                             <option value="minmax" ${curMethod === 'minmax' ? 'selected' : ''}>Min-Max Scaling ([0, 1])</option>
+                            <option value="median" ${curMethod === 'median' ? 'selected' : ''}>Median Baseline Subtraction (x - median)</option>
+                            <option value="mode" ${curMethod === 'mode' ? 'selected' : ''}>Mode Baseline Subtraction (Most Frequent Value)</option>
+                            <option value="gaussian_peak" ${curMethod === 'gaussian_peak' ? 'selected' : ''}>Histogram Gaussian Peak Baseline (x - mu_peak)</option>
+                            <option value="scale_min" ${curMethod === 'scale_min' ? 'selected' : ''}>Min Scaler (x / |min|)</option>
+                            <option value="scale_max" ${curMethod === 'scale_max' ? 'selected' : ''}>Max Scaler (x / max)</option>
                         </select>
                     </div>
                     <div class="form-group">
-                        <label class="form-label">Scope / Normalizasyon Kapsamı</label>
+                        <label class="form-label">Normalization scope</label>
                         <select class="form-control wf-prop-input" data-prop="per_signal">
-                            <option value="true" ${curPerSig ? 'selected' : ''}>Per-Waveform / Kendi İçinde (Her sinyal bağımsız ölçeklenir)</option>
-                            <option value="false" ${!curPerSig ? 'selected' : ''}>Global Dataset (Tüm veri setine göre)</option>
+                            <option value="true" ${curPerSig ? 'selected' : ''}>Per-waveform (scale each signal independently)</option>
+                            <option value="false" ${!curPerSig ? 'selected' : ''}>Global dataset (scale across all samples)</option>
                         </select>
                     </div>
-                    <div style="background: rgba(56, 189, 248, 0.08); border-left: 3px solid var(--accent-cyan); padding: 8px 10px; font-size: 11px; color: var(--text-secondary); border-radius: 4px; margin-bottom: 12px;">
-                        💡 <strong>Kendi İçinde Normalizasyon (per_signal):</strong> Her dalga formu bağımsız olarak kendi ortalaması/aralığına göre dönüştürülür. Genlik farklılıklarını gidermek için önerilir.
+                    <div class="callout callout-accent mb-3 text-sm">
+                        Per-waveform normalization scales each signal by its own mean and range to remove amplitude offsets.
                     </div>
                 `;
             } else {
@@ -166,8 +192,8 @@ class WorkflowEditor {
                             <div class="form-group">
                                 <label class="form-label">${k}</label>
                                 <select class="form-control wf-prop-input" data-prop="${k}">
-                                    <option value="true" ${isTrue ? 'selected' : ''}>True (Aktif)</option>
-                                    <option value="false" ${!isTrue ? 'selected' : ''}>False (Devre Dışı)</option>
+                                    <option value="true" ${isTrue ? 'selected' : ''}>True (Enabled)</option>
+                                    <option value="false" ${!isTrue ? 'selected' : ''}>False (Disabled)</option>
                                 </select>
                             </div>
                         `;
@@ -182,7 +208,7 @@ class WorkflowEditor {
                 }
             }
         } else {
-            html += `<div style="color: var(--text-muted); font-size: 13px;">No configurable parameters for this node.</div>`;
+            html += `<div class="text-muted text-sm">No configurable parameters for this node.</div>`;
         }
 
         body.innerHTML = html;
@@ -204,8 +230,10 @@ class WorkflowEditor {
     clearInspector() {
         const body = document.getElementById("wf-inspector-body");
         if (body) {
+            const iconHtml = (window.SignalML && typeof window.SignalML.icon === "function") ? window.SignalML.icon("sliders-horizontal") : "";
             body.innerHTML = `
                 <div class="empty-inspector">
+                    ${iconHtml}
                     <p>Select any node to view configuration parameters and live execution status.</p>
                 </div>
             `;
@@ -275,24 +303,24 @@ class WorkflowEditor {
         if (!container) return;
 
         let html = `
-            <div style="margin-top: 1rem; padding: 1rem; background: var(--bg-secondary); border-radius: 8px; border: 1px solid var(--border-color);">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
-                    <strong>DAG Execution Log</strong>
+            <div class="tile mt-3">
+                <div class="row-between mb-2">
+                    <strong class="text-sm">DAG Execution Log</strong>
                     <span class="status-badge success">Success (${data.total_duration_seconds}s)</span>
                 </div>
-                <div style="max-height: 250px; overflow-y: auto;">
+                <div class="max-h-sm scroll-y">
         `;
 
         for (let [nid, res] of Object.entries(data.node_results)) {
             const badgeClass = res.status === "success" ? "success" : "error";
             html += `
-                <div style="display: flex; justify-content: space-between; align-items: center; font-size: 12px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.05);">
+                <div class="row-between text-sm py-1 border-b">
                     <div>
-                        <strong>${res.node_type}</strong> (ID: ${res.node_id})
-                        <div style="color: var(--text-muted); font-size: 11px;">${res.preview || ""}</div>
+                        <strong>${res.node_type}</strong> (ID: <span class="mono">${res.node_id}</span>)
+                        <div class="text-muted text-xs">${res.preview || ""}</div>
                     </div>
-                    <div>
-                        <span style="font-family: var(--font-mono); font-size: 11px; margin-right: 8px;">${res.duration_ms}ms</span>
+                    <div class="row">
+                        <span class="mono text-xs">${res.duration_ms}ms</span>
                         <span class="status-badge ${badgeClass}">${res.status}</span>
                     </div>
                 </div>

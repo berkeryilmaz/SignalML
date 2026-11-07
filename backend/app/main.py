@@ -140,11 +140,13 @@ def page_signal_tagger(request: Request):
 
 
 @app.get("/signal-processing", response_class=HTMLResponse)
+@app.get("/preprocessing", response_class=HTMLResponse)
 def page_signal_processing(request: Request):
     return templates.TemplateResponse(request=request, name="signal_processing.html", context={"active_page": "signal_processing"})
 
 
 @app.get("/workflow-builder", response_class=HTMLResponse)
+@app.get("/workflow", response_class=HTMLResponse)
 def page_workflow_builder(request: Request):
     return templates.TemplateResponse(request=request, name="workflow_builder.html", context={"active_page": "workflow_builder"})
 
@@ -160,6 +162,7 @@ def page_training(request: Request):
 
 
 @app.get("/feature-extraction", response_class=HTMLResponse)
+@app.get("/features", response_class=HTMLResponse)
 def page_feature_extraction(request: Request):
     return templates.TemplateResponse(request=request, name="feature_extraction.html", context={"active_page": "feature_extraction"})
 
@@ -170,6 +173,7 @@ def page_clustering(request: Request):
 
 
 @app.get("/model-evaluation", response_class=HTMLResponse)
+@app.get("/evaluation", response_class=HTMLResponse)
 def page_model_evaluation(request: Request):
     return templates.TemplateResponse(request=request, name="model_evaluation.html", context={"active_page": "model_evaluation"})
 
@@ -177,6 +181,11 @@ def page_model_evaluation(request: Request):
 @app.get("/exports", response_class=HTMLResponse)
 def page_exports(request: Request):
     return templates.TemplateResponse(request=request, name="exports.html", context={"active_page": "exports"})
+
+
+@app.get("/styleguide", response_class=HTMLResponse)
+def page_styleguide(request: Request):
+    return templates.TemplateResponse(request=request, name="_styleguide.html", context={"active_page": "styleguide"})
 
 
 if __name__ == "__main__":
