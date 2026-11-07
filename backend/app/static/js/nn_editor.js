@@ -60,7 +60,11 @@ class NNEditor {
     }
 
     registerKerasNodes() {
-        const registerLayer = (type, title, inputs, outputs, properties, aliases = []) => {
+        if (typeof LiteGraph !== "undefined" && typeof LiteGraph.clearRegisteredTypes === "function") {
+            LiteGraph.clearRegisteredTypes();
+        }
+
+        const createLayerConstructor = (title, inputs, outputs, properties) => {
             function KerasNode() {
                 for (let inp of inputs) {
                     this.addInput(inp.name, inp.type || "Tensor");
@@ -78,63 +82,73 @@ class NNEditor {
                     window.nnEditorInstance.updateInspector(this);
                 }
             };
-            LiteGraph.registerNodeType(`keras/${type}`, KerasNode);
-            LiteGraph.registerNodeType(type, KerasNode);
-            for (let alias of aliases) {
-                LiteGraph.registerNodeType(`keras/${alias}`, KerasNode);
-                LiteGraph.registerNodeType(alias, KerasNode);
+            return KerasNode;
+        };
+
+        const registerLayer = (type, title, inputs, outputs, properties, aliases = [], category = "Core & IO") => {
+            const PrimaryNode = createLayerConstructor(title, inputs, outputs, properties);
+            LiteGraph.registerNodeType(`keras/${type}`, PrimaryNode);
+            PrimaryNode.type = `keras/${type}`;
+            PrimaryNode.category = category;
+            PrimaryNode.skip_list = false;
+
+            const allAliases = [type, ...aliases, ...aliases.map(a => `keras/${a}`)];
+            for (const alias of allAliases) {
+                if (alias === `keras/${type}`) continue;
+                const AliasNode = createLayerConstructor(title, inputs, outputs, properties);
+                LiteGraph.registerNodeType(alias, AliasNode);
+                AliasNode.type = `keras/${type}`;
+                AliasNode.category = null;
+                AliasNode.skip_list = true;
             }
         };
 
-        // 1. Input & Output
-        registerLayer("input", "Input", [], [{ name: "tensor", type: "Tensor" }], { shape: "512, 1" }, ["inputlayer"]);
-        registerLayer("output", "Model Output", [{ name: "in", type: "Tensor" }], [], { activation: "linear" }, ["modeloutput"]);
+        // 1. Core & IO
+        registerLayer("input", "Input", [], [{ name: "tensor", type: "Tensor" }], { shape: "512, 1" }, ["inputlayer"], "Core & IO");
+        registerLayer("output", "Model Output", [{ name: "in", type: "Tensor" }], [], { activation: "linear" }, ["modeloutput"], "Core & IO");
+        registerLayer("dense", "Dense", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { units: 64, activation: "relu" }, [], "Core & IO");
+        registerLayer("activation", "Activation", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { activation: "relu" }, [], "Core & IO");
 
-        // 2. Dense
-        registerLayer("dense", "Dense", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { units: 64, activation: "relu" });
+        // 2. 1D Convolution
+        registerLayer("conv1d", "Conv1D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { filters: 32, kernel_size: 5, strides: 1, padding: "same", activation: "relu" }, [], "1D Convolution");
+        registerLayer("conv1dtranspose", "Conv1DTranspose", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { filters: 32, kernel_size: 5, strides: 2, padding: "same", activation: "relu" }, ["deconv1d", "conv1d_transpose"], "1D Convolution");
+        registerLayer("upsampling1d", "UpSampling1D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { size: 2 }, [], "1D Convolution");
+        registerLayer("separable_conv1d", "SeparableConv1D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { filters: 32, kernel_size: 5, padding: "same", activation: "relu" }, [], "1D Convolution");
+        registerLayer("conv2d", "Conv2D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { filters: 32, kernel_size: 3, padding: "same", activation: "relu" }, [], "1D Convolution");
+        registerLayer("maxpooling1d", "MaxPooling1D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { pool_size: 2, padding: "same" }, ["max_pooling1d", "maxpool1d"], "1D Convolution");
+        registerLayer("averagepooling1d", "AveragePooling1D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { pool_size: 2, padding: "same" }, ["avgpooling1d", "avg_pooling1d", "avgpool1d"], "1D Convolution");
+        registerLayer("global_maxpooling1d", "GlobalMaxPooling1D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {}, ["globalmaxpooling1d"], "1D Convolution");
+        registerLayer("global_averagepooling1d", "GlobalAveragePooling1D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {}, ["globalaveragepooling1d", "globalavgpooling1d"], "1D Convolution");
 
-        // 3. CNN (1D & Transposed Deconvolution)
-        registerLayer("conv1d", "Conv1D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { filters: 32, kernel_size: 5, strides: 1, padding: "same", activation: "relu" });
-        registerLayer("conv1dtranspose", "Conv1DTranspose", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { filters: 32, kernel_size: 5, strides: 2, padding: "same", activation: "relu" }, ["deconv1d", "conv1d_transpose"]);
-        registerLayer("deconv1d", "Deconv1D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { filters: 32, kernel_size: 5, strides: 2, padding: "same", activation: "relu" }, ["conv1dtranspose"]);
-        registerLayer("upsampling1d", "UpSampling1D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { size: 2 });
-        registerLayer("separable_conv1d", "SeparableConv1D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { filters: 32, kernel_size: 5, padding: "same", activation: "relu" });
-        registerLayer("conv2d", "Conv2D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { filters: 32, kernel_size: 3, padding: "same", activation: "relu" });
-        registerLayer("maxpooling1d", "MaxPooling1D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { pool_size: 2, padding: "same" }, ["max_pooling1d", "maxpool1d"]);
-        registerLayer("averagepooling1d", "AveragePooling1D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { pool_size: 2, padding: "same" }, ["avgpooling1d", "avg_pooling1d", "avgpool1d"]);
-        registerLayer("global_maxpooling1d", "GlobalMaxPooling1D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {}, ["globalmaxpooling1d"]);
-        registerLayer("global_averagepooling1d", "GlobalAveragePooling1D", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {}, ["globalaveragepooling1d", "globalavgpooling1d"]);
+        // 3. Recurrent & TimeDistributed
+        registerLayer("lstm", "LSTM", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { units: 64, return_sequences: false, dropout: 0.0 }, [], "Recurrent");
+        registerLayer("gru", "GRU", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { units: 64, return_sequences: false }, [], "Recurrent");
+        registerLayer("simplernn", "SimpleRNN", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { units: 64, return_sequences: false, activation: "tanh" }, [], "Recurrent");
+        registerLayer("bidirectional", "Bidirectional", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { units: 64, recurrent_type: "lstm", return_sequences: false }, [], "Recurrent");
+        registerLayer("timedistributed", "TimeDistributed", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { layer_type: "Dense", units: 32 }, ["time_distributed"], "Recurrent");
 
-        // 4. Recurrent & TimeDistributed
-        registerLayer("lstm", "LSTM", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { units: 64, return_sequences: false, dropout: 0.0 });
-        registerLayer("gru", "GRU", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { units: 64, return_sequences: false });
-        registerLayer("simplernn", "SimpleRNN", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { units: 64, return_sequences: false, activation: "tanh" });
-        registerLayer("bidirectional", "Bidirectional", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { units: 64, recurrent_type: "lstm", return_sequences: false });
-        registerLayer("timedistributed", "TimeDistributed", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { layer_type: "Dense", units: 32 }, ["time_distributed"]);
+        // 4. Attention & Transformer
+        registerLayer("multihead_attention", "MultiHeadAttention", [{ name: "query", type: "Tensor" }, { name: "value", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { num_heads: 4, key_dim: 32, dropout: 0.1 }, ["multiheadattention"], "Attention & Transformer");
+        registerLayer("positional_encoding", "PositionalEncoding", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { d_model: 64, max_len: 2048 }, ["positionalencoding"], "Attention & Transformer");
 
-        // 5. Attention & Transformer
-        registerLayer("multihead_attention", "MultiHeadAttention", [{ name: "query", type: "Tensor" }, { name: "value", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { num_heads: 4, key_dim: 32, dropout: 0.1 }, ["multiheadattention"]);
-        registerLayer("positional_encoding", "PositionalEncoding", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { d_model: 64, max_len: 2048 }, ["positionalencoding"]);
+        // 5. Reshape & Regularization
+        registerLayer("flatten", "Flatten", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {}, [], "Reshape & Regularization");
+        registerLayer("reshape", "Reshape", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { target_shape: "-1, 1" }, [], "Reshape & Regularization");
+        registerLayer("dropout", "Dropout", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { rate: 0.2 }, [], "Reshape & Regularization");
+        registerLayer("batchnorm", "BatchNormalization", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {}, ["batchnormalization", "bn"], "Reshape & Regularization");
+        registerLayer("layernorm", "LayerNormalization", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {}, ["layernormalization", "ln"], "Reshape & Regularization");
+        registerLayer("unitnorm", "UnitNormalization", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {}, ["unitnormalization"], "Reshape & Regularization");
 
-        // 6. Reshape & Regularization
-        registerLayer("flatten", "Flatten", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {});
-        registerLayer("reshape", "Reshape", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { target_shape: "-1, 1" });
-        registerLayer("dropout", "Dropout", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { rate: 0.2 });
-        registerLayer("batchnorm", "BatchNormalization", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {}, ["batchnormalization", "bn"]);
-        registerLayer("layernorm", "LayerNormalization", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {}, ["layernormalization", "ln"]);
-        registerLayer("unitnorm", "UnitNormalization", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {}, ["unitnormalization"]);
+        // 6. Merge & Arithmetic
+        registerLayer("concatenate", "Concatenate", [{ name: "in1", type: "Tensor" }, { name: "in2", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { axis: -1 }, [], "Merge & Arithmetic");
+        registerLayer("add", "Add", [{ name: "in1", type: "Tensor" }, { name: "in2", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {}, [], "Merge & Arithmetic");
+        registerLayer("multiply", "Multiply", [{ name: "in1", type: "Tensor" }, { name: "in2", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {}, [], "Merge & Arithmetic");
+        registerLayer("average", "Average", [{ name: "in1", type: "Tensor" }, { name: "in2", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {}, [], "Merge & Arithmetic");
+        registerLayer("dot", "Dot", [{ name: "in1", type: "Tensor" }, { name: "in2", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { axes: -1, normalize: false }, [], "Merge & Arithmetic");
 
-        // 7. Merging
-        registerLayer("concatenate", "Concatenate", [{ name: "in1", type: "Tensor" }, { name: "in2", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { axis: -1 });
-        registerLayer("add", "Add", [{ name: "in1", type: "Tensor" }, { name: "in2", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {});
-        registerLayer("multiply", "Multiply", [{ name: "in1", type: "Tensor" }, { name: "in2", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {});
-        registerLayer("average", "Average", [{ name: "in1", type: "Tensor" }, { name: "in2", type: "Tensor" }], [{ name: "out", type: "Tensor" }], {});
-        registerLayer("dot", "Dot", [{ name: "in1", type: "Tensor" }, { name: "in2", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { axes: -1, normalize: false });
-        registerLayer("activation", "Activation", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { activation: "relu" });
-
-        // 8. IDEC Clustering & Custom Layers
-        registerLayer("clustering", "ClusteringLayer (IDEC)", [{ name: "in", type: "Tensor" }], [{ name: "prob", type: "Tensor" }], { n_clusters: 8, alpha: 1.0 }, ["clusteringlayer"]);
-        registerLayer("custom_layer", "Custom Layer", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { class_name: "CustomSignalLayer", units: 32, activation: "relu", code: "" }, ["customlayer", "customsignallayer"]);
+        // 7. Clustering & Custom Layers
+        registerLayer("clustering", "ClusteringLayer (IDEC)", [{ name: "in", type: "Tensor" }], [{ name: "prob", type: "Tensor" }], { n_clusters: 8, alpha: 1.0 }, ["clusteringlayer"], "Clustering & Custom");
+        registerLayer("custom_layer", "Custom Layer", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { class_name: "CustomSignalLayer", units: 32, activation: "relu", code: "" }, ["customlayer", "customsignallayer"], "Clustering & Custom");
     }
 
     setupDefaultGraph() {

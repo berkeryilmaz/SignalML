@@ -37,7 +37,11 @@ class WorkflowEditor {
     }
 
     registerWorkflowNodes() {
-        const registerWfNode = (type, title, inputs, outputs, properties) => {
+        if (typeof LiteGraph !== "undefined" && typeof LiteGraph.clearRegisteredTypes === "function") {
+            LiteGraph.clearRegisteredTypes();
+        }
+
+        const registerWfNode = (type, title, inputs, outputs, properties, category = "Signal Preprocessing") => {
             function WfNode() {
                 for (let inp of inputs) {
                     this.addInput(inp.name, inp.type || "Any");
@@ -51,38 +55,41 @@ class WorkflowEditor {
             }
             WfNode.title = title;
             LiteGraph.registerNodeType(type, WfNode);
+            WfNode.type = type;
+            WfNode.category = category;
+            WfNode.skip_list = false;
         };
 
         // 1. Data Source
-        registerWfNode("data_source", "Data Source", [], [{ name: "dataset", type: "Dataset" }], { dataset_id: "" });
+        registerWfNode("data_source", "Data Source", [], [{ name: "dataset", type: "Dataset" }], { dataset_id: "" }, "Data & I/O");
 
         // 2. CSV / TXT Parser
-        registerWfNode("csv_parser", "CSV / TXT Parser", [{ name: "raw_data", type: "Dataset" }], [{ name: "signals", type: "Signal" }, { name: "labels", type: "Label Array" }], { delimiter: ",", has_header: false });
+        registerWfNode("csv_parser", "CSV / TXT Parser", [{ name: "raw_data", type: "Dataset" }], [{ name: "signals", type: "Signal" }, { name: "labels", type: "Label Array" }], { delimiter: ",", has_header: false }, "Data & I/O");
 
         // 3. Preprocessing
-        registerWfNode("fixed_length", "To Fixed Length", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { target_length: 512, pad_mode: "constant", truncate_pos: "end" });
-        registerWfNode("signal_truncate", "Signal Truncate", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { target_length: 512, position: "end" });
-        registerWfNode("signal_pad", "Signal Pad", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { target_length: 1024, mode: "constant", constant_value: 0.0 });
-        registerWfNode("peak_window", "Peak Window", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { left_m: 100, right_k: 200, mode: "max_abs" });
-        registerWfNode("reverse_signals", "Reverse Filter", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { mode: "polarity" });
-        registerWfNode("subtract_median", "Median Baseline", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { per_signal: true });
-        registerWfNode("subtract_mode", "Mode Baseline", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { bins: 100, per_signal: true });
-        registerWfNode("subtract_gaussian_peak", "Gaussian Peak Baseline", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { bins: 100, fit_window_bins: 5, per_signal: true });
-        registerWfNode("scale_min", "Min Scaler", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { mode: "divide_abs_min", per_signal: true });
-        registerWfNode("scale_max", "Max Scaler", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { mode: "divide_max", per_signal: true });
-        registerWfNode("normalize", "Normalize", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { method: "zscore", per_signal: true });
+        registerWfNode("fixed_length", "To Fixed Length", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { target_length: 512, pad_mode: "constant", truncate_pos: "end" }, "Signal Preprocessing");
+        registerWfNode("signal_truncate", "Signal Truncate", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { target_length: 512, position: "end" }, "Signal Preprocessing");
+        registerWfNode("signal_pad", "Signal Pad", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { target_length: 1024, mode: "constant", constant_value: 0.0 }, "Signal Preprocessing");
+        registerWfNode("peak_window", "Peak Window", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { left_m: 100, right_k: 200, mode: "max_abs" }, "Signal Preprocessing");
+        registerWfNode("reverse_signals", "Reverse Filter", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { mode: "polarity" }, "Signal Preprocessing");
+        registerWfNode("subtract_median", "Median Baseline", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { per_signal: true }, "Signal Preprocessing");
+        registerWfNode("subtract_mode", "Mode Baseline", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { bins: 100, per_signal: true }, "Signal Preprocessing");
+        registerWfNode("subtract_gaussian_peak", "Gaussian Peak Baseline", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { bins: 100, fit_window_bins: 5, per_signal: true }, "Signal Preprocessing");
+        registerWfNode("scale_min", "Min Scaler", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { mode: "divide_abs_min", per_signal: true }, "Signal Preprocessing");
+        registerWfNode("scale_max", "Max Scaler", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { mode: "divide_max", per_signal: true }, "Signal Preprocessing");
+        registerWfNode("normalize", "Normalize", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { method: "zscore", per_signal: true }, "Signal Preprocessing");
 
         // 4. Feature Extractor
-        registerWfNode("feature_extractor", "Feature Extractor", [{ name: "model", type: "Model" }, { name: "signals", type: "Signal" }], [{ name: "features", type: "Feature Matrix" }], { layer_name: "", batch_size: 32 });
+        registerWfNode("feature_extractor", "Feature Extractor", [{ name: "model", type: "Model" }, { name: "signals", type: "Signal" }], [{ name: "features", type: "Feature Matrix" }], { layer_name: "", batch_size: 32 }, "Features & Models");
 
         // 5. Clustering & PCA
-        registerWfNode("clustering_kmeans", "K-Means Clustering", [{ name: "features", type: "Feature Matrix" }], [{ name: "cluster_results", type: "Cluster Results" }], { n_clusters: 3 });
-        registerWfNode("clustering_dbscan", "DBSCAN Clustering", [{ name: "features", type: "Feature Matrix" }], [{ name: "cluster_results", type: "Cluster Results" }], { eps: 0.5, min_samples: 5 });
-        registerWfNode("clustering_idec", "IDEC Deep Clustering", [{ name: "features", type: "Feature Matrix" }], [{ name: "cluster_results", type: "Cluster Results" }], { n_clusters: 5, epochs: 15, pretrain_epochs: 5, gamma: 0.1 });
-        registerWfNode("pca_analysis", "PCA Analysis", [{ name: "features", type: "Feature Matrix" }], [{ name: "pca_coords", type: "PCA Coordinates" }], { n_components: 3 });
+        registerWfNode("clustering_kmeans", "K-Means Clustering", [{ name: "features", type: "Feature Matrix" }], [{ name: "cluster_results", type: "Cluster Results" }], { n_clusters: 3 }, "Clustering & PCA");
+        registerWfNode("clustering_dbscan", "DBSCAN Clustering", [{ name: "features", type: "Feature Matrix" }], [{ name: "cluster_results", type: "Cluster Results" }], { eps: 0.5, min_samples: 5 }, "Clustering & PCA");
+        registerWfNode("clustering_idec", "IDEC Deep Clustering", [{ name: "features", type: "Feature Matrix" }], [{ name: "cluster_results", type: "Cluster Results" }], { n_clusters: 5, epochs: 15, pretrain_epochs: 5, gamma: 0.1 }, "Clustering & PCA");
+        registerWfNode("pca_analysis", "PCA Analysis", [{ name: "features", type: "Feature Matrix" }], [{ name: "pca_coords", type: "PCA Coordinates" }], { n_components: 3 }, "Clustering & PCA");
 
         // 6. Signal Export
-        registerWfNode("signal_export", "Signal Export", [{ name: "signals", type: "Signal" }, { name: "labels", type: "Label Array" }], [], { target_length: 512, output_format: "csv", filename: "exported_signals" });
+        registerWfNode("signal_export", "Signal Export", [{ name: "signals", type: "Signal" }, { name: "labels", type: "Label Array" }], [], { target_length: 512, output_format: "csv", filename: "exported_signals" }, "Exports");
     }
 
     setupDefaultGraph() {
