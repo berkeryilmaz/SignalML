@@ -1052,7 +1052,6 @@ input[type="range"] {
 .card-title {
     display: flex;
     align-items: center;
-    justify-content: space-between;
     gap: var(--space-2);
     margin-bottom: var(--space-3);
     font-size: 14px;
@@ -1060,6 +1059,10 @@ input[type="range"] {
     font-weight: 600;
     color: var(--text-primary);
 }
+.card-title.row-between { justify-content: space-between; }
+.card-title > .badge:last-child,
+.card-title > .btn:last-child,
+.card-title > .card-actions { margin-left: auto; }
 .card-title .icon { color: var(--text-muted); }
 .card-subtitle { font-size: 12px; color: var(--text-muted); margin-top: -8px; margin-bottom: var(--space-3); }
 

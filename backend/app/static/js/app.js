@@ -46,7 +46,8 @@ const SignalML = {
         "home": "layout-dashboard",
         "history": "clock",
         "git-fork": "git-branch",
-        "sidebar": "panel-left"
+        "sidebar": "panel-left",
+        "grid": "grid-3x3"
     },
 
     icon: function(name, cls = "", label = null) {
