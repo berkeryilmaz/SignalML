@@ -1,18 +1,22 @@
-/* Node Editor Specific Layout & Customizations */
+/* ==========================================================================
+   Node editor layout (Visual Workflow, NN Builder) + LiteGraph chrome.
+   Uses tokens from style.css only. Canvas drawing colors are applied in JS
+   by SignalML.applyGraphTheme() (app.js), re-applied on theme change.
+   ========================================================================== */
+
+/* Three-pane editor: palette | canvas | inspector */
 .editor-layout {
     display: grid;
-    grid-template-columns: 280px 1fr 320px;
-    gap: 1rem;
-    height: calc(100vh - 140px);
-    min-height: 700px;
-    transition: grid-template-columns 0.2s ease;
+    grid-template-columns: 260px minmax(0, 1fr) 320px;
+    gap: var(--space-3);
+    height: calc(100vh - var(--header-h) - 120px);
+    min-height: 620px;
+    transition: grid-template-columns 150ms var(--ease);
 }
-
 .editor-layout.expanded-canvas {
-    grid-template-columns: 0px 1fr 0px;
+    grid-template-columns: 0px minmax(0, 1fr) 0px;
     gap: 0;
 }
-
 .editor-layout.expanded-canvas .palette-pane,
 .editor-layout.expanded-canvas .inspector-pane {
     overflow: hidden;
@@ -23,134 +27,99 @@
     margin: 0;
 }
 
-.palette-pane {
-    background: var(--bg-card);
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
+.palette-pane,
+.inspector-pane {
     display: flex;
     flex-direction: column;
+    min-height: 0;
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
     overflow: hidden;
 }
-
-.pane-header {
-    padding: 0.75rem 1rem;
-    border-bottom: 1px solid var(--border-color);
-    font-weight: 600;
-    font-size: 13px;
-    color: #fff;
-    background: var(--bg-secondary);
-}
+.inspector-pane { overflow-y: auto; }
 
 .palette-search {
-    padding: 0.75rem 1rem;
-    border-bottom: 1px solid var(--border-color);
+    padding: var(--space-2);
+    border-bottom: 1px solid var(--border-subtle);
 }
-
 .palette-list {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
-    padding: 0.5rem;
+    padding: var(--space-1) var(--space-1) var(--space-2);
 }
-
-.node-category-group {
-    margin-bottom: 0.75rem;
-}
-
+.node-category-group { margin-bottom: var(--space-2); }
 .category-title {
+    padding: 8px 8px 4px;
     font-size: 11px;
-    font-weight: 700;
+    line-height: 14px;
+    font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.04em;
     color: var(--text-muted);
-    padding: 0.25rem 0.5rem;
 }
 
 .node-item {
-    padding: 0.5rem 0.75rem;
-    margin: 2px 0;
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    border-radius: 6px;
-    font-size: 12px;
-    color: var(--text-primary);
-    cursor: grab;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    transition: all 0.15s ease;
+    gap: var(--space-2);
+    height: 28px;
+    padding: 0 8px;
+    margin: 0;
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 12px;
+    text-decoration: none;
+    cursor: grab;
+    user-select: none;
+    transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease);
 }
-
 .node-item:hover {
-    background: rgba(59, 130, 246, 0.15);
-    border-color: var(--accent-blue);
-    transform: translateX(2px);
+    background: var(--surface-4);
+    color: var(--text-primary);
+    text-decoration: none;
 }
-
-.inspector-pane {
-    background: var(--bg-card);
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    display: flex;
-    flex-direction: column;
-    overflow-y: auto;
-}
+.node-item:active { cursor: grabbing; background: var(--surface-5); }
+.node-item > span:last-child { color: var(--text-muted); font-family: var(--font-mono); font-size: 11px; }
+.node-item .icon { width: 14px; height: 14px; color: var(--text-muted); }
 
 .inspector-body {
-    padding: 1rem;
     flex: 1;
+    padding: var(--space-3);
 }
-
 .empty-inspector {
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
+    gap: 4px;
     height: 100%;
+    min-height: 160px;
+    padding: var(--space-6) var(--space-4);
     color: var(--text-muted);
-    font-size: 13px;
+    font-size: 12px;
+    line-height: 16px;
     text-align: center;
-    padding: 2rem;
 }
+.empty-inspector .icon { width: 24px; height: 24px; stroke-width: 1.5; margin-bottom: 4px; }
 
-.shape-badge {
-    display: inline-block;
-    background: rgba(6, 182, 212, 0.15);
-    color: var(--accent-cyan);
-    border: 1px solid rgba(6, 182, 212, 0.3);
-    padding: 2px 6px;
-    border-radius: 4px;
-    font-family: var(--font-mono);
-    font-size: 11px;
-}
-
-.status-badge {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 12px;
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-}
-
-.status-badge.success { background: rgba(16, 185, 129, 0.2); color: var(--accent-green); }
-.status-badge.running { background: rgba(59, 130, 246, 0.2); color: var(--accent-blue); }
-.status-badge.error { background: rgba(244, 63, 94, 0.2); color: var(--accent-rose); }
-.status-badge.pending { background: rgba(148, 163, 184, 0.2); color: var(--text-secondary); }
-
-/* NN Builder Docked Canvas Layout & Toolbar Redesign */
+/* NN Builder docked canvas */
 .canvas-wrapper.nn-canvas-wrapper {
     display: flex;
     flex-direction: column;
     height: 100%;
-    min-height: 650px;
-    background: #0d111a;
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
+    min-height: 620px;
+    margin-bottom: 0;
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
     overflow: hidden;
     position: relative;
-    margin-bottom: 0;
 }
-
 .nn-canvas-toolbar {
     position: relative !important;
     top: auto !important;
@@ -158,148 +127,78 @@
     display: flex !important;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
     flex-wrap: wrap;
-    background: linear-gradient(180deg, rgba(22, 27, 38, 0.98), rgba(15, 19, 28, 0.98));
+    gap: var(--space-2);
+    padding: 6px var(--space-2);
+    background: var(--surface-2);
     border: none !important;
-    border-bottom: 1px solid var(--border-color) !important;
-    border-radius: 8px 8px 0 0;
-    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-subtle) !important;
+    border-radius: 0;
+    box-shadow: none;
     z-index: 10;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
-}
-
-.toolbar-group {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    flex-wrap: nowrap;
-}
-
-.toolbar-divider {
-    width: 1px;
-    height: 22px;
-    background: rgba(255, 255, 255, 0.12);
-    margin: 0 4px;
-    flex-shrink: 0;
 }
 
 .toolbar-select {
-    background: rgba(15, 23, 42, 0.9);
-    border: 1px solid var(--border-color);
-    color: var(--text-primary);
-    border-radius: 6px;
-    height: 30px;
-    min-width: 190px;
+    height: var(--control-h-sm);
+    min-width: 180px;
     max-width: 240px;
-    padding: 0 8px;
+    padding: 0 24px 0 8px;
+    appearance: none;
+    -webkit-appearance: none;
+    background: var(--surface-1) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23777b84' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 6px center / 12px;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    color: var(--text-primary);
     font-size: 12px;
     font-weight: 500;
     outline: none;
-    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    cursor: pointer;
+    transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
 }
+.toolbar-select:hover { border-color: var(--border-strong); }
+.toolbar-select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-ring); }
+.toolbar-select option { background: var(--surface-2); color: var(--text-primary); }
 
-.toolbar-select:focus {
-    border-color: var(--accent-blue);
-    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
-}
-
+/* Toolbar buttons (legacy class, styled as btn-secondary btn-sm) */
 .toolbar-btn {
-    height: 30px;
-    padding: 0 10px;
-    font-size: 12px;
-    font-weight: 600;
-    white-space: nowrap;
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    border-radius: 6px;
-    border: 1px solid var(--border-color);
-    background: rgba(255, 255, 255, 0.04);
-    color: var(--text-secondary);
+    height: var(--control-h-sm);
+    padding: 0 8px;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    background: var(--surface-3);
+    color: var(--text-primary);
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
     cursor: pointer;
-    transition: all 0.15s ease;
     user-select: none;
+    transition: background-color var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease);
 }
-
-.toolbar-btn:hover {
-    background: rgba(255, 255, 255, 0.09);
-    color: #fff;
-    border-color: rgba(255, 255, 255, 0.25);
+.toolbar-btn .icon { width: 14px; height: 14px; }
+.toolbar-btn:hover { background: var(--surface-4); border-color: var(--border-strong); }
+.toolbar-btn:active { background: var(--surface-5); }
+.toolbar-btn:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-ring); }
+.toolbar-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+/* Variants collapse to the neutral palette; only primary/destructive differ */
+.toolbar-btn.btn-wizard,
+.toolbar-btn.btn-primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--text-on-accent);
 }
-
-.toolbar-btn.btn-wizard {
-    background: linear-gradient(135deg, rgba(37, 99, 235, 0.25), rgba(124, 58, 237, 0.3));
-    border-color: rgba(124, 58, 237, 0.5);
-    color: #c084fc;
-}
-.toolbar-btn.btn-wizard:hover {
-    background: linear-gradient(135deg, rgba(37, 99, 235, 0.4), rgba(124, 58, 237, 0.5));
-    color: #fff;
-    border-color: #a855f7;
-    box-shadow: 0 0 8px rgba(168, 85, 247, 0.3);
-}
-
-.toolbar-btn.btn-validate {
-    background: rgba(56, 189, 248, 0.12);
-    border-color: rgba(56, 189, 248, 0.35);
-    color: #38bdf8;
-}
-.toolbar-btn.btn-validate:hover {
-    background: rgba(56, 189, 248, 0.25);
-    color: #fff;
-    border-color: #38bdf8;
-    box-shadow: 0 0 8px rgba(56, 189, 248, 0.3);
-}
-
-.toolbar-btn.btn-update {
-    background: rgba(59, 130, 246, 0.15);
-    border-color: rgba(59, 130, 246, 0.4);
-    color: #60a5fa;
-}
-.toolbar-btn.btn-update:hover {
-    background: rgba(59, 130, 246, 0.28);
-    color: #fff;
-}
-
-.toolbar-btn.btn-delete {
-    background: rgba(239, 68, 68, 0.12);
-    border-color: rgba(239, 68, 68, 0.35);
-    color: #f87171;
-}
-.toolbar-btn.btn-delete:hover {
-    background: rgba(239, 68, 68, 0.25);
-    color: #fff;
-}
-
-.toolbar-btn.btn-python {
-    background: rgba(16, 185, 129, 0.12);
-    border-color: rgba(16, 185, 129, 0.35);
-    color: #34d399;
-}
-.toolbar-btn.btn-python:hover {
-    background: rgba(16, 185, 129, 0.25);
-    color: #fff;
-}
-
-.toolbar-btn.btn-idec {
-    background: rgba(56, 189, 248, 0.12);
-    border-color: rgba(56, 189, 248, 0.35);
-    color: #38bdf8;
-}
-.toolbar-btn.btn-idec:hover {
-    background: rgba(56, 189, 248, 0.25);
-    color: #fff;
-}
-
-.toolbar-btn.btn-clear {
-    color: #94a3b8;
-}
-.toolbar-btn.btn-clear:hover {
-    background: rgba(239, 68, 68, 0.12);
-    border-color: rgba(239, 68, 68, 0.3);
-    color: #f87171;
-}
+.toolbar-btn.btn-wizard:hover,
+.toolbar-btn.btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: var(--text-on-accent); }
+.toolbar-btn.btn-validate,
+.toolbar-btn.btn-update,
+.toolbar-btn.btn-python,
+.toolbar-btn.btn-idec { /* neutral */ }
+.toolbar-btn.btn-delete { background: transparent; border-color: var(--danger-border); color: var(--danger-text); }
+.toolbar-btn.btn-delete:hover { background: var(--danger-subtle); border-color: var(--danger); }
+.toolbar-btn.btn-clear { background: transparent; border-color: transparent; color: var(--text-secondary); }
+.toolbar-btn.btn-clear:hover { background: var(--danger-subtle); color: var(--danger-text); }
 
 .canvas-stage {
     position: relative;
@@ -307,45 +206,215 @@
     min-height: 0;
     width: 100%;
     height: 100%;
+    background: var(--surface-1);
 }
-
 .canvas-stage .node-canvas {
     width: 100%;
     height: 100%;
     display: block;
 }
-
 .canvas-dropzone-overlay {
     position: absolute;
     inset: 0;
-    background: rgba(15, 23, 42, 0.92);
-    border: 2.5px dashed #38bdf8;
-    border-radius: 0 0 8px 8px;
     z-index: 100;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
+    gap: var(--space-2);
+    background: var(--accent-subtle);
+    border: 1px dashed var(--accent);
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+    color: var(--text-primary);
     pointer-events: none;
-    backdrop-filter: blur(5px);
 }
-
 .canvas-hint-badge {
     position: absolute;
-    bottom: 12px;
-    right: 14px;
-    pointer-events: none;
-    font-size: 11px;
-    font-weight: 500;
-    color: var(--text-muted);
-    background: rgba(15, 23, 42, 0.85);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    backdrop-filter: blur(4px);
-    border-radius: 20px;
-    padding: 4px 10px;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+    right: var(--space-3);
+    bottom: var(--space-3);
+    z-index: 5;
     display: flex;
     align-items: center;
     gap: 4px;
-    z-index: 5;
+    height: 22px;
+    padding: 0 8px;
+    background: var(--surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 500;
+    pointer-events: none;
 }
+
+/* Wizard template cards, IDEC cluster cards, custom layer rows.
+   (Selectors repeated here so the page-level <style> blocks can be deleted.) */
+.wizard-card,
+.idec-cluster-card,
+.custom-layer-item {
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    padding: var(--space-3);
+    cursor: pointer;
+    transition: border-color var(--dur) var(--ease), background-color var(--dur) var(--ease);
+}
+.idec-cluster-card,
+.custom-layer-item { padding: 8px 10px; }
+.wizard-card:hover,
+.idec-cluster-card:hover,
+.custom-layer-item:hover { border-color: var(--border-strong); background: var(--surface-3); transform: none; }
+.wizard-card.active,
+.idec-cluster-card.active,
+.custom-layer-item.active {
+    border-color: var(--accent) !important;
+    background: var(--accent-subtle) !important;
+    box-shadow: none;
+}
+
+/* Training: layer freeze list */
+.layer-status-pill {
+    display: inline-flex;
+    align-items: center;
+    height: 18px;
+    padding: 0 6px;
+    border-radius: var(--radius-sm);
+    font-size: 11px;
+    font-weight: 500;
+}
+
+/* ---------------------------------------------------------------------------
+   LiteGraph DOM chrome (context menu, search box, dialogs, panels)
+   --------------------------------------------------------------------------- */
+.lgraphcanvas { font-family: var(--font-sans); background: var(--surface-1); }
+
+.litegraph.litecontextmenu {
+    padding: var(--space-1) !important;
+    min-width: 180px;
+    background-color: var(--surface-3) !important;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-overlay) !important;
+    font-family: var(--font-sans);
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+.litegraph.litecontextmenu.dark { background-color: var(--surface-3) !important; }
+.litegraph.litecontextmenu .litemenu-title {
+    padding: 4px 8px !important;
+    margin: 0 0 4px !important;
+    background: transparent !important;
+    color: var(--text-muted) !important;
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-bottom: 1px solid var(--border-subtle);
+}
+.litegraph .litemenu-entry,
+.litegraph.litecontextmenu .litemenu-entry {
+    margin: 0 !important;
+    padding: 5px 8px !important;
+    border-radius: var(--radius-md);
+    background-color: transparent !important;
+    color: var(--text-secondary) !important;
+    font-size: 12px;
+    line-height: 16px;
+}
+.litegraph .litemenu-entry.submenu,
+.litegraph.litecontextmenu .litemenu-entry.submenu { background-color: transparent !important; }
+.litegraph .litemenu-entry:hover:not(.disabled):not(.separator),
+.litegraph.litecontextmenu .litemenu-entry:hover:not(.disabled):not(.separator) {
+    background-color: var(--surface-5) !important;
+    color: var(--text-primary) !important;
+}
+.litegraph .litemenu-entry.disabled { opacity: 0.45; }
+.litegraph .litemenu-entry.separator {
+    display: block;
+    height: 1px;
+    margin: 4px 0 !important;
+    padding: 0 !important;
+    border: 0;
+    background-color: var(--border-subtle) !important;
+}
+.litegraph .litemenu-entry.has_submenu { border-right: 2px solid var(--accent) !important; }
+
+.litegraph.litesearchbox {
+    padding: var(--space-1);
+    background-color: var(--surface-3) !important;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-overlay) !important;
+    font-family: var(--font-sans);
+    color: var(--text-primary);
+}
+.litegraph.litesearchbox input,
+.litegraph.litesearchbox select {
+    height: 26px;
+    margin: 0 4px 0 0;
+    padding: 0 6px;
+    background-color: var(--surface-1) !important;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    color: var(--text-primary) !important;
+    font-family: var(--font-sans);
+    font-size: 12px;
+}
+.litegraph.litesearchbox .name { color: var(--text-muted); font-size: 11px; font-family: var(--font-sans); padding-left: 4px; }
+.litegraph.lite-search-item {
+    padding: 4px 8px !important;
+    border-radius: var(--radius-md);
+    background-color: transparent !important;
+    color: var(--text-secondary) !important;
+    font-family: var(--font-sans);
+    font-size: 12px;
+}
+.litegraph.lite-search-item.generic_type { color: var(--text-muted) !important; }
+.litegraph.lite-search-item:hover,
+.litegraph.lite-search-item.selected {
+    background-color: var(--surface-5) !important;
+    color: var(--text-primary) !important;
+}
+
+.litegraph .dialog,
+.litegraph.graphdialog {
+    background-color: var(--surface-3) !important;
+    border: 1px solid var(--border-strong) !important;
+    border-radius: var(--radius-lg) !important;
+    box-shadow: var(--shadow-overlay) !important;
+    color: var(--text-primary) !important;
+    font-family: var(--font-sans);
+    font-size: 12px;
+}
+.litegraph.graphdialog .name { color: var(--text-muted); font-family: var(--font-sans); font-size: 12px; }
+.litegraph.graphdialog input,
+.litegraph.graphdialog textarea,
+.litegraph.graphdialog select,
+.litegraph .dialog .property_value {
+    background-color: var(--surface-1) !important;
+    border: 1px solid var(--border-default) !important;
+    border-radius: var(--radius-md);
+    color: var(--text-primary) !important;
+    font-family: var(--font-mono);
+    font-size: 12px;
+}
+.litegraph.graphdialog button,
+.litegraph .dialog button {
+    height: 24px;
+    padding: 0 8px;
+    background-color: var(--surface-4) !important;
+    border: 1px solid var(--border-default) !important;
+    border-radius: var(--radius-md);
+    color: var(--text-primary) !important;
+    font-family: var(--font-sans);
+    font-size: 12px;
+}
+.litegraph .dialog .dialog-header,
+.litegraph .dialog .dialog-footer { background: transparent; border-color: var(--border-subtle); }
+.litegraph .dialog .dialog-title { color: var(--text-primary); font-family: var(--font-sans); font-size: 13px; font-weight: 600; }
+.litegraph .dialog .property { border-bottom: 1px solid var(--border-subtle); }
+.litegraph .dialog .property_name { color: var(--text-muted); }
+
+.graphmenu-entry,
+.litegraph .litemenubar li { color: var(--text-secondary); font-family: var(--font-sans); }
+.litegraph .litemenubar li:hover { background-color: var(--surface-4); color: var(--text-primary); }
