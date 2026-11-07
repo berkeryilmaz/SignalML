@@ -1,53 +1,163 @@
+{% from "_macros.html" import icon %}
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}SignalML — Python Node-Based Machine Learning Platform{% endblock %}</title>
 
+    <script>
+        (function () {
+            var t = "dark";
+            try {
+                var q = new URLSearchParams(window.location.search).get("theme");
+                var s = localStorage.getItem("signalml_theme");
+                if (q === "light" || q === "dark") {
+                    t = q;
+                    localStorage.setItem("signalml_theme", q);
+                } else if (s === "light" || s === "dark") {
+                    t = s;
+                } else if (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches) {
+                    t = "light";
+                }
+            } catch (_) {}
+            document.documentElement.setAttribute("data-theme", t);
+        })();
+    </script>
+
     <!-- Vendor CSS -->
     <link rel="stylesheet" href="/static/vendor/litegraph.css">
-    <!-- SignalML Custom Styles -->
+    <!-- SignalML Design System -->
     <link rel="stylesheet" href="/static/css/style.css">
     <link rel="stylesheet" href="/static/css/nodes.css">
 
-    <!-- Offline Vendor Libraries (No external CDN required!) -->
+    <!-- Offline Vendor Libraries -->
     <script src="/static/vendor/jquery.min.js"></script>
     <script src="/static/vendor/litegraph.min.js"></script>
     <script src="/static/vendor/highcharts.js"></script>
     <script src="/static/vendor/papaparse.min.js"></script>
     <script src="/static/js/app.js"></script>
+    {% block head %}{% endblock %}
 </head>
 <body>
-    <header class="app-header">
-        <div class="brand-section">
-            <div class="brand-logo">S</div>
-            <div class="brand-title">Signal<span>ML</span></div>
-        </div>
+    {% set ws_active = active_page in ['dashboard', 'projects', 'exports'] %}
+    {% set data_active = active_page in ['data_manager', 'signal_tagger', 'signal_processing', 'preprocessing', 'feature_extraction', 'features'] %}
+    {% set model_active = active_page in ['workflow_builder', 'workflow', 'nn_builder', 'training'] %}
+    {% set analysis_active = active_page in ['clustering', 'model_evaluation', 'evaluation'] %}
 
-        <nav class="app-nav">
-            <a href="/dashboard" class="nav-link {% if active_page == 'dashboard' %}active{% endif %}">Dashboard</a>
-            <a href="/projects" class="nav-link {% if active_page == 'projects' %}active{% endif %}">Projects</a>
-            <a href="/data-manager" class="nav-link {% if active_page == 'data_manager' %}active{% endif %}">Data Manager</a>
-            <a href="/signal-tagger" class="nav-link {% if active_page == 'signal_tagger' %}active{% endif %}">Signal Tagger</a>
-            <a href="/signal-processing" class="nav-link {% if active_page == 'signal_processing' %}active{% endif %}">Signal Processing</a>
-            <a href="/workflow-builder" class="nav-link {% if active_page == 'workflow_builder' %}active{% endif %}">Visual Workflow</a>
-            <a href="/nn-builder" class="nav-link {% if active_page == 'nn_builder' %}active{% endif %}" style="display: inline-flex; align-items: center; gap: 6px;">NN Builder <span style="background: linear-gradient(135deg, #2563eb, #8b5cf6); color: white; padding: 2px 7px; border-radius: 10px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px;">🪄 Sihirbaz</span></a>
-            <a href="/training" class="nav-link {% if active_page == 'training' %}active{% endif %}">Training</a>
-            <a href="/feature-extraction" class="nav-link {% if active_page == 'feature_extraction' %}active{% endif %}">Feature Extraction</a>
-            <a href="/clustering" class="nav-link {% if active_page == 'clustering' %}active{% endif %}">Clustering & PCA</a>
-            <a href="/model-evaluation" class="nav-link {% if active_page == 'model_evaluation' %}active{% endif %}">Evaluation</a>
-            <a href="/exports" class="nav-link {% if active_page == 'exports' %}active{% endif %}">Exports</a>
+    <header class="app-header">
+        <a href="/dashboard" class="brand brand-section" aria-label="SignalML Dashboard">
+            <span class="brand-mark">{{ icon('audio-waveform') }}</span>
+            <span class="brand-title">Signal<span>ML</span></span>
+        </a>
+
+        <nav class="app-nav" aria-label="Primary">
+            <div class="nav-group">
+                <button type="button" class="nav-trigger {% if ws_active %}active{% endif %}" aria-haspopup="true" aria-expanded="false">
+                    {{ icon('layout-grid') }}
+                    <span class="nav-label">Workspace</span>
+                    {{ icon('chevron-down', 'nav-caret') }}
+                </button>
+                <div class="nav-menu" role="menu" aria-label="Workspace">
+                    <div class="nav-menu-label">Workspace</div>
+                    <a href="/dashboard" role="menuitem" class="nav-item {% if active_page == 'dashboard' %}active{% endif %}">
+                        {{ icon('layout-dashboard') }}
+                        <span>Dashboard</span>
+                    </a>
+                    <a href="/projects" role="menuitem" class="nav-item {% if active_page == 'projects' %}active{% endif %}">
+                        {{ icon('folder-kanban') }}
+                        <span>Projects</span>
+                    </a>
+                    <a href="/exports" role="menuitem" class="nav-item {% if active_page == 'exports' %}active{% endif %}">
+                        {{ icon('download') }}
+                        <span>Exports</span>
+                    </a>
+                </div>
+            </div>
+
+            <div class="nav-group">
+                <button type="button" class="nav-trigger {% if data_active %}active{% endif %}" aria-haspopup="true" aria-expanded="false">
+                    {{ icon('database') }}
+                    <span class="nav-label">Data</span>
+                    {{ icon('chevron-down', 'nav-caret') }}
+                </button>
+                <div class="nav-menu" role="menu" aria-label="Data">
+                    <div class="nav-menu-label">Data &amp; Signals</div>
+                    <a href="/data-manager" role="menuitem" class="nav-item {% if active_page == 'data_manager' %}active{% endif %}">
+                        {{ icon('hard-drive') }}
+                        <span>Data Manager</span>
+                    </a>
+                    <a href="/signal-tagger" role="menuitem" class="nav-item {% if active_page == 'signal_tagger' %}active{% endif %}">
+                        {{ icon('audio-waveform') }}
+                        <span>Signal Tagger</span>
+                    </a>
+                    <a href="/signal-processing" role="menuitem" class="nav-item {% if active_page in ['signal_processing', 'preprocessing'] %}active{% endif %}">
+                        {{ icon('sliders-horizontal') }}
+                        <span>Signal Processing</span>
+                    </a>
+                    <a href="/feature-extraction" role="menuitem" class="nav-item {% if active_page in ['feature_extraction', 'features'] %}active{% endif %}">
+                        {{ icon('layers') }}
+                        <span>Feature Extraction</span>
+                    </a>
+                </div>
+            </div>
+
+            <div class="nav-group">
+                <button type="button" class="nav-trigger {% if model_active %}active{% endif %}" aria-haspopup="true" aria-expanded="false">
+                    {{ icon('brain-circuit') }}
+                    <span class="nav-label">Modeling</span>
+                    {{ icon('chevron-down', 'nav-caret') }}
+                </button>
+                <div class="nav-menu" role="menu" aria-label="Modeling">
+                    <div class="nav-menu-label">Modeling</div>
+                    <a href="/workflow-builder" role="menuitem" class="nav-item {% if active_page in ['workflow_builder', 'workflow'] %}active{% endif %}">
+                        {{ icon('workflow') }}
+                        <span>Visual Workflow</span>
+                    </a>
+                    <a href="/nn-builder" role="menuitem" class="nav-item {% if active_page == 'nn_builder' %}active{% endif %}">
+                        {{ icon('network') }}
+                        <span>NN Builder</span>
+                    </a>
+                    <a href="/training" role="menuitem" class="nav-item {% if active_page == 'training' %}active{% endif %}">
+                        {{ icon('activity') }}
+                        <span>Training</span>
+                    </a>
+                </div>
+            </div>
+
+            <div class="nav-group">
+                <button type="button" class="nav-trigger {% if analysis_active %}active{% endif %}" aria-haspopup="true" aria-expanded="false">
+                    {{ icon('chart-scatter') }}
+                    <span class="nav-label">Analysis</span>
+                    {{ icon('chevron-down', 'nav-caret') }}
+                </button>
+                <div class="nav-menu" role="menu" aria-label="Analysis">
+                    <div class="nav-menu-label">Analysis</div>
+                    <a href="/clustering" role="menuitem" class="nav-item {% if active_page == 'clustering' %}active{% endif %}">
+                        {{ icon('orbit') }}
+                        <span>Clustering &amp; PCA</span>
+                    </a>
+                    <a href="/model-evaluation" role="menuitem" class="nav-item {% if active_page in ['model_evaluation', 'evaluation'] %}active{% endif %}">
+                        {{ icon('gauge') }}
+                        <span>Evaluation</span>
+                    </a>
+                </div>
+            </div>
         </nav>
 
-        <div class="header-actions">
-            <div class="project-badge" id="project-switcher-btn" style="cursor: pointer;">
+        <div class="header-tools header-actions">
+            <button type="button" class="header-chip project-badge project-switcher" id="project-switcher-btn" aria-haspopup="dialog" aria-controls="project-modal" title="Switch active project">
                 <span class="status-dot"></span>
-                <span id="active-project-name">Loading...</span>
+                <span class="project-name" id="active-project-name">Loading...</span>
+                {{ icon('chevron-down', 'icon-xs') }}
+            </button>
+            <div class="header-chip project-badge engine-pill" id="health-gpu-pill" role="status">
+                {{ icon('cpu') }}
+                <span>CPU Mode</span>
             </div>
-            <div class="project-badge" id="health-gpu-pill">
-                CPU Mode
-            </div>
+            <button type="button" class="btn btn-ghost btn-sm btn-icon" id="theme-toggle-btn" onclick="SignalML.toggleTheme()" aria-label="Toggle color theme" title="Toggle color theme">
+                {{ icon('sun') }}
+            </button>
         </div>
     </header>
 
@@ -56,51 +166,86 @@
     </main>
 
     <!-- Global Project Switcher Modal -->
-    <div id="project-modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); backdrop-filter: blur(4px); z-index: 1000; align-items: center; justify-content: center;">
-        <div style="background: var(--bg-card); border: 1px solid var(--border-color); width: 450px; border-radius: 12px; padding: 1.5rem; box-shadow: 0 16px 36px rgba(0,0,0,0.6);">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-                <h3 style="color: #fff; font-size: 16px;">Workspace Projects</h3>
-                <button onclick="document.getElementById('project-modal').style.display='none'" style="background: none; border: none; color: var(--text-muted); font-size: 18px; cursor: pointer;">&times;</button>
+    <div id="project-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="project-modal-title">
+        <div class="modal modal-sm">
+            <div class="modal-header">
+                <h3 class="modal-title" id="project-modal-title">
+                    {{ icon('folder-kanban') }}
+                    <span>Workspace projects</span>
+                </h3>
+                <button type="button" class="btn btn-ghost btn-sm btn-icon modal-close" onclick="document.getElementById('project-modal').style.display='none'" aria-label="Close modal">
+                    {{ icon('x') }}
+                </button>
             </div>
-            <div id="project-modal-list" style="max-height: 200px; overflow-y: auto; margin-bottom: 1rem;">
-                <!-- Populated dynamically -->
+            <div class="modal-body stack">
+                <div>
+                    <div class="section-title">Select active project</div>
+                    <div id="project-modal-list" class="list max-h-sm">
+                        <!-- Populated dynamically -->
+                    </div>
+                </div>
+                <hr class="divider m-0">
+                <div class="form-group m-0">
+                    <label class="form-label" for="new-project-name">Create new project</label>
+                    <input type="text" id="new-project-name" class="form-control" placeholder="Project name...">
+                </div>
             </div>
-            <hr style="border: none; border-top: 1px solid var(--border-color); margin-bottom: 1rem;">
-            <div class="form-group">
-                <label class="form-label">Create New Project</label>
-                <input type="text" id="new-project-name" class="form-control" placeholder="Project name...">
-            </div>
-            <div style="display: flex; justify-content: flex-end; gap: 8px;">
-                <button onclick="document.getElementById('project-modal').style.display='none'" class="btn btn-secondary btn-sm">Cancel</button>
-                <button id="create-project-btn" class="btn btn-primary btn-sm">Create & Switch</button>
+            <div class="modal-footer">
+                <button type="button" onclick="document.getElementById('project-modal').style.display='none'" class="btn btn-secondary btn-sm">Cancel</button>
+                <button type="button" id="create-project-btn" class="btn btn-primary btn-sm">Create &amp; switch</button>
             </div>
         </div>
     </div>
 
     <script>
-        document.getElementById("project-switcher-btn").addEventListener("click", () => {
-            const list = document.getElementById("project-modal-list");
-            list.innerHTML = "";
-            SignalML.projects.forEach(p => {
-                const isCur = p.id === SignalML.currentProjectId;
-                const div = document.createElement("div");
-                div.style.cssText = `padding: 8px 12px; border-radius: 6px; margin-bottom: 4px; cursor: pointer; display: flex; justify-content: space-between; background: ${isCur ? 'rgba(59, 130, 246, 0.2)' : 'rgba(255,255,255,0.03)'}; border: 1px solid ${isCur ? 'var(--accent-blue)' : 'transparent'};`;
-                div.innerHTML = `<strong>${p.name}</strong> <span style="font-size: 11px; color: var(--text-muted);">${p.id.slice(0, 8)}</span>`;
-                div.onclick = () => {
-                    SignalML.switchProject(p.id);
-                    document.getElementById("project-modal").style.display = "none";
-                };
-                list.appendChild(div);
-            });
-        });
+        (function () {
+            var switcherBtn = document.getElementById("project-switcher-btn");
+            var modal = document.getElementById("project-modal");
+            var createBtn = document.getElementById("create-project-btn");
+            var nameInput = document.getElementById("new-project-name");
 
-        document.getElementById("create-project-btn").addEventListener("click", () => {
-            const input = document.getElementById("new-project-name");
-            if (input && input.value.trim()) {
-                SignalML.createProject(input.value.trim());
-                document.getElementById("project-modal").style.display = "none";
+            if (switcherBtn) {
+                switcherBtn.addEventListener("click", function () {
+                    if (window.SignalML && typeof window.SignalML.renderProjectModalList === "function") {
+                        window.SignalML.renderProjectModalList();
+                    }
+                    if (modal) modal.style.display = "flex";
+                });
             }
-        });
+
+            if (createBtn) {
+                createBtn.addEventListener("click", function () {
+                    if (nameInput && nameInput.value.trim()) {
+                        SignalML.createProject(nameInput.value.trim());
+                        nameInput.value = "";
+                        if (modal) modal.style.display = "none";
+                    }
+                });
+            }
+
+            if (nameInput) {
+                nameInput.addEventListener("keydown", function (e) {
+                    if (e.key === "Enter" && createBtn) {
+                        e.preventDefault();
+                        createBtn.click();
+                    }
+                });
+            }
+
+            if (modal) {
+                modal.addEventListener("click", function (e) {
+                    if (e.target === modal) {
+                        modal.style.display = "none";
+                    }
+                });
+            }
+
+            document.addEventListener("keydown", function (e) {
+                if (e.key === "Escape" && modal && modal.style.display === "flex") {
+                    modal.style.display = "none";
+                }
+            });
+        })();
     </script>
 
     {% block scripts %}{% endblock %}

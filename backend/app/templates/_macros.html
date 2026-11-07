@@ -1,0 +1,50 @@
+{% set _ICON_ALIASES = {
+    'alert-triangle': 'triangle-exclamation-point',
+    'triangle-alert': 'triangle-exclamation-point',
+    'alert-circle': 'circle-exclamation-point',
+    'circle-alert': 'circle-exclamation-point',
+    'alert-octagon': 'octagon-exclamation-point',
+    'check-circle': 'circle-check',
+    'check-circle-2': 'circle-check',
+    'x-circle': 'circle-x',
+    'help-circle': 'circle-question-mark',
+    'circle-help': 'circle-question-mark',
+    'bar-chart': 'chart-bar',
+    'bar-chart-2': 'chart-column',
+    'bar-chart-3': 'chart-column',
+    'line-chart': 'chart-line',
+    'scatter-chart': 'chart-scatter',
+    'pie-chart': 'chart-pie',
+    'area-chart': 'chart-area',
+    'trash-2': 'trash',
+    'edit': 'pencil',
+    'edit-2': 'pencil',
+    'edit-3': 'pen-line',
+    'wand-2': 'wand-sparkles',
+    'loader-2': 'loader',
+    'filter': 'list-filter',
+    'sliders': 'sliders-horizontal',
+    'upload-cloud': 'cloud-upload',
+    'download-cloud': 'cloud-download',
+    'unlock': 'lock-open',
+    'waves': 'audio-waveform',
+    'file-code-2': 'file-code',
+    'code-2': 'code',
+    'play-circle': 'circle-play',
+    'pause-circle': 'circle-pause',
+    'stop-circle': 'circle-stop',
+    'plus-circle': 'circle-plus',
+    'home': 'layout-dashboard',
+    'history': 'clock',
+    'git-fork': 'git-branch',
+    'sidebar': 'panel-left'
+} %}
+{% macro icon(name, cls='', label=None) -%}
+{% set resolved = _ICON_ALIASES.get(name, name) -%}
+{% set classes = ('icon ' ~ cls).strip() -%}
+{% if label -%}
+<svg class="{{ classes }}" role="img" aria-label="{{ label }}"><use href="/static/vendor/lucide/sprite.svg#{{ resolved }}"/></svg>
+{%- else -%}
+<svg class="{{ classes }}" aria-hidden="true"><use href="/static/vendor/lucide/sprite.svg#{{ resolved }}"/></svg>
+{%- endif %}
+{%- endmacro %}
