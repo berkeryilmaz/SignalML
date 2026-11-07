@@ -61,6 +61,11 @@ class PCAVisualizer {
         document.getElementById("pca-toggle-3d").addEventListener("click", () => this.setMode("3d"));
 
         this.setup3DCanvas();
+        try {
+            if (new URLSearchParams(window.location.search).get("mode") === "3d") {
+                this.setMode("3d");
+            }
+        } catch (err) {}
     }
 
     setMode(mode) {
@@ -224,14 +229,31 @@ class PCAVisualizer {
         if (!this.canvas3d) return;
         this.ctx3d = this.canvas3d.getContext("2d");
 
+        if (typeof ResizeObserver !== "undefined" && this.container) {
+            this._ro = new ResizeObserver(() => {
+                if (this.mode === "3d") {
+                    this.resize3DCanvas();
+                    this.render3D();
+                } else if (this.chart2d && typeof this.chart2d.reflow === "function") {
+                    this.chart2d.reflow();
+                }
+            });
+            this._ro.observe(this.container);
+        }
+
+        let dragMoved = false;
         this.canvas3d.addEventListener("mousedown", (e) => {
             this.isDragging = true;
+            dragMoved = false;
             this.lastMouseX = e.clientX;
             this.lastMouseY = e.clientY;
             this.canvas3d.style.cursor = "grabbing";
         });
 
-        window.addEventListener("mouseup", () => {
+        window.addEventListener("mouseup", (e) => {
+            if (this.isDragging && !dragMoved && e.target === this.canvas3d) {
+                this.handle3DClick(e);
+            }
             this.isDragging = false;
             if (this.canvas3d) this.canvas3d.style.cursor = "grab";
         });
@@ -240,8 +262,9 @@ class PCAVisualizer {
             if (this.isDragging) {
                 const dx = e.clientX - this.lastMouseX;
                 const dy = e.clientY - this.lastMouseY;
+                if (Math.abs(dx) > 2 || Math.abs(dy) > 2) dragMoved = true;
                 this.rotY += dx * 0.01;
-                this.rotX += dy * 0.01;
+                this.rotX = Math.max(-1.45, Math.min(1.45, this.rotX + dy * 0.01));
                 this.lastMouseX = e.clientX;
                 this.lastMouseY = e.clientY;
                 this.render3D();
@@ -253,43 +276,50 @@ class PCAVisualizer {
         this.canvas3d.addEventListener("wheel", (e) => {
             e.preventDefault();
             this.zoom *= e.deltaY < 0 ? 1.1 : 0.9;
-            this.zoom = Math.max(0.2, Math.min(this.zoom, 5.0));
+            this.zoom = Math.max(0.3, Math.min(this.zoom, 4.5));
             this.render3D();
-        });
+        }, { passive: false });
     }
 
     resize3DCanvas() {
         if (!this.canvas3d) return;
-        this.canvas3d.width = this.canvas3d.clientWidth;
-        this.canvas3d.height = this.canvas3d.clientHeight;
+        const parent = this.container || this.canvas3d.parentElement;
+        const rect = parent ? parent.getBoundingClientRect() : this.canvas3d.getBoundingClientRect();
+        const w = Math.max(320, Math.round(rect.width || this.canvas3d.clientWidth || 800));
+        const h = Math.max(360, Math.round(rect.height || this.canvas3d.clientHeight || 500));
+        const dpr = window.devicePixelRatio || 1;
+        this._cssWidth = w;
+        this._cssHeight = h;
+        this.canvas3d.style.width = w + "px";
+        this.canvas3d.style.height = h + "px";
+        this.canvas3d.width = Math.round(w * dpr);
+        this.canvas3d.height = Math.round(h * dpr);
+        if (this.ctx3d) {
+            this.ctx3d.setTransform(dpr, 0, 0, dpr, 0, 0);
+        }
     }
 
     render3D() {
-        if (!this.ctx3d || !this.points || this.points.length === 0) return;
+        if (!this.ctx3d || !this.canvas3d) return;
+        if (!this._cssWidth || !this._cssHeight) {
+            this.resize3DCanvas();
+        }
         const ctx = this.ctx3d;
-        const w = this.canvas3d.width;
-        const h = this.canvas3d.height;
+        const w = this._cssWidth || this.canvas3d.width;
+        const h = this._cssHeight || this.canvas3d.height;
         ctx.clearRect(0, 0, w, h);
 
         const palette = typeof SignalML !== "undefined" ? SignalML.getThemePalette() : null;
         const theme = typeof SignalML !== "undefined" ? SignalML.getTheme() : "dark";
 
-        const cx = w / 2;
-        const cy = h / 2;
-        const scale = Math.min(w, h) * 0.25 * this.zoom;
+        const cx = w * 0.5;
+        const cy = h * 0.53;
+        const scale = Math.min(w, h) * 0.30 * this.zoom;
 
         const cosX = Math.cos(this.rotX);
         const sinX = Math.sin(this.rotX);
         const cosY = Math.cos(this.rotY);
         const sinY = Math.sin(this.rotY);
-
-        // Project 3D coordinate axes
-        const axisLen = 1.2;
-        const axes = [
-            { label: "PC1", x: axisLen, y: 0, z: 0 },
-            { label: "PC2", x: 0, y: axisLen, z: 0 },
-            { label: "PC3", x: 0, y: 0, z: axisLen }
-        ];
 
         const projectCoord = (x, y, z) => {
             const x1 = x * cosY + z * sinY;
@@ -297,68 +327,177 @@ class PCAVisualizer {
             const z1 = -x * sinY + z * cosY;
             const x2 = x1;
             const y2 = y1 * cosX - z1 * sinX;
+            const z2 = y1 * sinX + z1 * cosX;
+            // Subtle perspective factor so 3D depth feels natural without distortion
+            const persp = 1.0 / (1.0 - Math.max(-0.6, Math.min(0.6, z2 * 0.18)));
             return {
-                sx: cx + x2 * scale,
-                sy: cy - y2 * scale
+                sx: cx + x2 * scale * persp,
+                sy: cy - y2 * scale * persp,
+                depth: z2
             };
         };
 
-        // Draw axes lines
-        const origin = projectCoord(0, 0, 0);
+        // 1. Draw subtle 3D floor grid at y = -1.0
+        ctx.save();
         ctx.lineWidth = 1;
-        ctx.font = '10px "JetBrains Mono", monospace';
-
-        axes.forEach(a => {
-            const end = projectCoord(a.x, a.y, a.z);
+        ctx.strokeStyle = palette ? palette.borderSubtle : "rgba(128,128,128,0.16)";
+        const gridTicks = [-1.0, -0.5, 0.0, 0.5, 1.0];
+        for (const g of gridTicks) {
+            const a1 = projectCoord(g, -1.0, -1.0);
+            const a2 = projectCoord(g, -1.0, 1.0);
             ctx.beginPath();
-            ctx.moveTo(origin.sx, origin.sy);
-            ctx.lineTo(end.sx, end.sy);
-            ctx.strokeStyle = palette ? palette.borderDefault : "rgba(128,128,128,0.3)";
+            ctx.moveTo(a1.sx, a1.sy);
+            ctx.lineTo(a2.sx, a2.sy);
             ctx.stroke();
 
-            ctx.fillStyle = palette ? palette.textMuted : "#777b84";
-            ctx.fillText(a.label, end.sx + 4, end.sy + 4);
+            const b1 = projectCoord(-1.0, -1.0, g);
+            const b2 = projectCoord(1.0, -1.0, g);
+            ctx.beginPath();
+            ctx.moveTo(b1.sx, b1.sy);
+            ctx.lineTo(b2.sx, b2.sy);
+            ctx.stroke();
+        }
+        ctx.restore();
+
+        // 2. Draw 3D coordinate axes through origin (0, 0, 0)
+        const v3 = this.variance3d || [];
+        const pc1Pct = v3[0] !== undefined ? ` (${(v3[0] * 100).toFixed(1)}%)` : "";
+        const pc2Pct = v3[1] !== undefined ? ` (${(v3[1] * 100).toFixed(1)}%)` : "";
+        const pc3Pct = v3[2] !== undefined ? ` (${(v3[2] * 100).toFixed(1)}%)` : "";
+        const axisLen = 1.18;
+        const axes = [
+            { label: `PC1${pc1Pct}`, x: axisLen, y: 0, z: 0, color: "#0090ff" },
+            { label: `PC2${pc2Pct}`, x: 0, y: axisLen, z: 0, color: "#30a46c" },
+            { label: `PC3${pc3Pct}`, x: 0, y: 0, z: axisLen, color: "#ffc53d" }
+        ];
+
+        const origin = projectCoord(0, 0, 0);
+        ctx.save();
+        ctx.font = '500 11px "JetBrains Mono", monospace';
+        axes.forEach(a => {
+            const neg = projectCoord(-a.x * 0.85, -a.y * 0.85, -a.z * 0.85);
+            const end = projectCoord(a.x, a.y, a.z);
+
+            ctx.beginPath();
+            ctx.setLineDash([3, 3]);
+            ctx.moveTo(neg.sx, neg.sy);
+            ctx.lineTo(origin.sx, origin.sy);
+            ctx.strokeStyle = palette ? palette.borderDefault : "rgba(128,128,128,0.35)";
+            ctx.lineWidth = 1;
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.setLineDash([]);
+            ctx.moveTo(origin.sx, origin.sy);
+            ctx.lineTo(end.sx, end.sy);
+            ctx.strokeStyle = a.color;
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+
+            ctx.fillStyle = palette ? palette.textSecondary : "#b0b4ba";
+            ctx.fillText(a.label, end.sx + 6, end.sy + 4);
         });
+        ctx.restore();
 
-        // Transform 3D coordinates to 2D screen
-        const projected = [];
-        for (let pt of this.points) {
-            // Rotate around Y
-            let x1 = pt.x * cosY + pt.z * sinY;
-            let y1 = pt.y;
-            let z1 = -pt.x * sinY + pt.z * cosY;
-
-            // Rotate around X
-            let x2 = x1;
-            let y2 = y1 * cosX - z1 * sinX;
-            let z2 = y1 * sinX + z1 * cosX;
-
-            const screenX = cx + x2 * scale;
-            const screenY = cy - y2 * scale;
-
-            projected.push({
-                pt: pt,
-                sx: screenX,
-                sy: screenY,
-                depth: z2
-            });
+        if (!this.points || this.points.length === 0) {
+            ctx.save();
+            ctx.font = '500 13px "Inter", sans-serif';
+            ctx.fillStyle = palette ? palette.textMuted : "#777b84";
+            ctx.textAlign = "center";
+            ctx.fillText("Run clustering & PCA to project samples in 3D space", cx, 32);
+            ctx.restore();
+            this.projectedPoints = [];
+            return;
         }
 
-        // Sort by depth for correct 3D occlusion
-        projected.sort((a, b) => b.depth - a.depth);
+        // 3. Normalize 3D point cloud into [-1, 1]^3 so any PCA scale fits the 3D cube cleanly
+        let sumX = 0, sumY = 0, sumZ = 0;
+        const n = this.points.length;
+        for (let pt of this.points) {
+            sumX += Number(pt.x) || 0;
+            sumY += Number(pt.y) || 0;
+            sumZ += Number(pt.z) || 0;
+        }
+        const meanX = sumX / n;
+        const meanY = sumY / n;
+        const meanZ = sumZ / n;
 
-        // Draw points with theme-aware border
-        const strokeColor = theme === "light" ? "rgba(0,0,0,0.2)" : "rgba(0,0,0,0.5)";
+        let maxSpan = 1e-6;
+        for (let pt of this.points) {
+            const dx = Math.abs((Number(pt.x) || 0) - meanX);
+            const dy = Math.abs((Number(pt.y) || 0) - meanY);
+            const dz = Math.abs((Number(pt.z) || 0) - meanZ);
+            if (dx > maxSpan) maxSpan = dx;
+            if (dy > maxSpan) maxSpan = dy;
+            if (dz > maxSpan) maxSpan = dz;
+        }
+
+        const projected = [];
+        const clusterCounts = {};
+        for (let pt of this.points) {
+            const nx = ((Number(pt.x) || 0) - meanX) / maxSpan;
+            const ny = ((Number(pt.y) || 0) - meanY) / maxSpan;
+            const nz = ((Number(pt.z) || 0) - meanZ) / maxSpan;
+
+            const proj = projectCoord(nx, ny, nz);
+            projected.push({
+                pt: pt,
+                sx: proj.sx,
+                sy: proj.sy,
+                depth: proj.depth
+            });
+            const cid = pt.cluster;
+            clusterCounts[cid] = (clusterCounts[cid] || 0) + 1;
+        }
+
+        // Sort back-to-front by depth for proper painter's algorithm occlusion
+        projected.sort((a, b) => a.depth - b.depth);
+
+        const strokeColor = theme === "light" ? "rgba(255,255,255,0.85)" : "rgba(17,17,19,0.85)";
         for (let p of projected) {
+            const radius = Math.max(3.5, Math.min(6.0, 4.5 + p.depth * 1.0));
             ctx.beginPath();
-            ctx.arc(p.sx, p.sy, 4, 0, Math.PI * 2);
+            ctx.arc(p.sx, p.sy, radius, 0, Math.PI * 2);
             ctx.fillStyle = this.getClusterColor(p.pt.cluster);
             ctx.fill();
+            ctx.lineWidth = 1;
             ctx.strokeStyle = strokeColor;
             ctx.stroke();
         }
 
+        // 4. Draw compact cluster legend in top-left corner
+        const clusterKeys = Object.keys(clusterCounts).sort((a, b) => Number(a) - Number(b));
+        ctx.save();
+        ctx.font = '500 11px "Inter", sans-serif';
+        let legendY = 22;
+        for (const cidKey of clusterKeys) {
+            const cid = Number(cidKey);
+            const label = cid === -1 ? `Noise (${clusterCounts[cidKey]})` : `Cluster ${cid} (${clusterCounts[cidKey]})`;
+            ctx.beginPath();
+            ctx.arc(20, legendY - 4, 4.5, 0, Math.PI * 2);
+            ctx.fillStyle = this.getClusterColor(cid);
+            ctx.fill();
+            ctx.fillStyle = palette ? palette.textSecondary : "#b0b4ba";
+            ctx.fillText(label, 30, legendY);
+            legendY += 18;
+        }
+        ctx.restore();
+
         this.projectedPoints = projected;
+    }
+
+    handle3DClick(e) {
+        if (!this.projectedPoints || !this.onClusterClick) return;
+        const rect = this.canvas3d.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+        for (let i = this.projectedPoints.length - 1; i >= 0; i--) {
+            const p = this.projectedPoints[i];
+            if (Math.hypot(p.sx - mx, p.sy - my) < 8) {
+                this.onClusterClick(p.pt.cluster);
+                return;
+            }
+        }
     }
 
     check3DHover(e) {
@@ -367,25 +506,33 @@ class PCAVisualizer {
         const mx = e.clientX - rect.left;
         const my = e.clientY - rect.top;
 
-        const hit = this.projectedPoints.find(p => {
-            const dist = Math.hypot(p.sx - mx, p.sy - my);
-            return dist < 6;
-        });
+        let hit = null;
+        for (let i = this.projectedPoints.length - 1; i >= 0; i--) {
+            const p = this.projectedPoints[i];
+            if (Math.hypot(p.sx - mx, p.sy - my) < 7) {
+                hit = p;
+                break;
+            }
+        }
 
         const tooltip = document.getElementById("pca-tooltip");
         if (hit && tooltip) {
+            this.canvas3d.style.cursor = "pointer";
             tooltip.classList.remove("is-hidden");
             tooltip.style.display = "block";
-            tooltip.style.left = `${mx + 15}px`;
-            tooltip.style.top = `${my + 10}px`;
+            tooltip.style.left = `${Math.min(mx + 14, (this._cssWidth || 600) - 180)}px`;
+            tooltip.style.top = `${Math.max(10, my + 10)}px`;
             const idLabel = hit.pt.input_id ? `ID: ${hit.pt.input_id} (#${hit.pt.sample_id})` : `Sample #${hit.pt.sample_id}`;
+            const zVal = hit.pt.z !== undefined ? Number(hit.pt.z).toFixed(2) : "0.00";
             tooltip.innerHTML = `
                 <div class="fw-600">${idLabel}</div>
                 <div class="text-secondary">Cluster: ${hit.pt.cluster === -1 ? 'Noise' : hit.pt.cluster}</div>
-                <div class="mono text-micro text-muted">PC1: ${hit.pt.x.toFixed(2)}, PC2: ${hit.pt.y.toFixed(2)}, PC3: ${hit.pt.z.toFixed(2)}</div>
+                <div class="mono text-micro text-muted">PC1: ${Number(hit.pt.x).toFixed(2)}, PC2: ${Number(hit.pt.y).toFixed(2)}, PC3: ${zVal}</div>
                 ${hit.pt.ground_truth !== undefined ? `<div class="text-secondary text-micro">Ground Truth: ${hit.pt.ground_truth}</div>` : ''}
+                <div class="text-accent text-micro mt-1">Click to inspect cluster waveforms</div>
             `;
         } else if (tooltip) {
+            if (!this.isDragging && this.canvas3d) this.canvas3d.style.cursor = "grab";
             tooltip.classList.add("is-hidden");
             tooltip.style.display = "none";
         }

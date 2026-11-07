@@ -942,7 +942,15 @@
                     ? `${window.SignalML.icon("minimize-2")} <span>Collapse</span>`
                     : `${window.SignalML.icon("maximize-2")} <span>Expand</span>`;
             }
-            window.dispatchEvent(new Event("resize"));
+            if (nnEditorInstance && nnEditorInstance.canvas) {
+                nnEditorInstance.canvas.resize();
+            }
+            requestAnimationFrame(() => {
+                if (nnEditorInstance && nnEditorInstance.canvas) {
+                    nnEditorInstance.canvas.resize();
+                }
+                window.dispatchEvent(new Event("resize"));
+            });
         }
     }
 
@@ -958,6 +966,11 @@
 
     document.addEventListener("DOMContentLoaded", () => {
         populateSavedModelsDropdown();
+        try {
+            if (new URLSearchParams(window.location.search).get("expanded") === "1") {
+                toggleExpandCanvas();
+            }
+        } catch (err) {}
     });
 
     // Architecture Wizard Handlers

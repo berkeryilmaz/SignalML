@@ -1147,9 +1147,9 @@ html[data-theme="light"] .inset { background: var(--surface-1); }
 }
 
 /* Chart container */
-.chart-box { position: relative; width: 100%; min-height: 280px; }
-.chart-box-sm { min-height: 200px; }
-.chart-box-lg { min-height: 400px; }
+.chart-box { position: relative; width: 100%; height: 280px; min-height: 280px; }
+.chart-box-sm { height: 200px; min-height: 200px; }
+.chart-box-lg { height: 500px; min-height: 420px; }
 
 /* 10. Tables ---------------------------------------------------------------- */
 .table-responsive,

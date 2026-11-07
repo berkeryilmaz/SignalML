@@ -443,8 +443,11 @@
 
         document.getElementById("run-clustering-btn").onclick = executeClustering;
 
-        // Load saved runs table
-        await loadSavedClusterings();
+        // Load saved runs table and auto-populate latest run on initial view
+        const savedRuns = await loadSavedClusterings();
+        if (Array.isArray(savedRuns) && savedRuns.length > 0 && !currentClusteringId) {
+            await loadClusteringRun(savedRuns[0].id, true);
+        }
     }
 
     async function loadSourceOptions() {
@@ -958,7 +961,7 @@
 
             if (list.length === 0) {
                 tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted p-4">No saved clustering runs found.</td></tr>`;
-                return;
+                return [];
             }
 
             tbody.innerHTML = list.map(r => {
@@ -998,18 +1001,20 @@
                     </tr>
                 `;
             }).join("");
+            return list;
         } catch (e) {
             console.error("Failed to load saved clusterings:", e);
+            return [];
         }
     }
 
-    async function loadClusteringRun(clusteringId) {
+    async function loadClusteringRun(clusteringId, silent = false) {
         try {
-            SignalML.toast("Loading clustering run...", "info");
+            if (!silent) SignalML.toast("Loading clustering run...", "info");
             const res = await fetch(`/api/clustering/detail/${clusteringId}`);
             const data = await SignalML.safeJson(res);
             if (!res.ok) {
-                SignalML.toast(`Load failed: ${data.detail || res.statusText}`, "error");
+                if (!silent) SignalML.toast(`Load failed: ${data.detail || res.statusText}`, "error");
                 return;
             }
 
@@ -1025,6 +1030,11 @@
             document.getElementById("metric-clusters-count").textContent = numClusters;
             document.getElementById("metric-clusters-dist").textContent = Object.entries(dist).map(([k, v]) => `C${k}:${v}`).join(", ");
 
+            if (data.explained_variance_3d && data.explained_variance_3d.length > 0) {
+                const totalVar = data.explained_variance_3d.reduce((a, b) => a + b, 0);
+                document.getElementById("metric-variance").textContent = `${(totalVar * 100).toFixed(1)}%`;
+            }
+
             pcaVis.loadData(data);
 
             // Render Waveform pills & select first cluster
@@ -1037,10 +1047,12 @@
             // Populate Probability Inspector
             updateInspectorData(data);
 
-            SignalML.toast("Clustering and probability results loaded", "success");
-            window.scrollTo({ top: 0, behavior: "smooth" });
+            if (!silent) {
+                SignalML.toast("Clustering and probability results loaded", "success");
+                window.scrollTo({ top: 0, behavior: "smooth" });
+            }
         } catch (e) {
-            SignalML.toast(`Error: ${e.message}`, "error");
+            if (!silent) SignalML.toast(`Error: ${e.message}`, "error");
         }
     }
 

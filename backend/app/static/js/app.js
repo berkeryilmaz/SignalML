@@ -433,9 +433,11 @@ const SignalML = {
 
             if (!canvas._smlResizeHooked && typeof canvas.resize === "function") {
                 canvas.resize = function(w, h) {
-                    if (!w && !h && this.canvas && this.canvas.parentNode) {
-                        w = this.canvas.parentNode.clientWidth || this.canvas.parentNode.offsetWidth;
-                        h = this.canvas.parentNode.clientHeight || this.canvas.parentNode.offsetHeight;
+                    const parent = this.canvas ? this.canvas.parentElement : null;
+                    if ((!w || !h) && parent) {
+                        const rect = parent.getBoundingClientRect();
+                        w = Math.round(rect.width) || parent.clientWidth || parent.offsetWidth;
+                        h = Math.round(rect.height) || parent.clientHeight || parent.offsetHeight;
                     }
                     if (w && h && this.canvas) {
                         if (this.canvas.width !== w) this.canvas.width = w;
@@ -448,6 +450,20 @@ const SignalML = {
                     this.setDirty(true, true);
                     this.draw(true, true);
                 };
+                if (typeof ResizeObserver !== "undefined" && canvas.canvas && canvas.canvas.parentElement) {
+                    const ro = new ResizeObserver((entries) => {
+                        for (const entry of entries) {
+                            const cr = entry.contentRect;
+                            const nw = Math.round(cr.width);
+                            const nh = Math.round(cr.height);
+                            if (nw > 0 && nh > 0 && (canvas.canvas.width !== nw || canvas.canvas.height !== nh)) {
+                                canvas.resize(nw, nh);
+                            }
+                        }
+                    });
+                    ro.observe(canvas.canvas.parentElement);
+                    canvas._smlResizeObserver = ro;
+                }
                 canvas._smlResizeHooked = true;
             }
 
