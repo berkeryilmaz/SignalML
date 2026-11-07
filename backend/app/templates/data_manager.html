@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import icon %}
 
 {% block title %}Data Manager — SignalML{% endblock %}
 
@@ -10,208 +11,208 @@
     </div>
 </div>
 
-<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem;">
+<div class="grid-2 mb-6">
     <!-- Upload Box -->
     <div class="card">
         <div class="card-title">Upload Data File or ZIP Archive</div>
-        <div id="drop-zone" style="border: 2px dashed var(--border-color); border-radius: 8px; padding: 2.5rem; text-align: center; cursor: pointer; background: rgba(255,255,255,0.01); transition: all 0.15s ease;">
-            <div style="font-size: 36px; margin-bottom: 0.5rem;">📁</div>
-            <p style="font-weight: 600; color: #fff;">Click or drag & drop CSV, TXT, TSV, NPY, NPZ, or ZIP here</p>
-            <p style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">ZIP archives are securely extracted with path traversal & zip-bomb protection</p>
-            <input type="file" id="file-input" style="display: none;" accept=".csv,.txt,.tsv,.json,.jsonl,.npy,.npz,.zip">
+        <div id="drop-zone" class="dropzone">
+            {{ icon('folder-up', 'icon-xl') }}
+            <p class="fw-600 text-primary mb-1">Click or drag &amp; drop CSV, TXT, TSV, NPY, NPZ, or ZIP here</p>
+            <p class="text-xs text-muted m-0">ZIP archives are securely extracted with path traversal &amp; zip-bomb protection</p>
+            <input type="file" id="file-input" class="is-hidden" accept=".csv,.txt,.tsv,.json,.jsonl,.npy,.npz,.zip">
         </div>
-        <div id="upload-status" style="margin-top: 0.75rem; font-size: 12px;"></div>
+        <div id="upload-status" class="mt-2 text-xs"></div>
     </div>
 
     <!-- Mount Browser (/data) -->
     <div class="card">
         <div class="card-title">Mounted Host Directory (/data)</div>
-        <div style="display: flex; gap: 8px; margin-bottom: 0.75rem;">
-            <input type="text" id="mount-subpath" class="form-control" placeholder="Subpath..." style="flex: 1;">
-            <button class="btn btn-secondary btn-sm" id="mount-browse-btn">Browse</button>
+        <div class="row mb-3">
+            <input type="text" id="mount-subpath" class="form-control flex-1" placeholder="Subpath...">
+            <button type="button" class="btn btn-secondary btn-sm" id="mount-browse-btn">Browse</button>
         </div>
-        <div id="mount-files-list" style="height: 180px; overflow-y: auto; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 6px; padding: 6px;">
-            <div style="color: var(--text-muted); padding: 8px; font-size: 12px;">Click Browse to scan /data...</div>
+        <div id="mount-files-list" class="tile scroll-y max-h-sm p-1">
+            <div class="text-muted p-2 text-xs">Click Browse to scan /data...</div>
         </div>
     </div>
 </div>
 
 <!-- Register Form & Preview -->
-<div class="card" id="register-card" style="margin-bottom: 1.5rem; display: none;">
-    <div class="card-title" style="display: flex; justify-content: space-between; align-items: center;">
-        <span>Configure & Register Dataset</span>
-        <button class="btn btn-secondary btn-sm" id="btn-refresh-raw-preview" onclick="triggerRawPreview()">🔄 Update Preview</button>
+<div class="card mb-6 is-hidden" id="register-card">
+    <div class="card-title row-between">
+        <span>Configure &amp; Register Dataset</span>
+        <button type="button" class="btn btn-secondary btn-sm" id="btn-refresh-raw-preview" onclick="triggerRawPreview()">{{ icon('refresh-cw', 'icon-xs') }} <span>Update preview</span></button>
     </div>
-    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 1rem; margin-bottom: 1rem;">
+    <div class="grid-auto gap-4 mb-4">
         <div class="form-group">
-            <label class="form-label">Dataset Display Name</label>
+            <label class="form-label" for="reg-name">Dataset Display Name</label>
             <input type="text" id="reg-name" class="form-control" placeholder="My Signal Dataset">
         </div>
         <div class="form-group">
-            <label class="form-label">Delimiter</label>
+            <label class="form-label" for="reg-delim">Delimiter</label>
             <select id="reg-delim" class="form-control" onchange="triggerRawPreview()">
                 <option value="," selected>, (Comma - Standard)</option>
-                <option value=";">; (Semicolon - Turkish/Excel)</option>
+                <option value=";">; (Semicolon - Regional/Excel)</option>
                 <option value="\t">\t (Tab-separated)</option>
                 <option value="|">| (Pipe)</option>
                 <option value="auto">Auto-detect</option>
             </select>
         </div>
         <div class="form-group">
-            <label class="form-label">Header Row</label>
+            <label class="form-label" for="reg-header">Header Row</label>
             <select id="reg-header" class="form-control" onchange="triggerRawPreview()">
                 <option value="false">No Header (pure signal data)</option>
                 <option value="true">First row is column names</option>
             </select>
         </div>
         <div class="form-group">
-            <label class="form-label">Signal Orientation</label>
+            <label class="form-label" for="reg-transpose">Signal Orientation</label>
             <select id="reg-transpose" class="form-control" onchange="triggerRawPreview()">
                 <option value="false" selected>Rows as Signals (Each row is a signal)</option>
-                <option value="true">1D Continuous (Single time-series column &rarr; Transpose)</option>
+                <option value="true">1D Continuous (Single time-series column -&gt; Transpose)</option>
             </select>
         </div>
         <div class="form-group">
-            <label class="form-label">Label Column (optional)</label>
+            <label class="form-label" for="reg-label">Label Column (optional)</label>
             <input type="text" id="reg-label" class="form-control" placeholder="e.g. 'label' or column index" onchange="triggerRawPreview()">
         </div>
     </div>
     <input type="hidden" id="reg-filepath">
-    <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--border-color); padding-top: 1rem;">
-        <div style="font-size: 12px; color: var(--text-muted);" id="reg-exclude-info">
-            Excluded Columns: <span id="reg-exclude-count" style="color: var(--accent-cyan); font-weight: 600;">0</span>
+    <div class="row-between border-t pt-3">
+        <div class="text-xs text-muted" id="reg-exclude-info">
+            Excluded Columns: <span id="reg-exclude-count" class="text-accent fw-600">0</span>
         </div>
-        <div style="display: flex; gap: 8px;">
-            <button class="btn btn-secondary" onclick="triggerRawPreview()">Preview & Filter Columns</button>
-            <button class="btn btn-primary" id="register-btn">Save to Project Workspace</button>
+        <div class="row">
+            <button type="button" class="btn btn-secondary" onclick="triggerRawPreview()">Preview &amp; Filter Columns</button>
+            <button type="button" class="btn btn-primary" id="register-btn">Save to Project Workspace</button>
         </div>
     </div>
 </div>
 
 <!-- Enhanced Preview & Data Navigation Card -->
-<div class="card" id="preview-card" style="display: none; margin-bottom: 1.5rem;">
-    <div class="card-title" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
-        <div style="display: flex; align-items: center; gap: 10px;">
-            <span style="font-size: 16px; font-weight: 700;">Data Preview & Waveform Inspector</span>
-            <span id="preview-mode-badge" class="status-badge info" style="font-size: 11px;">Raw Preview</span>
-            <span id="preview-shape-badge" class="shape-badge">0 rows × 0 cols</span>
+<div class="card mb-6 is-hidden" id="preview-card">
+    <div class="card-title row-between flex-wrap gap-2">
+        <div class="row gap-2">
+            <span class="text-md fw-600">Data Preview &amp; Waveform Inspector</span>
+            <span id="preview-mode-badge" class="badge badge-accent">Raw Preview</span>
+            <span id="preview-shape-badge" class="badge badge-mono">0 rows &times; 0 cols</span>
         </div>
-        <div style="display: flex; gap: 6px; align-items: center;">
-            <button class="btn btn-secondary btn-sm" id="btn-toggle-schema-pane" onclick="toggleSchemaPanel()" style="color: var(--accent-cyan); font-weight: 600;">🧠 Schema Inspector</button>
-            <button class="btn btn-secondary btn-sm" id="btn-toggle-columns-pane" onclick="toggleColumnPanel()">Filter Columns</button>
+        <div class="row">
+            <button type="button" class="btn btn-secondary btn-sm text-accent" id="btn-toggle-schema-pane" onclick="toggleSchemaPanel()">{{ icon('brain', 'icon-xs') }} <span>Schema Inspector</span></button>
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-toggle-columns-pane" onclick="toggleColumnPanel()">Filter Columns</button>
         </div>
     </div>
 
     <!-- Summary Stats Bar -->
-    <div id="stats-summary" style="display: flex; flex-wrap: wrap; gap: 1.25rem; margin-bottom: 1rem; padding: 10px 14px; background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); border-radius: 6px; font-size: 12px;"></div>
+    <div id="stats-summary" class="tile row flex-wrap gap-4 mb-4 text-xs"></div>
 
-    <!-- JsBrain-style Schema Inspector & 1D-CNN Sequence Grouping Panel -->
-    <div id="schema-inspector-panel" style="background: rgba(15, 23, 42, 0.75); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 8px; padding: 16px; margin-bottom: 1rem;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
-            <div style="display: flex; align-items: center; gap: 8px;">
-                <span style="font-size: 15px; font-weight: 700; color: #fff;">🧠 JsBrain-style Schema Inspector</span>
-                <span id="output-task-badge" class="status-badge" style="background: rgba(56, 189, 248, 0.15); border: 1px solid var(--accent-cyan); color: var(--accent-cyan); font-size: 11px;">Task: Auto-Detecting...</span>
+    <!-- Schema Inspector & 1D-CNN Sequence Grouping Panel -->
+    <div id="schema-inspector-panel" class="tile mb-4">
+        <div class="row-between mb-3 flex-wrap gap-2">
+            <div class="row">
+                <span class="fw-600 text-sm">{{ icon('brain', 'icon-xs') }} <span>Schema Inspector</span></span>
+                <span id="output-task-badge" class="badge badge-accent">Task: Auto-Detecting...</span>
             </div>
-            <div style="display: flex; gap: 8px; align-items: center;">
-                <span id="seq-tensor-badge" style="display: none; background: rgba(34, 197, 94, 0.15); border: 1px solid var(--accent-green); color: var(--accent-green); font-size: 11px; padding: 3px 8px; border-radius: 4px; font-weight: 600; font-family: var(--font-mono);">1D-Sequence Tensor: (N, Seq_Len, 1)</span>
+            <div class="row">
+                <span id="seq-tensor-badge" class="badge badge-success mono is-hidden">1D-Sequence Tensor: (N, Seq_Len, 1)</span>
             </div>
         </div>
 
         <!-- 1D-Sequence Column Grouping Bar -->
-        <div style="background: rgba(0, 0, 0, 0.25); border: 1px solid var(--border-color); border-radius: 6px; padding: 12px; margin-bottom: 12px;">
-            <div style="font-size: 12px; font-weight: 600; color: #fff; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center;">
-                <span>⚡ 1D-Sequence Column Grouping & Normalization (1D-CNN Sequence Builder)</span>
-                <span style="font-size: 11px; color: var(--text-muted);">Grouping continuous signals into 3D tensors: (batch, seq_len, 1)</span>
+        <div class="tile mb-3">
+            <div class="row-between mb-2">
+                <span class="row fw-600 text-xs">{{ icon('zap', 'icon-xs') }} <span>1D-Sequence Column Grouping &amp; Normalization</span></span>
+                <span class="text-muted text-xs">Grouping continuous signals into 3D tensors: (batch, seq_len, 1)</span>
             </div>
-            <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center;">
-                <div style="flex: 1; min-width: 220px;">
-                    <input type="text" id="seq-pattern-input" class="form-control" placeholder="Pattern e.g. s* or s1-s100 or 0-511" style="font-size: 12px; font-family: var(--font-mono);">
+            <div class="row flex-wrap gap-2">
+                <div class="flex-1 min-w-0">
+                    <input type="text" id="seq-pattern-input" class="form-control mono text-xs" placeholder="Pattern e.g. s* or s1-s100 or 0-511">
                 </div>
-                <div style="width: 240px;">
-                    <select id="seq-norm-select" class="form-control" style="font-size: 12px;">
-                        <option value="row_zscore" selected>Row-wise Z-Score ((x - μ) / σ)</option>
+                <div class="w-auto">
+                    <select id="seq-norm-select" class="form-control text-xs">
+                        <option value="row_zscore" selected>Row-wise Z-Score ((x - &mu;) / &sigma;)</option>
                         <option value="global_standard">Global StandardScaler</option>
                         <option value="global_minmax">Global MinMaxScaler ([0, 1])</option>
                         <option value="row_minmax">Row-wise MinMax ([0, 1])</option>
                         <option value="none">None (Raw Amplitudes)</option>
                     </select>
                 </div>
-                <button type="button" class="btn btn-primary btn-sm" id="btn-group-seq" onclick="applySequenceGrouping()" style="font-weight: 600;">
-                    ⚡ 1D-Sequence Grubu Oluştur (Group for 1D-CNN)
+                <button type="button" class="btn btn-primary btn-sm fw-600" id="btn-group-seq" onclick="applySequenceGrouping()">
+                    {{ icon('zap', 'icon-xs') }} <span>Group for 1D-CNN</span>
                 </button>
             </div>
             <!-- Auto-detected Sequence Group Suggestions -->
-            <div id="seq-suggestions-row" style="margin-top: 8px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;"></div>
+            <div id="seq-suggestions-row" class="row flex-wrap mt-2 gap-2"></div>
         </div>
 
         <!-- Per-Column Schema Inspector Table -->
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 8px;">
-            <div style="font-size: 12px; color: var(--text-muted);">Configure types, roles, scalers, and encoders per column:</div>
-            <input type="text" id="schema-col-search" class="form-control" placeholder="Filter schema columns..." style="max-width: 220px; font-size: 11px; padding: 3px 8px;" oninput="filterSchemaTable(this.value)">
+        <div class="row-between mb-2 gap-2">
+            <div class="text-xs text-muted">Configure types, roles, scalers, and encoders per column:</div>
+            <input type="text" id="schema-col-search" class="form-control form-control-sm max-w-sm" placeholder="Filter schema columns..." oninput="filterSchemaTable(this.value)">
         </div>
-        <div class="table-responsive" style="max-height: 280px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 6px;">
-            <table class="data-table" id="schema-table" style="font-size: 12px;">
+        <div class="table-responsive max-h-sm scroll-y">
+            <table class="data-table" id="schema-table">
                 <thead>
                     <tr>
-                        <th style="width: 180px;">Column Name</th>
-                        <th style="width: 140px;">Rol</th>
-                        <th style="width: 160px;">Veri Tipi</th>
-                        <th style="width: 180px;">Ön İşleme / Scaler / Encoder</th>
-                        <th style="width: 100px;">Unique</th>
+                        <th>Column Name</th>
+                        <th>Role</th>
+                        <th>Data Type</th>
+                        <th>Preprocessing / Scaler / Encoder</th>
+                        <th class="num">Unique</th>
                         <th>Sample Values</th>
                     </tr>
                 </thead>
                 <tbody id="schema-tbody">
-                    <tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 12px;">Load preview to inspect columns...</td></tr>
+                    <tr><td colspan="6" class="text-center text-muted p-3">Load preview to inspect columns...</td></tr>
                 </tbody>
             </table>
         </div>
     </div>
 
     <!-- Column Exclusion & Management Panel -->
-    <div id="column-mgmt-panel" style="background: rgba(15, 23, 42, 0.6); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px 14px; margin-bottom: 1rem;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 8px;">
+    <div id="column-mgmt-panel" class="tile mb-4">
+        <div class="row-between mb-2 flex-wrap gap-2">
             <div>
-                <strong style="font-size: 13px; color: #fff;">Column Exclusion (Devre Dışı Bırak / Dahil Et)</strong>
-                <p style="font-size: 11px; color: var(--text-muted); margin: 2px 0 0 0;">
+                <strong class="text-sm">Column Exclusion</strong>
+                <p class="text-muted text-xs m-0">
                     Click a column chip to toggle it. Excluded columns (such as ID, index, timestamp) will not be treated as signals.
                 </p>
             </div>
-            <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-                <button class="btn btn-secondary btn-sm" onclick="autoExcludeIdColumns()" style="color: var(--accent-cyan); font-weight: 600;">🚫 Auto-Disable ID Columns</button>
-                <button class="btn btn-secondary btn-sm" onclick="enableAllColumns()">✓ Enable All</button>
-                <button class="btn btn-secondary btn-sm" onclick="invertColumnSelection()">⇄ Invert</button>
+            <div class="cluster">
+                <button type="button" class="btn btn-secondary btn-sm text-accent" onclick="autoExcludeIdColumns()">{{ icon('ban', 'icon-xs') }} <span>Auto-disable ID columns</span></button>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="enableAllColumns()">{{ icon('check', 'icon-xs') }} <span>Enable all</span></button>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="invertColumnSelection()">{{ icon('arrow-left-right', 'icon-xs') }} <span>Invert</span></button>
             </div>
         </div>
         <!-- Column Chips Search & Container -->
-        <div style="margin-bottom: 8px;">
-            <input type="text" id="col-search-input" class="form-control" placeholder="Search columns..." style="max-width: 250px; font-size: 12px; padding: 4px 8px;" oninput="filterColumnChips(this.value)">
+        <div class="mb-2">
+            <input type="text" id="col-search-input" class="form-control form-control-sm max-w-sm" placeholder="Search columns..." oninput="filterColumnChips(this.value)">
         </div>
-        <div id="column-chips-container" style="display: flex; flex-wrap: wrap; gap: 6px; max-height: 120px; overflow-y: auto; padding: 4px 0;"></div>
+        <div id="column-chips-container" class="cluster max-h-xs scroll-y py-1"></div>
     </div>
 
     <!-- Data Browsing & Pagination Bar -->
-    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 1rem; padding: 8px 12px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 6px;">
-        <div style="display: flex; align-items: center; gap: 6px;">
-            <button class="btn btn-secondary btn-sm" id="btn-page-first" onclick="goToPage(0)">⏮ First</button>
-            <button class="btn btn-secondary btn-sm" id="btn-page-prev" onclick="prevPage()">◀ Prev</button>
-            <span style="font-size: 12px; color: var(--text-secondary); padding: 0 4px;">
-                Page <strong id="preview-current-page" style="color: #fff;">1</strong> of <strong id="preview-total-pages" style="color: #fff;">1</strong>
-                (<span id="preview-row-range" style="font-family: var(--font-mono);">0 - 0</span> / <span id="preview-total-rows">0</span> rows)
+    <div class="tile row-between flex-wrap gap-2 mb-4 p-2">
+        <div class="row">
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-page-first" onclick="goToPage(0)">{{ icon('skip-back', 'icon-xs') }} <span>First</span></button>
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-page-prev" onclick="prevPage()">{{ icon('chevron-left', 'icon-xs') }} <span>Prev</span></button>
+            <span class="text-xs text-secondary px-2">
+                Page <strong id="preview-current-page" class="text-primary">1</strong> of <strong id="preview-total-pages" class="text-primary">1</strong>
+                (<span id="preview-row-range" class="mono">0 - 0</span> / <span id="preview-total-rows" class="mono">0</span> rows)
             </span>
-            <button class="btn btn-secondary btn-sm" id="btn-page-next" onclick="nextPage()">Next ▶</button>
-            <button class="btn btn-secondary btn-sm" id="btn-page-last" onclick="goToLastPage()">⏭ Last</button>
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-page-next" onclick="nextPage()"><span>Next</span> {{ icon('chevron-right', 'icon-xs') }}</button>
+            <button type="button" class="btn btn-secondary btn-sm" id="btn-page-last" onclick="goToLastPage()"><span>Last</span> {{ icon('skip-forward', 'icon-xs') }}</button>
         </div>
 
-        <div style="display: flex; align-items: center; gap: 10px;">
-            <div style="display: flex; align-items: center; gap: 6px; font-size: 12px;">
-                <label style="color: var(--text-muted);">Jump to Row:</label>
-                <input type="number" id="row-jump-input" class="form-control" style="width: 75px; padding: 2px 6px; font-size: 12px;" min="0" placeholder="Row #">
-                <button class="btn btn-secondary btn-sm" onclick="jumpToRow()">Go</button>
+        <div class="row gap-3">
+            <div class="row gap-1 text-xs">
+                <label class="text-muted" for="row-jump-input">Jump to Row:</label>
+                <input type="number" id="row-jump-input" class="form-control form-control-sm w-auto" min="0" placeholder="Row #">
+                <button type="button" class="btn btn-secondary btn-sm" onclick="jumpToRow()">Go</button>
             </div>
-            <div style="display: flex; align-items: center; gap: 6px; font-size: 12px;">
-                <label style="color: var(--text-muted);">Rows / Page:</label>
-                <select id="preview-page-size" class="form-control" style="width: 75px; padding: 2px 6px; font-size: 12px;" onchange="changePageSize(this.value)">
+            <div class="row gap-1 text-xs">
+                <label class="text-muted" for="preview-page-size">Rows / Page:</label>
+                <select id="preview-page-size" class="form-control form-control-sm w-auto" onchange="changePageSize(this.value)">
                     <option value="10" selected>10</option>
                     <option value="25">25</option>
                     <option value="50">50</option>
@@ -222,36 +223,36 @@
     </div>
 
     <!-- Split Preview Layout: Table on Left / Waveform on Right -->
-    <div style="display: grid; grid-template-columns: 1fr 420px; gap: 1rem; align-items: start;">
+    <div class="grid-sidebar-right items-start gap-4">
         <!-- Left: Table -->
-        <div>
-            <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 6px; display: flex; justify-content: space-between;">
+        <div class="min-w-0">
+            <div class="row-between mb-2 text-xs text-muted">
                 <span>Click any row to display its live waveform on the right:</span>
-                <span id="active-cols-count-badge" style="color: var(--accent-cyan); font-weight: 600;">Active: 0 cols</span>
+                <span id="active-cols-count-badge" class="fw-600 text-accent">Active: 0 cols</span>
             </div>
-            <div class="table-responsive" style="max-height: 440px; overflow: auto; border: 1px solid var(--border-color); border-radius: 6px;">
+            <div class="table-responsive max-h-lg scroll-y">
                 <table class="data-table" id="preview-table"></table>
             </div>
         </div>
 
         <!-- Right: Row Waveform Inspector -->
-        <div style="background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+        <div class="tile min-w-0">
+            <div class="row-between mb-2">
                 <div>
-                    <strong style="font-size: 13px; color: #fff;">Waveform Quick-View</strong>
-                    <div style="font-size: 11px; color: var(--text-muted);" id="row-wf-info">Row #0</div>
+                    <strong class="text-sm">Waveform Quick-View</strong>
+                    <div class="text-xs text-muted" id="row-wf-info">Row #0</div>
                 </div>
-                <div style="display: flex; gap: 4px;">
-                    <button class="btn btn-secondary btn-sm" onclick="selectPrevRow()" title="Previous Row">&larr; Prev</button>
-                    <button class="btn btn-secondary btn-sm" onclick="selectNextRow()" title="Next Row">Next &rarr;</button>
+                <div class="row">
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="selectPrevRow()" title="Previous Row">{{ icon('chevron-left', 'icon-xs') }} <span>Prev</span></button>
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="selectNextRow()" title="Next Row"><span>Next</span> {{ icon('chevron-right', 'icon-xs') }}</button>
                 </div>
             </div>
-            <div id="row-waveform-chart" style="width: 100%; height: 260px;"></div>
-            <div id="row-wf-stats" style="margin-top: 8px; font-size: 11px; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; color: var(--text-secondary); background: rgba(0,0,0,0.2); padding: 6px 8px; border-radius: 4px;">
-                <div>Min: <strong id="wf-stat-min">—</strong></div>
-                <div>Max: <strong id="wf-stat-max">—</strong></div>
-                <div>Mean: <strong id="wf-stat-mean">—</strong></div>
-                <div>Std: <strong id="wf-stat-std">—</strong></div>
+            <div id="row-waveform-chart" class="chart-box-sm"></div>
+            <div id="row-wf-stats" class="grid-2 text-xs text-secondary tile mt-2 p-2 mono">
+                <div>Min: <strong id="wf-stat-min" class="num">—</strong></div>
+                <div>Max: <strong id="wf-stat-max" class="num">—</strong></div>
+                <div>Mean: <strong id="wf-stat-mean" class="num">—</strong></div>
+                <div>Std: <strong id="wf-stat-std" class="num">—</strong></div>
             </div>
         </div>
     </div>
@@ -266,14 +267,14 @@
                 <tr>
                     <th>Dataset Name</th>
                     <th>ID</th>
-                    <th>Rows</th>
-                    <th>Columns (Seq Length)</th>
+                    <th class="num">Rows</th>
+                    <th class="num">Columns (Seq Length)</th>
                     <th>Format</th>
                     <th>Actions</th>
                 </tr>
             </thead>
             <tbody id="project-datasets-tbody">
-                <tr><td colspan="6" style="text-align: center; color: var(--text-muted);">Loading...</td></tr>
+                <tr><td colspan="6" class="text-center text-muted">Loading...</td></tr>
             </tbody>
         </table>
     </div>
@@ -293,11 +294,11 @@
     const fileInput = document.getElementById("file-input");
 
     dropZone.onclick = () => fileInput.click();
-    dropZone.ondragover = (e) => { e.preventDefault(); dropZone.style.borderColor = "var(--accent-blue)"; };
-    dropZone.ondragleave = () => { dropZone.style.borderColor = "var(--border-color)"; };
+    dropZone.ondragover = (e) => { e.preventDefault(); dropZone.classList.add("is-dragover"); };
+    dropZone.ondragleave = () => { dropZone.classList.remove("is-dragover"); };
     dropZone.ondrop = (e) => {
         e.preventDefault();
-        dropZone.style.borderColor = "var(--border-color)";
+        dropZone.classList.remove("is-dragover");
         if (e.dataTransfer.files.length > 0) handleFileUpload(e.dataTransfer.files[0]);
     };
     fileInput.onchange = (e) => {
@@ -306,7 +307,7 @@
 
     async function handleFileUpload(file) {
         const statusEl = document.getElementById("upload-status");
-        statusEl.innerHTML = `<span style="color: var(--accent-cyan);">Uploading ${file.name}...</span>`;
+        statusEl.innerHTML = `<span class="text-info">${SignalML.icon('loader', 'icon-xs icon-spin')} Uploading ${file.name}...</span>`;
 
         const fd = new FormData();
         fd.append("project_id", getActiveProjectId());
@@ -318,25 +319,26 @@
             if (res.ok) {
                 SignalML.toast(`Uploaded ${file.name}`, "success");
                 if (data.type === "zip") {
-                    statusEl.innerHTML = `<span style="color: var(--accent-green);">Safely extracted ${data.extracted_count} files from ZIP. Select a file below to register:</span>`;
+                    statusEl.innerHTML = `<span class="text-success">${SignalML.icon('circle-check', 'icon-xs')} Safely extracted ${data.extracted_count} files from ZIP. Select a file below to register:</span>`;
                     renderExtractedFiles(data.files || []);
                 } else {
-                    statusEl.innerHTML = `<span style="color: var(--accent-green);">File uploaded successfully. Initializing preview...</span>`;
+                    statusEl.innerHTML = `<span class="text-success">${SignalML.icon('circle-check', 'icon-xs')} File uploaded successfully. Initializing preview...</span>`;
                     showRegisterForm(file.name, data.temp_path, data.analysis);
                 }
             } else {
-                statusEl.innerHTML = `<span style="color: var(--accent-rose);">${data.detail || "Upload failed"}</span>`;
+                statusEl.innerHTML = `<span class="text-danger">${SignalML.icon('circle-x', 'icon-xs')} ${data.detail || "Upload failed"}</span>`;
             }
         } catch (e) {
-            statusEl.innerHTML = `<span style="color: var(--accent-rose);">${e.message}</span>`;
+            statusEl.innerHTML = `<span class="text-danger">${SignalML.icon('circle-x', 'icon-xs')} ${e.message}</span>`;
         }
     }
 
     function renderExtractedFiles(files) {
         const container = document.getElementById("mount-files-list");
         container.innerHTML = (files || []).map(f => `
-            <div style="padding: 6px 10px; cursor: pointer; font-size: 12px; border-bottom: 1px solid rgba(255,255,255,0.05);" onclick="showRegisterForm('${f.name}', '${f.abs_path}')">
-                📄 <strong>${f.name}</strong> <span style="color: var(--text-muted); font-size: 11px;">(${(f.size_bytes / 1024).toFixed(1)} KB)</span>
+            <div class="row-between p-2 cursor-pointer border-b text-sm" onclick="showRegisterForm('${f.name}', '${f.abs_path}')">
+                <span class="row">${SignalML.icon('file-text', 'icon-xs')} <strong>${f.name}</strong></span>
+                <span class="mono text-muted text-xs">${(f.size_bytes / 1024).toFixed(1)} KB</span>
             </div>
         `).join("");
     }
@@ -349,13 +351,13 @@
             const container = document.getElementById("mount-files-list");
             const itemList = Array.isArray(items) ? items : [];
             if (itemList.length === 0) {
-                container.innerHTML = `<div style="padding: 8px; color: var(--text-muted);">No files found in /data.</div>`;
+                container.innerHTML = `<div class="p-2 text-muted text-xs">No files found in /data.</div>`;
                 return;
             }
             container.innerHTML = itemList.map(item => `
-                <div style="padding: 6px 10px; cursor: pointer; font-size: 12px; display: flex; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.05);" onclick="${item.is_dir ? `browseFolder('${item.rel_path}')` : `showRegisterForm('${item.name}', '${item.rel_path}')`}">
-                    <span>${item.is_dir ? "📁" : "📄"} <strong>${item.name}</strong></span>
-                    <span style="color: var(--text-muted); font-size: 11px;">${item.is_dir ? "DIR" : `${(item.size_bytes/1024).toFixed(1)} KB`}</span>
+                <div class="row-between p-2 cursor-pointer border-b text-sm" onclick="${item.is_dir ? `browseFolder('${item.rel_path}')` : `showRegisterForm('${item.name}', '${item.rel_path}')`}">
+                    <span class="row">${SignalML.icon(item.is_dir ? 'folder' : 'file-text', 'icon-xs')} <strong>${item.name}</strong></span>
+                    <span class="mono text-muted text-xs">${item.is_dir ? "DIR" : `${(item.size_bytes/1024).toFixed(1)} KB`}</span>
                 </div>
             `).join("");
         } catch (e) {
@@ -408,7 +410,7 @@
         const cols = (previewState.columnSchema || []).filter(c => !ft || String(c.name).toLowerCase().includes(ft));
 
         if (cols.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 12px;">No matching columns found.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted p-3">No matching columns found.</td></tr>`;
             return;
         }
 
@@ -420,14 +422,14 @@
 
             let prepHtml = "";
             if (role === "id") {
-                prepHtml = `<span class="badge" style="background: rgba(251,191,36,0.15); border: 1px solid var(--accent-amber); color: #fbbf24; font-size: 11px; padding: 2px 6px; border-radius: 4px;">ID Key (Excluded)</span>`;
+                prepHtml = `<span class="badge badge-warning">ID Key (Excluded)</span>`;
             } else if (role === "ignore") {
-                prepHtml = `<span class="badge" style="background: rgba(244,63,94,0.15); border: 1px solid var(--accent-rose); color: var(--accent-rose); font-size: 11px; padding: 2px 6px; border-radius: 4px;">Excluded from Training</span>`;
+                prepHtml = `<span class="badge badge-danger">Excluded from Training</span>`;
             } else if (type === "sequence") {
-                prepHtml = `<span class="badge" style="background: rgba(56,189,248,0.15); border: 1px solid var(--accent-cyan); color: var(--accent-cyan); font-size: 11px; padding: 2px 6px; border-radius: 4px;">1D-Signal (Sequence)</span>`;
+                prepHtml = `<span class="badge badge-accent">1D-Signal (Sequence)</span>`;
             } else if (type === "numeric") {
                 prepHtml = `
-                    <select class="form-control form-control-sm" style="font-size: 11px; padding: 2px 4px;" onchange="updateColumnScaler('${c.name.replace(/'/g, "\\'")}', this.value)">
+                    <select class="form-control form-control-sm text-xs py-0" onchange="updateColumnScaler('${c.name.replace(/'/g, "\\'")}', this.value)">
                         <option value="standard" ${scaler === "standard" ? "selected" : ""}>StandardScaler</option>
                         <option value="minmax" ${scaler === "minmax" ? "selected" : ""}>MinMaxScaler</option>
                         <option value="none" ${scaler === "none" ? "selected" : ""}>None (Raw)</option>
@@ -435,7 +437,7 @@
                 `;
             } else if (type === "categorical") {
                 prepHtml = `
-                    <select class="form-control form-control-sm" style="font-size: 11px; padding: 2px 4px;" onchange="updateColumnEncoder('${c.name.replace(/'/g, "\\'")}', this.value)">
+                    <select class="form-control form-control-sm text-xs py-0" onchange="updateColumnEncoder('${c.name.replace(/'/g, "\\'")}', this.value)">
                         <option value="onehot" ${encoder === "onehot" ? "selected" : ""}>One-Hot</option>
                         <option value="label" ${encoder === "label" ? "selected" : ""}>Label Encoding</option>
                     </select>
@@ -446,9 +448,9 @@
 
             return `
                 <tr>
-                    <td style="font-family: var(--font-mono); font-weight: 600; color: #fff;">${c.name}</td>
+                    <td class="mono fw-600 text-primary">${c.name}</td>
                     <td>
-                        <select class="form-control form-control-sm" style="font-size: 11px; padding: 2px 4px;" onchange="updateColumnRole('${c.name.replace(/'/g, "\\'")}', this.value)">
+                        <select class="form-control form-control-sm text-xs py-0" onchange="updateColumnRole('${c.name.replace(/'/g, "\\'")}', this.value)">
                             <option value="input" ${role === "input" ? "selected" : ""}>Input</option>
                             <option value="output" ${role === "output" ? "selected" : ""}>Output (Target)</option>
                             <option value="id" ${role === "id" ? "selected" : ""}>ID (Sample ID)</option>
@@ -456,15 +458,15 @@
                         </select>
                     </td>
                     <td>
-                        <select class="form-control form-control-sm" style="font-size: 11px; padding: 2px 4px;" onchange="updateColumnType('${c.name.replace(/'/g, "\\'")}', this.value)">
+                        <select class="form-control form-control-sm text-xs py-0" onchange="updateColumnType('${c.name.replace(/'/g, "\\'")}', this.value)">
                             <option value="numeric" ${type === "numeric" ? "selected" : ""}>Numeric</option>
                             <option value="categorical" ${type === "categorical" ? "selected" : ""}>Categorical</option>
                             <option value="sequence" ${type === "sequence" ? "selected" : ""}>Sequential/1D-Signal</option>
                         </select>
                     </td>
                     <td>${prepHtml}</td>
-                    <td style="font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);">${c.unique_count || 0}</td>
-                    <td style="font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${sampleStr}</td>
+                    <td class="num mono text-muted text-xs">${c.unique_count || 0}</td>
+                    <td class="mono text-muted text-xs truncate max-w-sm">${sampleStr}</td>
                 </tr>
             `;
         }).join("");
@@ -516,27 +518,21 @@
         const outItem = (previewState.columnSchema || []).find(c => c.inferred_role === "output");
         if (outItem) {
             if (outItem.inferred_type === "categorical") {
-                outBadge.textContent = `🎯 Classification: Softmax / sparse_categorical_crossentropy (Target: ${outItem.name})`;
-                outBadge.style.color = "var(--accent-green)";
-                outBadge.style.borderColor = "var(--accent-green)";
-                outBadge.style.background = "rgba(34, 197, 94, 0.15)";
+                outBadge.className = "badge badge-success";
+                outBadge.innerHTML = `${SignalML.icon('target', 'icon-xs')} Classification: Softmax / sparse_categorical_crossentropy (Target: ${outItem.name})`;
             } else {
-                outBadge.textContent = `📈 Regression: Linear / MSE (Target: ${outItem.name})`;
-                outBadge.style.color = "var(--accent-amber)";
-                outBadge.style.borderColor = "var(--accent-amber)";
-                outBadge.style.background = "rgba(251, 191, 36, 0.15)";
+                outBadge.className = "badge badge-warning";
+                outBadge.innerHTML = `${SignalML.icon('trending-up', 'icon-xs')} Regression: Linear / MSE (Target: ${outItem.name})`;
             }
         } else {
-            outBadge.textContent = `⚡ Unsupervised / Feature Extraction Pipeline`;
-            outBadge.style.color = "var(--accent-cyan)";
-            outBadge.style.borderColor = "var(--accent-cyan)";
-            outBadge.style.background = "rgba(56, 189, 248, 0.15)";
+            outBadge.className = "badge badge-accent";
+            outBadge.innerHTML = `${SignalML.icon('zap', 'icon-xs')} Unsupervised / Feature Extraction Pipeline`;
         }
 
         const seqCols = (previewState.columnSchema || []).filter(c => c.inferred_type === "sequence" && c.inferred_role === "input");
         if (seqBadge) {
             if (seqCols.length > 0) {
-                seqBadge.style.display = "inline-block";
+                seqBadge.style.display = "inline-flex";
                 seqBadge.textContent = `1D-Sequence Tensor: (${previewState.totalRows || 'N'}, ${seqCols.length}, 1)`;
             } else {
                 seqBadge.style.display = "none";
@@ -549,14 +545,14 @@
         if (!container) return;
         const suggestions = previewState.suggestedSequenceGroups || [];
         if (suggestions.length === 0) {
-            container.innerHTML = `<span style="font-size: 11px; color: var(--text-muted);">No sequential patterns detected automatically. Type a pattern like 's*' or 's1-s100'.</span>`;
+            container.innerHTML = `<span class="text-muted text-xs">No sequential patterns detected automatically. Type a pattern like 's*' or 's1-s100'.</span>`;
             return;
         }
 
-        container.innerHTML = `<span style="font-size: 11px; color: var(--text-muted); font-weight: 600;">Suggested Groups:</span>` +
+        container.innerHTML = `<span class="text-muted text-xs fw-600">Suggested Groups:</span>` +
             suggestions.map(sg => `
-                <button type="button" class="btn btn-secondary btn-sm" style="font-size: 11px; padding: 2px 8px; border-radius: 4px; font-family: var(--font-mono); color: var(--accent-cyan);" onclick="useSequenceSuggestion('${sg.pattern}', '${sg.name}')">
-                    💡 ${sg.pattern} (${sg.count} cols)
+                <button type="button" class="btn btn-secondary btn-sm mono text-xs text-accent" onclick="useSequenceSuggestion('${sg.pattern}', '${sg.name}')">
+                    ${SignalML.icon('lightbulb', 'icon-xs')} <span>${sg.pattern} (${sg.count} cols)</span>
                 </button>
             `).join("");
     }
@@ -639,11 +635,12 @@
 
         updateOutputTaskBadge();
         renderSchemaInspector(document.getElementById("schema-col-search") ? document.getElementById("schema-col-search").value : "");
-        SignalML.toast(`⚡ Grouped ${matched.length} columns into 1D-Sequence Tensor!`, "success");
+        SignalML.toast(`Grouped ${matched.length} columns into 1D-Sequence Tensor!`, "success");
     }
 
     function showRegisterForm(name, path, analysis = null) {
         const regCard = document.getElementById("register-card");
+        regCard.classList.remove("is-hidden");
         regCard.style.display = "block";
         document.getElementById("reg-name").value = name.replace(/\.[^/.]+$/, "");
         document.getElementById("reg-filepath").value = path;
@@ -750,7 +747,6 @@
             }
 
             renderPreviewUI(data, `Registered Dataset: ${data.name}`);
-            // Scroll preview card into view
             document.getElementById("preview-card").scrollIntoView({ behavior: "smooth" });
         } catch (e) {
             SignalML.toast(`Inspect Error: ${e.message}`, "error");
@@ -759,20 +755,21 @@
 
     function renderPreviewUI(data, modeTitle) {
         const previewCard = document.getElementById("preview-card");
+        previewCard.classList.remove("is-hidden");
         previewCard.style.display = "block";
 
         document.getElementById("preview-mode-badge").textContent = modeTitle;
-        document.getElementById("preview-shape-badge").textContent = `${data.total_rows || data.row_count} rows × ${data.total_cols || data.col_count} cols`;
+        document.getElementById("preview-shape-badge").textContent = `${data.total_rows || data.row_count} rows x ${data.total_cols || data.col_count} cols`;
 
         // Update stats
         const stats = data.summary_stats || {};
         document.getElementById("stats-summary").innerHTML = `
-            <div><strong>Min Amplitude:</strong> ${stats.min !== undefined ? Number(stats.min).toFixed(3) : '—'}</div>
-            <div><strong>Max Amplitude:</strong> ${stats.max !== undefined ? Number(stats.max).toFixed(3) : '—'}</div>
-            <div><strong>Mean:</strong> ${stats.mean !== undefined ? Number(stats.mean).toFixed(3) : '—'}</div>
-            <div><strong>Std Dev:</strong> ${stats.std !== undefined ? Number(stats.std).toFixed(3) : '—'}</div>
-            <div><strong>Missing Values:</strong> ${data.missing_count || 0}</div>
-            <div><strong>Excluded Cols:</strong> <span style="color: var(--accent-rose); font-weight: 600;">${previewState.excludedColumns.size}</span></div>
+            <div><strong>Min Amplitude:</strong> <span class="mono">${stats.min !== undefined ? Number(stats.min).toFixed(3) : '—'}</span></div>
+            <div><strong>Max Amplitude:</strong> <span class="mono">${stats.max !== undefined ? Number(stats.max).toFixed(3) : '—'}</span></div>
+            <div><strong>Mean:</strong> <span class="mono">${stats.mean !== undefined ? Number(stats.mean).toFixed(3) : '—'}</span></div>
+            <div><strong>Std Dev:</strong> <span class="mono">${stats.std !== undefined ? Number(stats.std).toFixed(3) : '—'}</span></div>
+            <div><strong>Missing Values:</strong> <span class="mono">${data.missing_count || 0}</span></div>
+            <div><strong>Excluded Cols:</strong> <span class="text-danger fw-600 mono">${previewState.excludedColumns.size}</span></div>
         `;
 
         document.getElementById("reg-exclude-count").textContent = previewState.excludedColumns.size;
@@ -813,25 +810,21 @@
         const colsToRender = previewState.allColumns.filter(c => !ft || String(c).toLowerCase().includes(ft));
 
         if (colsToRender.length === 0) {
-            container.innerHTML = `<span style="color: var(--text-muted); font-size: 11px;">No matching columns found.</span>`;
+            container.innerHTML = `<span class="text-muted text-xs">No matching columns found.</span>`;
             return;
         }
 
         container.innerHTML = colsToRender.map(c => {
             const isEx = previewState.excludedColumns.has(String(c));
             const isSuggestedId = previewState.suggestedIdCols.includes(String(c));
+            const btnClass = isEx 
+                ? "btn btn-danger btn-xs" 
+                : (isSuggestedId ? "btn btn-secondary btn-xs text-warning" : "btn btn-secondary btn-xs");
             return `
-                <button type="button" class="btn btn-sm" onclick="toggleColumn('${String(c).replace(/'/g, "\\'")}')" 
-                    style="font-size: 11px; padding: 3px 8px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; ${
-                        isEx 
-                        ? 'background: rgba(244, 63, 94, 0.15); border: 1px solid var(--accent-rose); color: var(--accent-rose); text-decoration: line-through;' 
-                        : isSuggestedId
-                        ? 'background: rgba(251, 191, 36, 0.15); border: 1px solid var(--accent-amber); color: #fbbf24;'
-                        : 'background: rgba(56, 189, 248, 0.1); border: 1px solid var(--accent-cyan); color: #fff;'
-                    }">
-                    <span>${isEx ? '✕' : '✓'}</span>
-                    <strong>${c}</strong>
-                    ${isSuggestedId ? '<span style="font-size: 9px; opacity: 0.8;">[ID]</span>' : ''}
+                <button type="button" class="${btnClass}" onclick="toggleColumn('${String(c).replace(/'/g, "\\'")}')">
+                    ${SignalML.icon(isEx ? 'x' : 'check', 'icon-xs')}
+                    <strong class="mono">${c}</strong>
+                    ${isSuggestedId ? '<span class="text-xs opacity-75">[ID]</span>' : ''}
                 </button>
             `;
         }).join("");
@@ -966,10 +959,10 @@
 
         document.getElementById("active-cols-count-badge").textContent = `Active: ${cols.length} cols (${previewState.excludedColumns.size} excluded)`;
 
-        let html = `<thead><tr><th style="width: 50px;">#</th><th style="width: 70px;">View</th>`;
+        let html = `<thead><tr><th class="w-auto">#</th><th class="w-auto">View</th>`;
         displayCols.forEach(c => {
             const isEx = previewState.excludedColumns.has(String(c));
-            html += `<th style="${isEx ? 'opacity: 0.35; text-decoration: line-through;' : ''}">${c}</th>`;
+            html += `<th class="${isEx ? 'text-muted' : ''}">${c}</th>`;
         });
         if (cols.length > 30) html += `<th>... +${cols.length - 30} more</th>`;
         html += `</tr></thead><tbody>`;
@@ -977,17 +970,18 @@
         previewState.previewRows.forEach((row, i) => {
             const absRowIdx = previewState.offset + i;
             const isSel = i === previewState.selectedRowIdx;
+            const trClass = isSel ? ' class="is-selected cursor-pointer"' : ' class="cursor-pointer"';
             html += `
-                <tr id="prev-row-${i}" style="cursor: pointer; ${isSel ? 'background: rgba(56, 189, 248, 0.15);' : ''}" onclick="selectPreviewRow(${i})">
-                    <td style="font-family: var(--font-mono); font-weight: 600; color: var(--accent-cyan);">${absRowIdx}</td>
-                    <td><button class="btn btn-secondary btn-sm" style="padding: 1px 6px; font-size: 10px;" onclick="event.stopPropagation(); selectPreviewRow(${i})">📈 Wave</button></td>
+                <tr id="prev-row-${i}"${trClass} onclick="selectPreviewRow(${i})">
+                    <td class="mono fw-600 text-accent">${absRowIdx}</td>
+                    <td><button type="button" class="btn btn-secondary btn-xs" onclick="event.stopPropagation(); selectPreviewRow(${i})">${SignalML.icon('chart-line', 'icon-xs')} <span>Wave</span></button></td>
             `;
             displayCols.forEach((c, cIdx) => {
                 const val = row[cIdx];
                 const isEx = previewState.excludedColumns.has(String(c));
-                html += `<td style="font-family: var(--font-mono); font-size: 11px; ${isEx ? 'opacity: 0.35;' : ''}">${typeof val === 'number' ? val.toFixed(3) : (val !== null ? val : '—')}</td>`;
+                html += `<td class="mono text-xs ${isEx ? 'text-muted' : ''}">${typeof val === 'number' ? val.toFixed(3) : (val !== null ? val : '—')}</td>`;
             });
-            if (cols.length > 30) html += `<td style="color: var(--text-muted); font-size: 11px;">...</td>`;
+            if (cols.length > 30) html += `<td class="text-muted text-xs">...</td>`;
             html += `</tr>`;
         });
 
@@ -1002,7 +996,13 @@
         // Update row highlight
         previewState.previewRows.forEach((_, i) => {
             const tr = document.getElementById(`prev-row-${i}`);
-            if (tr) tr.style.background = i === localIdx ? "rgba(56, 189, 248, 0.15)" : "";
+            if (tr) {
+                if (i === localIdx) {
+                    tr.classList.add("is-selected");
+                } else {
+                    tr.classList.remove("is-selected");
+                }
+            }
         });
 
         const absRowIdx = previewState.offset + localIdx;
@@ -1043,31 +1043,22 @@
         }
 
         previewState.chartInstance = Highcharts.chart("row-waveform-chart", {
-            chart: { type: "line", backgroundColor: "transparent", margin: [10, 10, 25, 40] },
+            chart: { type: "line", margin: [10, 10, 25, 40] },
             title: { text: null },
-            credits: { enabled: false },
             legend: { enabled: false },
             xAxis: {
-                labels: { style: { color: "#94a3b8", fontSize: "10px" } },
-                gridLineColor: "#1e293b",
                 tickLength: 0
             },
             yAxis: {
-                title: { text: null },
-                labels: { style: { color: "#94a3b8", fontSize: "10px" } },
-                gridLineColor: "#1e293b"
+                title: { text: null }
             },
             tooltip: {
-                backgroundColor: "#191f2e",
-                borderColor: "#334155",
-                style: { color: "#f8fafc", fontSize: "11px" },
                 valueDecimals: 3
             },
             plotOptions: {
                 series: {
                     lineWidth: 1.5,
                     marker: { enabled: false },
-                    color: "#38bdf8",
                     animation: false
                 }
             },
@@ -1188,22 +1179,22 @@
                 const tbody = document.getElementById("project-datasets-tbody");
                 const dList = Array.isArray(datasets) ? datasets : [];
                 if (dList.length === 0) {
-                    tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-muted);">No datasets registered in this project.</td></tr>`;
+                    tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted">No datasets registered in this project.</td></tr>`;
                     return;
                 }
                 tbody.innerHTML = dList.map(d => `
                     <tr>
                         <td><strong>${d.name}</strong></td>
-                        <td style="font-family: var(--font-mono); font-size: 11px;">${d.id.slice(0, 8)}...</td>
-                        <td>${d.row_count}</td>
-                        <td>${d.col_count}</td>
-                        <td><span class="shape-badge">${d.file_format.toUpperCase()}</span></td>
+                        <td class="mono text-muted text-xs">${d.id.slice(0, 8)}...</td>
+                        <td class="num mono">${d.row_count}</td>
+                        <td class="num mono">${d.col_count}</td>
+                        <td><span class="badge badge-mono">${d.file_format.toUpperCase()}</span></td>
                         <td>
-                            <div style="display: flex; gap: 4px; align-items: center;">
-                                <button class="btn btn-secondary btn-sm" onclick="loadPreview('${d.id}')">Inspect</button>
+                            <div class="row">
+                                <button type="button" class="btn btn-secondary btn-sm" onclick="loadPreview('${d.id}')">Inspect</button>
                                 <a href="/signal-tagger?dataset_id=${d.id}" class="btn btn-primary btn-sm">Waveform</a>
-                                <button class="btn btn-secondary btn-sm" onclick="renameDataset('${d.id}', '${d.name.replace(/'/g, "\\'")}')" title="Rename dataset">✏️</button>
-                                <button class="btn btn-secondary btn-sm" onclick="deleteDataset('${d.id}', '${d.name.replace(/'/g, "\\'")}')" title="Delete dataset" style="color: var(--accent-rose);">🗑️</button>
+                                <button type="button" class="btn btn-secondary btn-sm btn-icon" onclick="renameDataset('${d.id}', '${d.name.replace(/'/g, "\\'")}')" title="Rename dataset" aria-label="Rename dataset">${SignalML.icon('pencil', 'icon-xs')}</button>
+                                <button type="button" class="btn btn-danger btn-sm btn-icon" onclick="deleteDataset('${d.id}', '${d.name.replace(/'/g, "\\'")}')" title="Delete dataset" aria-label="Delete dataset">${SignalML.icon('trash', 'icon-xs')}</button>
                             </div>
                         </td>
                     </tr>

@@ -23,7 +23,6 @@ class SignalViewer {
         this.chart = Highcharts.chart(this.containerId, {
             chart: {
                 type: "line",
-                backgroundColor: "transparent",
                 zoomType: "x",
                 panning: true,
                 panKey: "shift"
@@ -31,24 +30,14 @@ class SignalViewer {
             title: { text: null },
             credits: { enabled: false },
             xAxis: {
-                title: { text: "Sample Point Index", style: { color: "#94a3b8" } },
-                labels: { style: { color: "#94a3b8" } },
-                gridLineColor: "#1e293b"
+                title: { text: "Sample Point Index" },
+                tickLength: 0
             },
             yAxis: {
-                title: { text: "Amplitude", style: { color: "#94a3b8" } },
-                labels: { style: { color: "#94a3b8" } },
-                gridLineColor: "#1e293b"
-            },
-            legend: {
-                itemStyle: { color: "#f1f5f9" },
-                itemHoverStyle: { color: "#38bdf8" }
+                title: { text: "Amplitude" }
             },
             tooltip: {
                 shared: true,
-                backgroundColor: "#191f2e",
-                borderColor: "#334155",
-                style: { color: "#f8fafc" },
                 valueDecimals: 4
             },
             plotOptions: {
@@ -96,12 +85,15 @@ class SignalViewer {
             this.chart.series[0].remove(false);
         }
 
-        const colors = ["#38bdf8", "#34d399", "#f43f5e", "#fbbf24", "#a855f7", "#ec4899", "#f97316"];
+        const colors = [
+            "#0090ff", "#30a46c", "#ffc53d", "#e5484d",
+            "#8e4ec6", "#00b8d9", "#f76b15", "#a0a7b4"
+        ];
 
         waveforms.forEach((wf, i) => {
             const seriesData = wf.x.map((xVal, idx) => [xVal, wf.y[idx]]);
             this.chart.addSeries({
-                name: `Sample #${wf.sample_index} ${wf.label !== null ? `(Label: ${wf.label})` : ""}`,
+                name: `Sample #${wf.sample_index} ${wf.label !== null && wf.label !== undefined ? `(Label: ${wf.label})` : ""}`,
                 data: seriesData,
                 color: colors[i % colors.length]
             }, false);
@@ -125,7 +117,7 @@ class SignalViewer {
         setVal("stat-sample-idx", `#${wf.sample_index}`);
         setVal("stat-signal-len", `${wf.length || 0} points`);
         setVal("stat-min-max", `[${minVal}, ${maxVal}]`);
-        setVal("stat-mean-std", `μ: ${meanVal}, σ: ${stdVal}`);
+        setVal("stat-mean-std", `\u03BC: ${meanVal}, \u03C3: ${stdVal}`);
         setVal("stat-label", wf.label !== null && wf.label !== undefined ? wf.label : "None");
     }
 
@@ -200,6 +192,13 @@ class SignalViewer {
                 this.chart.series[0].remove(false);
             }
 
+            const p = (typeof SignalML !== "undefined" && typeof SignalML.getThemePalette === "function") 
+                ? SignalML.getThemePalette() 
+                : null;
+            const meanColor = p ? p.textPrimary : "#0090ff";
+            const boundColor = p ? p.textMuted : "#777b84";
+            const fadedColor = p && p.theme === "light" ? "rgba(0, 144, 255, 0.22)" : "rgba(0, 144, 255, 0.25)";
+
             // 1. Faded waveforms
             data.waveforms.forEach((wf) => {
                 const points = data.x.map((xv, idx) => [xv, wf.y[idx]]);
@@ -207,7 +206,7 @@ class SignalViewer {
                     name: `Sample #${wf.sample_index}`,
                     type: "line",
                     data: points,
-                    color: "rgba(56, 189, 248, 0.18)", // Faded / transparent
+                    color: fadedColor,
                     lineWidth: 1,
                     enableMouseTracking: false,
                     showInLegend: false,
@@ -221,10 +220,10 @@ class SignalViewer {
                     name: "+1σ Bound",
                     type: "line",
                     data: data.x.map((xv, idx) => [xv, data.upper_std[idx]]),
-                    color: "#94a3b8",
+                    color: boundColor,
                     dashStyle: "Dash",
                     lineWidth: 1,
-                    opacity: 0.5,
+                    opacity: 0.6,
                     enableMouseTracking: false,
                     marker: { enabled: false }
                 }, false);
@@ -232,10 +231,10 @@ class SignalViewer {
                     name: "-1σ Bound",
                     type: "line",
                     data: data.x.map((xv, idx) => [xv, data.lower_std[idx]]),
-                    color: "#94a3b8",
+                    color: boundColor,
                     dashStyle: "Dash",
                     lineWidth: 1,
-                    opacity: 0.5,
+                    opacity: 0.6,
                     enableMouseTracking: false,
                     marker: { enabled: false }
                 }, false);
@@ -243,17 +242,12 @@ class SignalViewer {
 
             // 3. Prominent Average Waveform
             this.chart.addSeries({
-                name: `Group Mean / Ortalama (N=${data.sample_count})`,
+                name: `Group Mean (N=${data.sample_count})`,
                 type: "line",
                 data: data.x.map((xv, idx) => [xv, data.mean[idx]]),
-                color: "#ffffff",
-                lineWidth: 3.5,
+                color: meanColor,
+                lineWidth: 2.5,
                 zIndex: 100,
-                shadow: {
-                    color: "#38bdf8",
-                    width: 6,
-                    opacity: 0.8
-                },
                 marker: { enabled: false }
             }, false);
 
