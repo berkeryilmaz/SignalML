@@ -506,6 +506,8 @@ class ClusteringService:
         else:
             raise ValueError(f"Unsupported clustering algorithm: {algorithm}")
 
+        params["standardize"] = bool(standardize)
+
         # Compute cluster distribution
         unique_labels, counts = np.unique(cluster_labels, return_counts=True)
         distribution = {int(k): int(v) for k, v in zip(unique_labels, counts)}
@@ -787,6 +789,8 @@ class ClusteringService:
         if compute_pca and pca_2d_coords is not None and pca_3d_coords is not None:
             save_dict["pca_2d"] = pca_2d_coords
             save_dict["pca_3d"] = pca_3d_coords
+            save_dict["explained_variance_2d"] = np.array(explained_variance_2d, dtype=np.float64)
+            save_dict["explained_variance_3d"] = np.array(explained_variance_3d, dtype=np.float64)
         if ground_truth is not None:
             save_dict["ground_truth"] = ground_truth
 
@@ -851,6 +855,8 @@ class ClusteringService:
             uncertainty = npz["uncertainty"] if "uncertainty" in npz else None
             cluster_ids = [int(c) for c in npz["cluster_ids"]] if "cluster_ids" in npz else sorted([int(c) for c in np.unique(cluster_labels) if c >= 0])
             sample_ids = [str(s) for s in npz["sample_ids"]] if "sample_ids" in npz else [str(i) for i in range(len(cluster_labels))]
+            explained_variance_2d = [float(v) for v in npz["explained_variance_2d"]] if "explained_variance_2d" in npz else []
+            explained_variance_3d = [float(v) for v in npz["explained_variance_3d"]] if "explained_variance_3d" in npz else []
 
         num_samples = len(cluster_labels)
         if distribution_arr is not None:
@@ -917,6 +923,8 @@ class ClusteringService:
             "metrics": metrics,
             "num_samples": num_samples,
             "cluster_distribution": distribution,
+            "explained_variance_2d": explained_variance_2d,
+            "explained_variance_3d": explained_variance_3d,
             "points": points
         })
 
@@ -946,6 +954,8 @@ class ClusteringService:
             uncertainty = npz["uncertainty"] if "uncertainty" in npz else None
             cluster_ids = [int(c) for c in npz["cluster_ids"]] if "cluster_ids" in npz else sorted([int(c) for c in np.unique(cluster_labels) if c >= 0])
             sample_ids = [str(s) for s in npz["sample_ids"]] if "sample_ids" in npz else [str(i) for i in range(len(cluster_labels))]
+            explained_variance_2d = [float(v) for v in npz["explained_variance_2d"]] if "explained_variance_2d" in npz else []
+            explained_variance_3d = [float(v) for v in npz["explained_variance_3d"]] if "explained_variance_3d" in npz else []
             pca_3d = npz["pca_3d"] if "pca_3d" in npz else None
             ground_truth = npz["ground_truth"] if "ground_truth" in npz else None
 

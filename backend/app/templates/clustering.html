@@ -1008,6 +1008,89 @@
         }
     }
 
+    async function applyClusteringSettingsFromRun(data, preserveQueryFeature = false) {
+        if (!data) return;
+
+        // 1. Source Type & Source Item
+        const srcTypeSel = document.getElementById("cluster-source-type");
+        const srcSel = document.getElementById("cluster-source-select");
+        if (!preserveQueryFeature && srcTypeSel && data.source_type) {
+            const targetType = data.source_type === "features" ? "features" : "dataset";
+            if (srcTypeSel.value !== targetType) {
+                srcTypeSel.value = targetType;
+                await loadSourceOptions();
+            }
+            if (srcSel && data.source_id) {
+                const targetId = String(data.source_id);
+                if (!Array.from(srcSel.options).some(opt => opt.value === targetId)) {
+                    await loadSourceOptions();
+                }
+                if (Array.from(srcSel.options).some(opt => opt.value === targetId)) {
+                    srcSel.value = targetId;
+                }
+            }
+        }
+
+        // 2. Algorithm & Visible Parameter Block
+        const algo = String(data.algorithm || "kmeans").toLowerCase();
+        const algoSel = document.getElementById("cluster-algo");
+        if (algoSel && Array.from(algoSel.options).some(opt => opt.value === algo)) {
+            algoSel.value = algo;
+        }
+        toggleAlgoParams(algo);
+
+        // 3. Algorithm-specific Parameters
+        const p = data.params || {};
+        const setVal = (id, val) => {
+            const el = document.getElementById(id);
+            if (el && val !== undefined && val !== null) {
+                el.value = String(val);
+            }
+        };
+
+        if (algo === "kmeans") {
+            setVal("kmeans-k", p.n_clusters);
+            setVal("kmeans-n-init", p.n_init);
+        } else if (algo === "dbscan") {
+            setVal("dbscan-eps", p.eps);
+            setVal("dbscan-min-samples", p.min_samples);
+        } else if (algo === "hdbscan") {
+            setVal("hdbscan-min-cluster-size", p.min_cluster_size);
+            setVal("hdbscan-min-samples", p.min_samples);
+            setVal("hdbscan-epsilon", p.cluster_selection_epsilon);
+            setVal("hdbscan-method", p.cluster_selection_method);
+        } else if (algo === "optics") {
+            setVal("optics-min-samples", p.min_samples);
+            const maxEpsEl = document.getElementById("optics-max-eps");
+            if (maxEpsEl) {
+                maxEpsEl.value = (p.max_eps !== undefined && p.max_eps !== null && Number.isFinite(Number(p.max_eps)))
+                    ? String(p.max_eps)
+                    : "";
+            }
+            setVal("optics-xi", p.xi);
+        } else if (algo === "idec") {
+            await populateIdecModels();
+            if (p.model_id) {
+                const modelSel = document.getElementById("idec-model-select");
+                if (modelSel && Array.from(modelSel.options).some(opt => opt.value === String(p.model_id))) {
+                    modelSel.value = String(p.model_id);
+                }
+            }
+            setVal("idec-n-clusters", p.n_clusters);
+            setVal("idec-epochs", p.epochs);
+            setVal("idec-pretrain-epochs", p.pretrain_epochs);
+            setVal("idec-gamma", p.gamma);
+        }
+
+        // 4. Pre-Standardize Features
+        if (p.standardize !== undefined && p.standardize !== null) {
+            const stdSel = document.getElementById("cluster-standardize");
+            if (stdSel) {
+                stdSel.value = Boolean(p.standardize) ? "true" : "false";
+            }
+        }
+    }
+
     async function loadClusteringRun(clusteringId, silent = false) {
         try {
             if (!silent) SignalML.toast("Loading clustering run...", "info");
@@ -1021,6 +1104,10 @@
             currentClusteringId = data.clustering_id;
             enableExportButton(true);
 
+            // Populate Clustering settings panel from saved run configuration
+            const hasQueryFeature = silent && new URLSearchParams(window.location.search).has("feature_id");
+            await applyClusteringSettingsFromRun(data, hasQueryFeature);
+
             // Update stats
             const sil = data.metrics ? data.metrics.silhouette_score : null;
             document.getElementById("metric-silhouette").textContent = (sil !== null && sil !== undefined) ? sil.toFixed(4) : "N/A";
@@ -1033,6 +1120,8 @@
             if (data.explained_variance_3d && data.explained_variance_3d.length > 0) {
                 const totalVar = data.explained_variance_3d.reduce((a, b) => a + b, 0);
                 document.getElementById("metric-variance").textContent = `${(totalVar * 100).toFixed(1)}%`;
+            } else {
+                document.getElementById("metric-variance").textContent = "—";
             }
 
             pcaVis.loadData(data);
