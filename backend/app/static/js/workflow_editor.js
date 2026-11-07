@@ -134,15 +134,15 @@ class WorkflowEditor {
         if (!body) return;
 
         let html = `
-            <div style="margin-bottom: 1rem;">
-                <div style="font-size: 16px; font-weight: 700; color: #fff;">${node.title}</div>
-                <div style="font-size: 12px; color: var(--text-muted); font-family: var(--font-mono);">Type: ${node.type} | ID: ${node.id}</div>
+            <div class="mb-3">
+                <div class="text-subhead">${node.title}</div>
+                <div class="text-xs text-muted mono">Type: ${node.type} | ID: ${node.id}</div>
             </div>
-            <hr style="border: none; border-top: 1px solid var(--border-color); margin-bottom: 1rem;">
+            <hr class="divider mb-3">
         `;
 
         if (node.properties && Object.keys(node.properties).length > 0) {
-            html += `<div style="font-weight: 600; font-size: 13px; margin-bottom: 0.5rem;">Node Configuration</div>`;
+            html += `<div class="section-title">Node Configuration</div>`;
             
             if (node.type === "normalize") {
                 const curMethod = String(node.properties.method || "zscore").toLowerCase();
@@ -151,19 +151,19 @@ class WorkflowEditor {
                     <div class="form-group">
                         <label class="form-label">Normalization Method</label>
                         <select class="form-control wf-prop-input" data-prop="method">
-                            <option value="zscore" ${curMethod === 'zscore' ? 'selected' : ''}>Z-Score Standardization ((x - μ) / σ)</option>
+                            <option value="zscore" ${curMethod === 'zscore' ? 'selected' : ''}>Z-Score Standardization ((x - mu) / sigma)</option>
                             <option value="minmax" ${curMethod === 'minmax' ? 'selected' : ''}>Min-Max Scaling ([0, 1])</option>
                         </select>
                     </div>
                     <div class="form-group">
-                        <label class="form-label">Scope / Normalizasyon Kapsamı</label>
+                        <label class="form-label">Normalization scope</label>
                         <select class="form-control wf-prop-input" data-prop="per_signal">
-                            <option value="true" ${curPerSig ? 'selected' : ''}>Per-Waveform / Kendi İçinde (Her sinyal bağımsız ölçeklenir)</option>
-                            <option value="false" ${!curPerSig ? 'selected' : ''}>Global Dataset (Tüm veri setine göre)</option>
+                            <option value="true" ${curPerSig ? 'selected' : ''}>Per-waveform (scale each signal independently)</option>
+                            <option value="false" ${!curPerSig ? 'selected' : ''}>Global dataset (scale across all samples)</option>
                         </select>
                     </div>
-                    <div style="background: rgba(56, 189, 248, 0.08); border-left: 3px solid var(--accent-cyan); padding: 8px 10px; font-size: 11px; color: var(--text-secondary); border-radius: 4px; margin-bottom: 12px;">
-                        💡 <strong>Kendi İçinde Normalizasyon (per_signal):</strong> Her dalga formu bağımsız olarak kendi ortalaması/aralığına göre dönüştürülür. Genlik farklılıklarını gidermek için önerilir.
+                    <div class="callout callout-accent mb-3 text-sm">
+                        Per-waveform normalization scales each signal by its own mean and range to remove amplitude offsets.
                     </div>
                 `;
             } else {
@@ -174,8 +174,8 @@ class WorkflowEditor {
                             <div class="form-group">
                                 <label class="form-label">${k}</label>
                                 <select class="form-control wf-prop-input" data-prop="${k}">
-                                    <option value="true" ${isTrue ? 'selected' : ''}>True (Aktif)</option>
-                                    <option value="false" ${!isTrue ? 'selected' : ''}>False (Devre Dışı)</option>
+                                    <option value="true" ${isTrue ? 'selected' : ''}>True (Enabled)</option>
+                                    <option value="false" ${!isTrue ? 'selected' : ''}>False (Disabled)</option>
                                 </select>
                             </div>
                         `;
@@ -190,7 +190,7 @@ class WorkflowEditor {
                 }
             }
         } else {
-            html += `<div style="color: var(--text-muted); font-size: 13px;">No configurable parameters for this node.</div>`;
+            html += `<div class="text-muted text-sm">No configurable parameters for this node.</div>`;
         }
 
         body.innerHTML = html;
@@ -212,8 +212,10 @@ class WorkflowEditor {
     clearInspector() {
         const body = document.getElementById("wf-inspector-body");
         if (body) {
+            const iconHtml = (window.SignalML && typeof window.SignalML.icon === "function") ? window.SignalML.icon("sliders-horizontal") : "";
             body.innerHTML = `
                 <div class="empty-inspector">
+                    ${iconHtml}
                     <p>Select any node to view configuration parameters and live execution status.</p>
                 </div>
             `;
@@ -283,24 +285,24 @@ class WorkflowEditor {
         if (!container) return;
 
         let html = `
-            <div style="margin-top: 1rem; padding: 1rem; background: var(--bg-secondary); border-radius: 8px; border: 1px solid var(--border-color);">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
-                    <strong>DAG Execution Log</strong>
+            <div class="tile mt-3">
+                <div class="row-between mb-2">
+                    <strong class="text-sm">DAG Execution Log</strong>
                     <span class="status-badge success">Success (${data.total_duration_seconds}s)</span>
                 </div>
-                <div style="max-height: 250px; overflow-y: auto;">
+                <div class="max-h-sm scroll-y">
         `;
 
         for (let [nid, res] of Object.entries(data.node_results)) {
             const badgeClass = res.status === "success" ? "success" : "error";
             html += `
-                <div style="display: flex; justify-content: space-between; align-items: center; font-size: 12px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.05);">
+                <div class="row-between text-sm py-1 border-b">
                     <div>
-                        <strong>${res.node_type}</strong> (ID: ${res.node_id})
-                        <div style="color: var(--text-muted); font-size: 11px;">${res.preview || ""}</div>
+                        <strong>${res.node_type}</strong> (ID: <span class="mono">${res.node_id}</span>)
+                        <div class="text-muted text-xs">${res.preview || ""}</div>
                     </div>
-                    <div>
-                        <span style="font-family: var(--font-mono); font-size: 11px; margin-right: 8px;">${res.duration_ms}ms</span>
+                    <div class="row">
+                        <span class="mono text-xs">${res.duration_ms}ms</span>
                         <span class="status-badge ${badgeClass}">${res.status}</span>
                     </div>
                 </div>

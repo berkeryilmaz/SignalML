@@ -193,7 +193,7 @@ class NNEditor {
         this.canvas.getCanvasMenuOptions = () => {
             const opts = origGetMenuOptions ? origGetMenuOptions.call(this.canvas) : [];
             const wizardItem = {
-                content: "🪄 Model Mimarisi Sihirbazı...",
+                content: "Architecture wizard...",
                 callback: () => {
                     if (typeof window.openWizardModal === "function") {
                         window.openWizardModal();
@@ -210,6 +210,10 @@ class NNEditor {
 
         const currentCustomName = (node.properties && node.properties.custom_name) !== undefined ? node.properties.custom_name : (node.title || "");
 
+        const sml = (typeof window !== "undefined" && window.SignalML) || (typeof SignalML !== "undefined" ? SignalML : null);
+        const safeCustomName = (sml && typeof sml.escapeHtml === "function") ? sml.escapeHtml(currentCustomName) : currentCustomName;
+        const iconFn = (sml && typeof sml.icon === "function") ? sml.icon.bind(sml) : (() => "");
+
         let shapeBadgeHtml = "";
         if (node._inferredShape !== undefined || node._paramCount !== undefined) {
             const shapeStr = Array.isArray(node._inferredShape)
@@ -217,49 +221,46 @@ class NNEditor {
                 : (node._inferredShape !== undefined ? JSON.stringify(node._inferredShape) : "N/A");
             const paramStr = node._paramCount !== undefined ? Number(node._paramCount).toLocaleString() : "0";
             shapeBadgeHtml = `
-                <div style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 8px; padding: 10px; margin-bottom: 1rem;">
-                    <div style="font-size: 11px; font-weight: 700; color: #34d399; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">📐 Çıktı Boyutu & Parametre</div>
-                    <div style="display: flex; justify-content: space-between; align-items: center; font-size: 12px; margin-bottom: 4px;">
-                        <span style="color: var(--text-muted);">Output Shape:</span>
-                        <span class="shape-badge" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; font-weight: 600;">${shapeStr}</span>
+                <div class="tile mb-3">
+                    <div class="row text-micro text-success mb-2">${iconFn("layers", "icon-xs")} <span>Output shape &amp; parameters</span></div>
+                    <div class="row-between text-sm mb-1">
+                        <span class="text-muted">Output Shape:</span>
+                        <span class="shape-badge">${shapeStr}</span>
                     </div>
-                    <div style="display: flex; justify-content: space-between; align-items: center; font-size: 12px;">
-                        <span style="color: var(--text-muted);">Parametreler:</span>
-                        <span class="shape-badge" style="background: rgba(16, 185, 129, 0.15); color: #34d399; font-weight: 600;">${paramStr}</span>
+                    <div class="row-between text-sm">
+                        <span class="text-muted">Parameters:</span>
+                        <span class="badge badge-mono badge-success">${paramStr}</span>
                     </div>
                 </div>
             `;
         }
 
-        const sml = (typeof window !== "undefined" && window.SignalML) || (typeof SignalML !== "undefined" ? SignalML : null);
-        const safeCustomName = (sml && typeof sml.escapeHtml === "function") ? sml.escapeHtml(currentCustomName) : currentCustomName;
-
         let html = `
-            <div style="margin-bottom: 1rem;">
-                <div style="font-size: 16px; font-weight: 700; color: #fff;">${node.title}</div>
-                <div style="font-size: 12px; color: var(--text-muted); font-family: var(--font-mono);">Type: ${node.type} | ID: ${node.id}</div>
+            <div class="mb-3">
+                <div class="text-subhead">${node.title}</div>
+                <div class="text-xs text-muted mono">Type: ${node.type} | ID: ${node.id}</div>
             </div>
-            <div class="form-group" style="background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 8px; padding: 10px; margin-bottom: 1rem;">
-                <label class="form-label" style="font-weight: 700; color: #38bdf8; margin-bottom: 4px;">Özel Düğüm / Katman Adı (Custom Node Name)</label>
-                <input class="form-control" id="inspector-custom-name" type="text" value="${safeCustomName}" placeholder="örn: Conv1D_Ozellik_Cikarici">
+            <div class="form-group tile mb-3">
+                <label class="form-label">Layer name</label>
+                <input class="form-control mono" id="inspector-custom-name" type="text" value="${safeCustomName}" placeholder="e.g. encoder_bottleneck">
             </div>
             ${shapeBadgeHtml}
-            <hr style="border: none; border-top: 1px solid var(--border-color); margin-bottom: 1rem;">
+            <hr class="divider mb-3">
         `;
 
         if (node.properties && Object.keys(node.properties).length > 0) {
-            html += `<div style="font-weight: 600; font-size: 13px; margin-bottom: 0.5rem;">Parameters</div>`;
+            html += `<div class="section-title">Parameters</div>`;
             for (let [k, v] of Object.entries(node.properties)) {
                 if (k === "custom_name") continue;
                 if (k === "code") {
                     const safeCode = (sml && typeof sml.escapeHtml === "function") ? sml.escapeHtml(v || "") : (v || "");
                     html += `
                         <div class="form-group">
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-                                <label class="form-label" style="margin: 0;">Katman Kodu (Code)</label>
-                                <button class="btn btn-secondary btn-sm" onclick="openCustomLayerModal()" style="font-size: 10px; padding: 2px 6px;">Studio'da Aç</button>
+                            <div class="row-between mb-1">
+                                <label class="form-label m-0">Layer code</label>
+                                <button class="btn btn-secondary btn-xs" onclick="openCustomLayerModal()">Open Studio</button>
                             </div>
-                            <textarea class="form-control prop-input" data-prop="code" rows="5" style="font-family: var(--font-mono); font-size: 11px;">${safeCode}</textarea>
+                            <textarea class="form-control prop-input mono text-xs" data-prop="code" rows="5">${safeCode}</textarea>
                         </div>
                     `;
                 } else if (typeof v === "boolean") {
@@ -282,7 +283,7 @@ class NNEditor {
                 }
             }
         } else {
-            html += `<div style="color: var(--text-muted); font-size: 13px;">No configurable parameters for this layer.</div>`;
+            html += `<div class="text-muted text-sm">No configurable parameters for this layer.</div>`;
         }
 
         body.innerHTML = html;
@@ -328,8 +329,10 @@ class NNEditor {
     clearInspector() {
         const body = document.getElementById("nn-inspector-body");
         if (body) {
+            const iconHtml = (window.SignalML && typeof window.SignalML.icon === "function") ? window.SignalML.icon("layers") : "";
             body.innerHTML = `
                 <div class="empty-inspector">
+                    ${iconHtml}
                     <p>Select any layer node on the canvas to configure units, activation, and hyper-parameters.</p>
                 </div>
             `;
@@ -338,7 +341,7 @@ class NNEditor {
 
     autoLayout() {
         if (!this.graph || !this.graph._nodes || this.graph._nodes.length === 0) {
-            this.toast("Hizalanacak düğüm bulunamadı!", "warning");
+            this.toast("No nodes to align", "warning");
             return;
         }
 
@@ -462,7 +465,7 @@ class NNEditor {
             this.canvas.setDirty(true, true);
         }
 
-        this.toast("Mimari düğümleri otomatik hizalandı!", "success");
+        this.toast("Nodes aligned", "success");
     }
 
     convertKerasConfigToLiteGraph(kerasConfig) {
@@ -638,7 +641,7 @@ class NNEditor {
                 graphData = JSON.parse(graphData);
             } catch (e) {
                 console.error("Failed to parse graphData string", e);
-                this.toast("Geçersiz JSON formatı: " + e.message, "error");
+                this.toast("Invalid JSON format: " + e.message, "error");
                 return;
             }
         }
@@ -762,17 +765,17 @@ class NNEditor {
         if (!container) return;
 
         let html = `
-            <div style="margin-top: 1rem; padding: 1rem; background: var(--bg-secondary); border-radius: 8px; border: 1px solid var(--border-color);">
-                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
-                    <strong>Inferred Layer Shapes</strong>
+            <div class="tile mt-3">
+                <div class="row-between mb-2">
+                    <strong class="text-sm">Inferred Layer Shapes</strong>
                     <span class="shape-badge">${summary.total_params.toLocaleString()} Params</span>
                 </div>
-                <div style="max-height: 200px; overflow-y: auto;">
+                <div class="max-h-xs scroll-y">
         `;
         for (let l of summary.layers) {
             html += `
-                <div style="display: flex; justify-content: space-between; font-size: 12px; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.05);">
-                    <span>${l.layer_type} (${l.node_id})</span>
+                <div class="row-between text-xs py-1 border-b">
+                    <span>${l.layer_type} (<span class="mono">${l.node_id}</span>)</span>
                     <span class="shape-badge">${JSON.stringify(l.output_shape)}</span>
                 </div>
             `;
@@ -814,8 +817,8 @@ class NNEditor {
                         sel.value = data.model_id;
                         const updateBtn = document.getElementById("update-saved-model-btn");
                         const deleteBtn = document.getElementById("delete-saved-model-btn");
-                        if (updateBtn) updateBtn.style.display = "inline-flex";
-                        if (deleteBtn) deleteBtn.style.display = "inline-flex";
+                        if (updateBtn) { updateBtn.hidden = false; updateBtn.style.display = "inline-flex"; }
+                        if (deleteBtn) { deleteBtn.hidden = false; deleteBtn.style.display = "inline-flex"; }
                     }
                 }
                 return data;
