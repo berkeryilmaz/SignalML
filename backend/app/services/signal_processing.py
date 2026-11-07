@@ -433,6 +433,91 @@ def subtract_gaussian_peak(
         return (arr - peak_val).astype(np.float32)
 
 
+def reverse_signals(
+    signals: np.ndarray,
+    mode: str = "polarity"
+) -> np.ndarray:
+    """
+    Reverses signals according to `mode`:
+    - 'polarity' (default): Inverts signal amplitude (x' = -x), preserving 0 baseline.
+    - 'time': Reverses sample order along the time axis (x'[t] = x[N - 1 - t]).
+    - 'both': Inverts polarity and reverses time axis (-x[:, ::-1]).
+    """
+    arr = np.nan_to_num(ensure_2d_array(signals), copy=True, nan=0.0, posinf=0.0, neginf=0.0)
+    m = (mode or "polarity").lower()
+    if m in ("time", "temporal", "horizontal"):
+        return np.ascontiguousarray(arr[:, ::-1], dtype=np.float32)
+    elif m == "both":
+        return np.ascontiguousarray(-arr[:, ::-1], dtype=np.float32)
+    else:
+        return (-arr).astype(np.float32)
+
+
+def scale_min(
+    signals: np.ndarray,
+    mode: str = "divide_abs_min",
+    per_signal: bool = True,
+    eps: float = 1e-8
+) -> np.ndarray:
+    """
+    Scales signals using their minimum value:
+    - 'divide_abs_min' (default): x' = x / |min(x)| (preserves 0 baseline, scales negative peak to -1).
+    - 'divide_min': x' = x / min(x) (preserves 0 baseline, scales negative minimum to +1).
+    - 'subtract_min': x' = x - min(x) (shifts minimum value to 0).
+    """
+    arr = np.nan_to_num(ensure_2d_array(signals), copy=True, nan=0.0, posinf=0.0, neginf=0.0)
+    m = (mode or "divide_abs_min").lower()
+    if per_signal:
+        mins = np.min(arr, axis=1, keepdims=True)
+        if m == "subtract_min":
+            return (arr - mins).astype(np.float32)
+        elif m == "divide_min":
+            denom = np.where(np.abs(mins) < eps, 1.0, mins)
+            return (arr / denom).astype(np.float32)
+        else:
+            denom = np.where(np.abs(mins) < eps, 1.0, np.abs(mins))
+            return (arr / denom).astype(np.float32)
+    else:
+        min_val = float(np.min(arr))
+        if m == "subtract_min":
+            return (arr - min_val).astype(np.float32)
+        elif m == "divide_min":
+            denom = min_val if abs(min_val) >= eps else 1.0
+            return (arr / denom).astype(np.float32)
+        else:
+            denom = abs(min_val) if abs(min_val) >= eps else 1.0
+            return (arr / denom).astype(np.float32)
+
+
+def scale_max(
+    signals: np.ndarray,
+    mode: str = "divide_max",
+    per_signal: bool = True,
+    eps: float = 1e-8
+) -> np.ndarray:
+    """
+    Scales signals using their maximum value while preserving 0 baseline:
+    - 'divide_max' (default): x' = x / max(x) (scales positive maximum to +1.0).
+    - 'divide_max_abs': x' = x / max(|x|) (scales largest magnitude to +/-1.0).
+    """
+    arr = np.nan_to_num(ensure_2d_array(signals), copy=True, nan=0.0, posinf=0.0, neginf=0.0)
+    m = (mode or "divide_max").lower()
+    if per_signal:
+        if m in ("divide_max_abs", "max_abs", "maxabs"):
+            maxs = np.max(np.abs(arr), axis=1, keepdims=True)
+        else:
+            maxs = np.max(arr, axis=1, keepdims=True)
+        denom = np.where(np.abs(maxs) < eps, 1.0, maxs)
+        return (arr / denom).astype(np.float32)
+    else:
+        if m in ("divide_max_abs", "max_abs", "maxabs"):
+            max_val = float(np.max(np.abs(arr)))
+        else:
+            max_val = float(np.max(arr))
+        denom = max_val if abs(max_val) >= eps else 1.0
+        return (arr / denom).astype(np.float32)
+
+
 def handle_missing(
     signals: np.ndarray,
     strategy: str = "interpolate",
@@ -559,6 +644,19 @@ def run_pipeline(signals: np.ndarray, steps: List[Dict[str, Any]]) -> np.ndarray
             per_sig_raw = params.get("per_signal", True)
             per_sig = per_sig_raw.lower() in ("true", "1", "yes") if isinstance(per_sig_raw, str) else bool(per_sig_raw)
             arr = subtract_gaussian_peak(arr, bins=bins, fit_window_bins=fit_win, per_signal=per_sig)
+        elif name in ("reverse", "reverse_signal", "reverse_signals", "invert"):
+            mode = str(params.get("mode", "polarity"))
+            arr = reverse_signals(arr, mode=mode)
+        elif name in ("scale_min", "min_scaler"):
+            mode = str(params.get("mode", "divide_abs_min"))
+            per_sig_raw = params.get("per_signal", True)
+            per_sig = per_sig_raw.lower() in ("true", "1", "yes") if isinstance(per_sig_raw, str) else bool(per_sig_raw)
+            arr = scale_min(arr, mode=mode, per_signal=per_sig)
+        elif name in ("scale_max", "max_scaler"):
+            mode = str(params.get("mode", "divide_max"))
+            per_sig_raw = params.get("per_signal", True)
+            per_sig = per_sig_raw.lower() in ("true", "1", "yes") if isinstance(per_sig_raw, str) else bool(per_sig_raw)
+            arr = scale_max(arr, mode=mode, per_signal=per_sig)
         elif name == "handle_missing":
             strat = params.get("strategy", "interpolate")
             fval = float(params.get("fill_value", 0.0))

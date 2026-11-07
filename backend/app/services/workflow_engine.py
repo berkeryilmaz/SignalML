@@ -36,6 +36,9 @@ from app.services.signal_processing import (
     subtract_median,
     subtract_mode,
     subtract_gaussian_peak,
+    reverse_signals,
+    scale_min,
+    scale_max,
     export_signals
 )
 from app.services.feature_extraction import FeatureExtractor
@@ -188,10 +191,45 @@ class WorkflowEngine:
                         processed = subtract_mode(signals, per_signal=per_sig)
                     elif method in ("gaussian_peak", "subtract_gaussian_peak", "gaussian"):
                         processed = subtract_gaussian_peak(signals, per_signal=per_sig)
+                    elif method in ("scale_min", "min_scaler"):
+                        processed = scale_min(signals, per_signal=per_sig)
+                    elif method in ("scale_max", "max_scaler"):
+                        processed = scale_max(signals, per_signal=per_sig)
                     else:
                         processed = normalize_zscore(signals, per_signal=per_sig)
                     runtime_outputs[nid][0] = processed
                     status_entry["preview"] = f"Normalized {processed.shape} (method={method}, per_waveform={per_sig})"
+
+                elif ntype in ("reverse_signals", "reverse"):
+                    signals = get_input(0)
+                    if signals is None:
+                        raise ValueError("Reverse Filter requires input signals.")
+                    mode = str(props.get("mode", "polarity"))
+                    processed = reverse_signals(signals, mode=mode)
+                    runtime_outputs[nid][0] = processed
+                    status_entry["preview"] = f"Reversed {processed.shape} (mode={mode})"
+
+                elif ntype in ("scale_min", "min_scaler"):
+                    signals = get_input(0)
+                    if signals is None:
+                        raise ValueError("Min Scaler requires input signals.")
+                    mode = str(props.get("mode", "divide_abs_min"))
+                    per_sig_raw = props.get("per_signal", True)
+                    per_sig = per_sig_raw.lower() in ("true", "1", "yes") if isinstance(per_sig_raw, str) else bool(per_sig_raw)
+                    processed = scale_min(signals, mode=mode, per_signal=per_sig)
+                    runtime_outputs[nid][0] = processed
+                    status_entry["preview"] = f"Min scaled {processed.shape} (mode={mode}, per_waveform={per_sig})"
+
+                elif ntype in ("scale_max", "max_scaler"):
+                    signals = get_input(0)
+                    if signals is None:
+                        raise ValueError("Max Scaler requires input signals.")
+                    mode = str(props.get("mode", "divide_max"))
+                    per_sig_raw = props.get("per_signal", True)
+                    per_sig = per_sig_raw.lower() in ("true", "1", "yes") if isinstance(per_sig_raw, str) else bool(per_sig_raw)
+                    processed = scale_max(signals, mode=mode, per_signal=per_sig)
+                    runtime_outputs[nid][0] = processed
+                    status_entry["preview"] = f"Max scaled {processed.shape} (mode={mode}, per_waveform={per_sig})"
 
                 elif ntype in ("subtract_median", "baseline_median"):
                     signals = get_input(0)

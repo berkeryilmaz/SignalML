@@ -87,11 +87,43 @@ NODE_CATALOG: Dict[str, Dict[str, Any]] = {
     "normalize": {
         "display_name": "Normalize",
         "category": "Signal Preprocessing",
-        "description": "Normalizes signals using Min-Max, Z-Score, Median, Mode, or Gaussian Peak Baseline",
+        "description": "Normalizes signals using Min-Max, Z-Score, Median, Mode, Gaussian Peak, Min Scaler, or Max Scaler",
         "inputs": [{"name": "signals", "type": PortType.SIGNAL}],
         "outputs": [{"name": "signals", "type": PortType.SIGNAL}],
         "parameters": {
-            "method": {"type": "select", "options": ["zscore", "minmax", "median", "mode", "gaussian_peak"], "default": "zscore"},
+            "method": {"type": "select", "options": ["zscore", "minmax", "median", "mode", "gaussian_peak", "scale_min", "scale_max"], "default": "zscore"},
+            "per_signal": {"type": "boolean", "default": True}
+        }
+    },
+    "reverse_signals": {
+        "display_name": "Reverse Filter",
+        "category": "Signal Preprocessing",
+        "description": "Inverts signal polarity (-x) or reverses time axis (x[::-1])",
+        "inputs": [{"name": "signals", "type": PortType.SIGNAL}],
+        "outputs": [{"name": "signals", "type": PortType.SIGNAL}],
+        "parameters": {
+            "mode": {"type": "select", "options": ["polarity", "time", "both"], "default": "polarity"}
+        }
+    },
+    "scale_min": {
+        "display_name": "Min Scaler",
+        "category": "Signal Preprocessing",
+        "description": "Scales signal by its minimum value (x / |min|, x / min, or x - min)",
+        "inputs": [{"name": "signals", "type": PortType.SIGNAL}],
+        "outputs": [{"name": "signals", "type": PortType.SIGNAL}],
+        "parameters": {
+            "mode": {"type": "select", "options": ["divide_abs_min", "divide_min", "subtract_min"], "default": "divide_abs_min"},
+            "per_signal": {"type": "boolean", "default": True}
+        }
+    },
+    "scale_max": {
+        "display_name": "Max Scaler",
+        "category": "Signal Preprocessing",
+        "description": "Scales signal by its maximum value (x / max or x / max|x|) preserving 0 baseline",
+        "inputs": [{"name": "signals", "type": PortType.SIGNAL}],
+        "outputs": [{"name": "signals", "type": PortType.SIGNAL}],
+        "parameters": {
+            "mode": {"type": "select", "options": ["divide_max", "divide_max_abs"], "default": "divide_max"},
             "per_signal": {"type": "boolean", "default": True}
         }
     },

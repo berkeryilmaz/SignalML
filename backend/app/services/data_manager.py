@@ -765,6 +765,12 @@ class DataManager:
                     elif norm_to_apply in ("row_gaussian_peak", "subtract_gaussian_peak"):
                         from app.services.signal_processing import subtract_gaussian_peak
                         seq_matrix = subtract_gaussian_peak(seq_matrix, per_signal=True)
+                    elif norm_to_apply in ("row_scale_min", "scale_min"):
+                        from app.services.signal_processing import scale_min
+                        seq_matrix = scale_min(seq_matrix, per_signal=True)
+                    elif norm_to_apply in ("row_scale_max", "scale_max"):
+                        from app.services.signal_processing import scale_max
+                        seq_matrix = scale_max(seq_matrix, per_signal=True)
                     elif norm_to_apply == "global_standard":
                         g_mean = float(np.mean(seq_matrix))
                         g_std = float(np.std(seq_matrix))

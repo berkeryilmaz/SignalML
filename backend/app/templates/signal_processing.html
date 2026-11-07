@@ -40,9 +40,12 @@
                     <option value="peak_asymmetric_window">Peak Window [Peak - M : Peak + K]</option>
                     <option value="peak_window">Peak Symmetric Window</option>
                     <option value="slice">Slice (Start, Stop, Stride)</option>
+                    <option value="reverse_signals">Reverse Filter (Invert Polarity / Time)</option>
                     <option value="subtract_median">Median Baseline Subtraction (x - median)</option>
                     <option value="subtract_mode">Mode Baseline Subtraction (Most Frequent Value)</option>
                     <option value="subtract_gaussian_peak">Histogram Gaussian Peak Baseline (x - mu_peak)</option>
+                    <option value="scale_min">Min Scaler (x / |min| or x - min)</option>
+                    <option value="scale_max">Max Scaler (x / max or x / |max|)</option>
                     <option value="normalize_zscore">Z-Score Normalization</option>
                     <option value="normalize_minmax">Min-Max Scaling</option>
                     <option value="handle_missing">Missing Value Handler</option>
@@ -111,9 +114,12 @@
         peak_asymmetric_window: "Peak Window [Peak - M : Peak + K]",
         peak_window: "Peak Symmetric Window",
         slice: "Slice (Start, Stop, Stride)",
+        reverse_signals: "Reverse Filter",
         subtract_median: "Median Baseline Subtraction (x - median)",
         subtract_mode: "Mode Baseline Subtraction (Most Frequent Value)",
         subtract_gaussian_peak: "Histogram Gaussian Peak Baseline (x - mu_peak)",
+        scale_min: "Min Scaler",
+        scale_max: "Max Scaler",
         normalize_zscore: "Z-Score Normalization",
         normalize_minmax: "Min-Max Scaling",
         handle_missing: "Missing Value Handler"
@@ -121,6 +127,64 @@
 
     function renderStepParams(step, idx) {
         const p = step.params || {};
+        if (step.name === "reverse_signals" || step.name === "reverse") {
+            const mode = p.mode || "polarity";
+            return `
+                <div class="row mt-1">
+                    <span class="text-xs text-muted">Mode:</span>
+                    <select class="form-control form-control-sm text-xs" onchange="updateStepParam(${idx}, 'mode', this.value)">
+                        <option value="polarity" ${mode === "polarity" ? "selected" : ""}>Invert Polarity (x' = -x)</option>
+                        <option value="time" ${mode === "time" ? "selected" : ""}>Reverse Time Axis (x'[t] = x[N-1-t])</option>
+                        <option value="both" ${mode === "both" ? "selected" : ""}>Both (-x[::-1])</option>
+                    </select>
+                </div>
+            `;
+        }
+        if (step.name === "scale_min" || step.name === "min_scaler") {
+            const mode = p.mode || "divide_abs_min";
+            const perSig = p.per_signal !== false;
+            return `
+                <div class="stack-xs mt-1">
+                    <div class="row">
+                        <span class="text-xs text-muted">Formula:</span>
+                        <select class="form-control form-control-sm text-xs" onchange="updateStepParam(${idx}, 'mode', this.value)">
+                            <option value="divide_abs_min" ${mode === "divide_abs_min" ? "selected" : ""}>x / |min(x)| (keep 0 baseline, min -> -1)</option>
+                            <option value="divide_min" ${mode === "divide_min" ? "selected" : ""}>x / min(x) (keep 0 baseline, min -> +1)</option>
+                            <option value="subtract_min" ${mode === "subtract_min" ? "selected" : ""}>x - min(x) (shift min to 0)</option>
+                        </select>
+                    </div>
+                    <div class="row">
+                        <span class="text-xs text-muted">Scope:</span>
+                        <select class="form-control form-control-sm text-xs" onchange="updateStepParam(${idx}, 'per_signal', this.value === 'true')">
+                            <option value="true" ${perSig ? "selected" : ""}>Per-waveform</option>
+                            <option value="false" ${!perSig ? "selected" : ""}>Global dataset</option>
+                        </select>
+                    </div>
+                </div>
+            `;
+        }
+        if (step.name === "scale_max" || step.name === "max_scaler") {
+            const mode = p.mode || "divide_max";
+            const perSig = p.per_signal !== false;
+            return `
+                <div class="stack-xs mt-1">
+                    <div class="row">
+                        <span class="text-xs text-muted">Formula:</span>
+                        <select class="form-control form-control-sm text-xs" onchange="updateStepParam(${idx}, 'mode', this.value)">
+                            <option value="divide_max" ${mode === "divide_max" ? "selected" : ""}>x / max(x) (keep 0 baseline, max -> +1)</option>
+                            <option value="divide_max_abs" ${mode === "divide_max_abs" ? "selected" : ""}>x / max(|x|) (MaxAbsScaler [-1, +1])</option>
+                        </select>
+                    </div>
+                    <div class="row">
+                        <span class="text-xs text-muted">Scope:</span>
+                        <select class="form-control form-control-sm text-xs" onchange="updateStepParam(${idx}, 'per_signal', this.value === 'true')">
+                            <option value="true" ${perSig ? "selected" : ""}>Per-waveform</option>
+                            <option value="false" ${!perSig ? "selected" : ""}>Global dataset</option>
+                        </select>
+                    </div>
+                </div>
+            `;
+        }
         if (step.name === "subtract_median" || step.name === "normalize_zscore") {
             const perSig = p.per_signal !== false;
             return `
@@ -210,9 +274,12 @@
         else if (type === "peak_asymmetric_window") defaultParams = { left_m: 100, right_k: 200, mode: "max_abs" };
         else if (type === "peak_window") defaultParams = { window_size: 256, mode: "max_abs" };
         else if (type === "slice") defaultParams = { start: 0, stop: null, stride: 1 };
+        else if (type === "reverse_signals") defaultParams = { mode: "polarity" };
         else if (type === "subtract_median") defaultParams = { per_signal: true };
         else if (type === "subtract_mode") defaultParams = { bins: 100, per_signal: true };
         else if (type === "subtract_gaussian_peak") defaultParams = { bins: 100, fit_window_bins: 5, per_signal: true };
+        else if (type === "scale_min") defaultParams = { mode: "divide_abs_min", per_signal: true };
+        else if (type === "scale_max") defaultParams = { mode: "divide_max", per_signal: true };
         else if (type === "normalize_zscore") defaultParams = { per_signal: true };
         else if (type === "normalize_minmax") defaultParams = { min: 0.0, max: 1.0, per_signal: true };
         else if (type === "handle_missing") defaultParams = { strategy: "interpolate", fill_value: 0.0 };

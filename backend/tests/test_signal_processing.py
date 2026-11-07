@@ -18,6 +18,9 @@ from app.services.signal_processing import (
     subtract_median,
     subtract_mode,
     subtract_gaussian_peak,
+    reverse_signals,
+    scale_min,
+    scale_max,
     handle_missing,
     export_signals,
     run_pipeline
@@ -149,6 +152,37 @@ def test_normalization_and_missing_values():
 
     piped_gauss = run_pipeline(noisy_sig, [{"name": "subtract_gaussian_peak", "params": {"bins": 80, "fit_window_bins": 5, "per_signal": True}}])
     assert abs(float(np.mean(piped_gauss[0, :350]))) < 0.05
+
+    # Reverse Filter (polarity, time, both)
+    rev_src = np.array([[0.0, -2.0, 4.0]], dtype=np.float32)
+    assert np.allclose(reverse_signals(rev_src, mode="polarity"), [[0.0, 2.0, -4.0]])
+    assert np.allclose(reverse_signals(rev_src, mode="time"), [[4.0, -2.0, 0.0]])
+    assert np.allclose(reverse_signals(rev_src, mode="both"), [[-4.0, 2.0, 0.0]])
+
+    # Min Scaler & Max Scaler (preserving 0 baseline)
+    base_zero_sig = np.array([[0.0, -4.0, 0.0, 8.0]], dtype=np.float32)
+    s_min_abs = scale_min(base_zero_sig, mode="divide_abs_min", per_signal=True)
+    assert np.allclose(s_min_abs, [[0.0, -1.0, 0.0, 2.0]])
+    s_min_div = scale_min(base_zero_sig, mode="divide_min", per_signal=True)
+    assert np.allclose(s_min_div, [[0.0, 1.0, 0.0, -2.0]])
+    s_min_sub = scale_min(base_zero_sig, mode="subtract_min", per_signal=True)
+    assert np.allclose(s_min_sub, [[4.0, 0.0, 4.0, 12.0]])
+
+    s_max = scale_max(base_zero_sig, mode="divide_max", per_signal=True)
+    assert np.allclose(s_max, [[0.0, -0.5, 0.0, 1.0]])
+    s_max_abs = scale_max(np.array([[0.0, -10.0, 5.0]], dtype=np.float32), mode="divide_max_abs", per_signal=True)
+    assert np.allclose(s_max_abs, [[0.0, -1.0, 0.5]])
+
+    # Chained pipeline: Gaussian/Median baseline -> Reverse polarity -> Max scaler
+    chained = run_pipeline(
+        np.array([[5.0, 5.0, 5.0, 1.0, 5.0]], dtype=np.float32),
+        [
+            {"name": "subtract_median", "params": {"per_signal": True}},
+            {"name": "reverse_signals", "params": {"mode": "polarity"}},
+            {"name": "scale_max", "params": {"mode": "divide_max", "per_signal": True}}
+        ]
+    )
+    assert np.allclose(chained, [[0.0, 0.0, 0.0, 1.0, 0.0]])
 
     # Missing values
     dirty = np.array([[1.0, np.nan, 3.0, 4.0, np.inf]], dtype=np.float32)
