@@ -18,11 +18,20 @@ class NNEditor {
         canvasElement.height = canvasElement.parentElement.clientHeight;
 
         this.canvas = new LGraphCanvas(canvasElement, this.graph);
-        this.canvas.background_color = "#10141d";
-        this.canvas.grid_color = "#1a2233";
+        if (window.SignalML && typeof window.SignalML.applyGraphTheme === "function") {
+            window.SignalML.applyGraphTheme(this.canvas);
+        }
 
         this.registerKerasNodes();
         this.setupDefaultGraph();
+        if (window.SignalML && typeof window.SignalML.applyGraphTheme === "function") {
+            window.SignalML.applyGraphTheme(this.canvas);
+        }
+        window.addEventListener("signalml:themechange", () => {
+            if (window.SignalML && typeof window.SignalML.applyGraphTheme === "function") {
+                window.SignalML.applyGraphTheme(this.canvas);
+            }
+        });
         this.setupEventHandlers();
 
         this.graph.start();
@@ -174,9 +183,8 @@ class NNEditor {
         window.addEventListener("resize", () => {
             const canvasEl = document.getElementById(this.canvasId);
             if (canvasEl && canvasEl.parentElement) {
-                canvasEl.width = canvasEl.parentElement.clientWidth;
-                canvasEl.height = canvasEl.parentElement.clientHeight;
-                this.canvas.resize();
+                this.canvas.resize(canvasEl.parentElement.clientWidth, canvasEl.parentElement.clientHeight);
+                this.canvas.draw(true, true);
             }
         });
 
