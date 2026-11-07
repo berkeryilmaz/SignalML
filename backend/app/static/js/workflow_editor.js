@@ -64,6 +64,7 @@ class WorkflowEditor {
         registerWfNode("signal_truncate", "Signal Truncate", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { target_length: 512, position: "end" });
         registerWfNode("signal_pad", "Signal Pad", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { target_length: 1024, mode: "constant", constant_value: 0.0 });
         registerWfNode("peak_window", "Peak Window", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { left_m: 100, right_k: 200, mode: "max_abs" });
+        registerWfNode("subtract_median", "Median Baseline", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { per_signal: true });
         registerWfNode("normalize", "Normalize", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { method: "zscore", per_signal: true });
 
         // 4. Feature Extractor
@@ -153,6 +154,7 @@ class WorkflowEditor {
                         <select class="form-control wf-prop-input" data-prop="method">
                             <option value="zscore" ${curMethod === 'zscore' ? 'selected' : ''}>Z-Score Standardization ((x - mu) / sigma)</option>
                             <option value="minmax" ${curMethod === 'minmax' ? 'selected' : ''}>Min-Max Scaling ([0, 1])</option>
+                            <option value="median" ${curMethod === 'median' ? 'selected' : ''}>Median Baseline Subtraction (x - median)</option>
                         </select>
                     </div>
                     <div class="form-group">

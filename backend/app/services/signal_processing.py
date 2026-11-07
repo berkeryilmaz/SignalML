@@ -258,6 +258,20 @@ def normalize_zscore(
         return (arr - mean_val) / std_val
 
 
+def subtract_median(
+    signals: np.ndarray,
+    per_signal: bool = True
+) -> np.ndarray:
+    """Subtracts the median value from each signal (or across dataset) to shift baseline to 0."""
+    arr = np.nan_to_num(ensure_2d_array(signals), copy=True, nan=0.0, posinf=0.0, neginf=0.0)
+    if per_signal:
+        medians = np.median(arr, axis=1, keepdims=True)
+        return (arr - medians).astype(np.float32)
+    else:
+        median_val = float(np.median(arr))
+        return (arr - median_val).astype(np.float32)
+
+
 def handle_missing(
     signals: np.ndarray,
     strategy: str = "interpolate",
@@ -366,8 +380,13 @@ def run_pipeline(signals: np.ndarray, steps: List[Dict[str, Any]]) -> np.ndarray
             per_sig = bool(params.get("per_signal", True))
             arr = normalize_minmax(arr, feature_range=frange, per_signal=per_sig)
         elif name in ("normalize_zscore", "zscore"):
-            per_sig = bool(params.get("per_signal", True))
+            per_sig_raw = params.get("per_signal", True)
+            per_sig = per_sig_raw.lower() in ("true", "1", "yes") if isinstance(per_sig_raw, str) else bool(per_sig_raw)
             arr = normalize_zscore(arr, per_signal=per_sig)
+        elif name in ("subtract_median", "baseline_median", "median_baseline"):
+            per_sig_raw = params.get("per_signal", True)
+            per_sig = per_sig_raw.lower() in ("true", "1", "yes") if isinstance(per_sig_raw, str) else bool(per_sig_raw)
+            arr = subtract_median(arr, per_signal=per_sig)
         elif name == "handle_missing":
             strat = params.get("strategy", "interpolate")
             fval = float(params.get("fill_value", 0.0))

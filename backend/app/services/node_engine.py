@@ -87,11 +87,21 @@ NODE_CATALOG: Dict[str, Dict[str, Any]] = {
     "normalize": {
         "display_name": "Normalize",
         "category": "Signal Preprocessing",
-        "description": "Normalizes signals using Min-Max or Z-Score",
+        "description": "Normalizes signals using Min-Max, Z-Score, or Median Baseline Subtraction",
         "inputs": [{"name": "signals", "type": PortType.SIGNAL}],
         "outputs": [{"name": "signals", "type": PortType.SIGNAL}],
         "parameters": {
-            "method": {"type": "select", "options": ["zscore", "minmax"], "default": "zscore"},
+            "method": {"type": "select", "options": ["zscore", "minmax", "median"], "default": "zscore"},
+            "per_signal": {"type": "boolean", "default": True}
+        }
+    },
+    "subtract_median": {
+        "display_name": "Median Baseline Subtraction",
+        "category": "Signal Preprocessing",
+        "description": "Subtracts signal median so baseline is centered at 0",
+        "inputs": [{"name": "signals", "type": PortType.SIGNAL}],
+        "outputs": [{"name": "signals", "type": PortType.SIGNAL}],
+        "parameters": {
             "per_signal": {"type": "boolean", "default": True}
         }
     },

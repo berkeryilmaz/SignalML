@@ -33,6 +33,7 @@ from app.services.signal_processing import (
     peak_asymmetric_window,
     normalize_zscore,
     normalize_minmax,
+    subtract_median,
     export_signals
 )
 from app.services.feature_extraction import FeatureExtractor
@@ -179,10 +180,25 @@ class WorkflowEngine:
 
                     if method == "minmax":
                         processed = normalize_minmax(signals, per_signal=per_sig)
+                    elif method in ("median", "subtract_median"):
+                        processed = subtract_median(signals, per_signal=per_sig)
                     else:
                         processed = normalize_zscore(signals, per_signal=per_sig)
                     runtime_outputs[nid][0] = processed
-                    status_entry["preview"] = f"Normalized {processed.shape} (per_waveform={per_sig})"
+                    status_entry["preview"] = f"Normalized {processed.shape} (method={method}, per_waveform={per_sig})"
+
+                elif ntype in ("subtract_median", "baseline_median"):
+                    signals = get_input(0)
+                    if signals is None:
+                        raise ValueError("Median Baseline Subtraction requires input signals.")
+                    per_sig_raw = props.get("per_signal", True)
+                    if isinstance(per_sig_raw, str):
+                        per_sig = per_sig_raw.lower() in ("true", "1", "yes")
+                    else:
+                        per_sig = bool(per_sig_raw)
+                    processed = subtract_median(signals, per_signal=per_sig)
+                    runtime_outputs[nid][0] = processed
+                    status_entry["preview"] = f"Median baseline subtracted {processed.shape} (per_waveform={per_sig})"
 
                 # 4. Feature Extractor Node
                 elif ntype in ("feature_extractor", "FeatureExtractor"):

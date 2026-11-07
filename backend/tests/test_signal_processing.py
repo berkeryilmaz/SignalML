@@ -15,6 +15,7 @@ from app.services.signal_processing import (
     peak_asymmetric_window,
     normalize_minmax,
     normalize_zscore,
+    subtract_median,
     handle_missing,
     export_signals,
     run_pipeline
@@ -116,6 +117,16 @@ def test_normalization_and_missing_values():
     zs = normalize_zscore(signals, per_signal=True)
     assert np.isclose(np.mean(zs[0]), 0.0, atol=1e-5)
     assert np.isclose(np.std(zs[0]), 1.0, atol=1e-5)
+
+    # Median Baseline Subtraction (per signal)
+    med_sig = subtract_median(signals, per_signal=True)
+    assert np.allclose(med_sig[0], [-2.0, -1.0, 0.0, 1.0, 2.0])
+    assert np.allclose(med_sig[1], [-20.0, -10.0, 0.0, 10.0, 20.0])
+    assert np.allclose(np.median(med_sig, axis=1), [0.0, 0.0])
+
+    # Median Baseline Subtraction via run_pipeline
+    piped = run_pipeline(signals, [{"name": "subtract_median", "params": {"per_signal": True}}])
+    assert np.allclose(piped, med_sig)
 
     # Missing values
     dirty = np.array([[1.0, np.nan, 3.0, 4.0, np.inf]], dtype=np.float32)

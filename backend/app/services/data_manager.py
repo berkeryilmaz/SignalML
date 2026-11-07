@@ -756,6 +756,9 @@ class DataManager:
                         row_maxs = np.max(seq_matrix, axis=1, keepdims=True)
                         diff = row_maxs - row_mins
                         seq_matrix = (seq_matrix - row_mins) / np.where(diff == 0, eps, diff)
+                    elif norm_to_apply in ("row_median", "subtract_median"):
+                        row_medians = np.median(seq_matrix, axis=1, keepdims=True)
+                        seq_matrix = seq_matrix - row_medians
                     elif norm_to_apply == "global_standard":
                         g_mean = float(np.mean(seq_matrix))
                         g_std = float(np.std(seq_matrix))
