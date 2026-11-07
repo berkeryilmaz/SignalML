@@ -34,6 +34,8 @@ from app.services.signal_processing import (
     normalize_zscore,
     normalize_minmax,
     subtract_median,
+    subtract_mode,
+    subtract_gaussian_peak,
     export_signals
 )
 from app.services.feature_extraction import FeatureExtractor
@@ -182,6 +184,10 @@ class WorkflowEngine:
                         processed = normalize_minmax(signals, per_signal=per_sig)
                     elif method in ("median", "subtract_median"):
                         processed = subtract_median(signals, per_signal=per_sig)
+                    elif method in ("mode", "subtract_mode"):
+                        processed = subtract_mode(signals, per_signal=per_sig)
+                    elif method in ("gaussian_peak", "subtract_gaussian_peak", "gaussian"):
+                        processed = subtract_gaussian_peak(signals, per_signal=per_sig)
                     else:
                         processed = normalize_zscore(signals, per_signal=per_sig)
                     runtime_outputs[nid][0] = processed
@@ -192,13 +198,33 @@ class WorkflowEngine:
                     if signals is None:
                         raise ValueError("Median Baseline Subtraction requires input signals.")
                     per_sig_raw = props.get("per_signal", True)
-                    if isinstance(per_sig_raw, str):
-                        per_sig = per_sig_raw.lower() in ("true", "1", "yes")
-                    else:
-                        per_sig = bool(per_sig_raw)
+                    per_sig = per_sig_raw.lower() in ("true", "1", "yes") if isinstance(per_sig_raw, str) else bool(per_sig_raw)
                     processed = subtract_median(signals, per_signal=per_sig)
                     runtime_outputs[nid][0] = processed
                     status_entry["preview"] = f"Median baseline subtracted {processed.shape} (per_waveform={per_sig})"
+
+                elif ntype in ("subtract_mode", "baseline_mode"):
+                    signals = get_input(0)
+                    if signals is None:
+                        raise ValueError("Mode Baseline Subtraction requires input signals.")
+                    bins = int(props.get("bins", 100))
+                    per_sig_raw = props.get("per_signal", True)
+                    per_sig = per_sig_raw.lower() in ("true", "1", "yes") if isinstance(per_sig_raw, str) else bool(per_sig_raw)
+                    processed = subtract_mode(signals, bins=bins, per_signal=per_sig)
+                    runtime_outputs[nid][0] = processed
+                    status_entry["preview"] = f"Mode baseline subtracted {processed.shape} (bins={bins}, per_waveform={per_sig})"
+
+                elif ntype in ("subtract_gaussian_peak", "gaussian_baseline"):
+                    signals = get_input(0)
+                    if signals is None:
+                        raise ValueError("Gaussian Peak Baseline requires input signals.")
+                    bins = int(props.get("bins", 100))
+                    fit_win = int(props.get("fit_window_bins", 5))
+                    per_sig_raw = props.get("per_signal", True)
+                    per_sig = per_sig_raw.lower() in ("true", "1", "yes") if isinstance(per_sig_raw, str) else bool(per_sig_raw)
+                    processed = subtract_gaussian_peak(signals, bins=bins, fit_window_bins=fit_win, per_signal=per_sig)
+                    runtime_outputs[nid][0] = processed
+                    status_entry["preview"] = f"Gaussian peak baseline subtracted {processed.shape} (bins={bins}, per_waveform={per_sig})"
 
                 # 4. Feature Extractor Node
                 elif ntype in ("feature_extractor", "FeatureExtractor"):

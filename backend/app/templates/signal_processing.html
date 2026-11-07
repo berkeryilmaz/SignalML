@@ -41,6 +41,8 @@
                     <option value="peak_window">Peak Symmetric Window</option>
                     <option value="slice">Slice (Start, Stop, Stride)</option>
                     <option value="subtract_median">Median Baseline Subtraction (x - median)</option>
+                    <option value="subtract_mode">Mode Baseline Subtraction (Most Frequent Value)</option>
+                    <option value="subtract_gaussian_peak">Histogram Gaussian Peak Baseline (x - mu_peak)</option>
                     <option value="normalize_zscore">Z-Score Normalization</option>
                     <option value="normalize_minmax">Min-Max Scaling</option>
                     <option value="handle_missing">Missing Value Handler</option>
@@ -110,6 +112,8 @@
         peak_window: "Peak Symmetric Window",
         slice: "Slice (Start, Stop, Stride)",
         subtract_median: "Median Baseline Subtraction (x - median)",
+        subtract_mode: "Mode Baseline Subtraction (Most Frequent Value)",
+        subtract_gaussian_peak: "Histogram Gaussian Peak Baseline (x - mu_peak)",
         normalize_zscore: "Z-Score Normalization",
         normalize_minmax: "Min-Max Scaling",
         handle_missing: "Missing Value Handler"
@@ -126,6 +130,45 @@
                         <option value="true" ${perSig ? "selected" : ""}>Per-waveform (baseline = 0 per signal)</option>
                         <option value="false" ${!perSig ? "selected" : ""}>Global dataset (across all samples)</option>
                     </select>
+                </div>
+            `;
+        }
+        if (step.name === "subtract_mode") {
+            const perSig = p.per_signal !== false;
+            const bins = p.bins ?? 100;
+            return `
+                <div class="stack-xs mt-1">
+                    <div class="row">
+                        <span class="text-xs text-muted">Bins:</span>
+                        <input type="number" class="form-control form-control-sm mono text-xs" value="${bins}" min="0" max="2048" onchange="updateStepParam(${idx}, 'bins', Number(this.value))" title="Histogram bins (0 = exact value mode only)">
+                        <span class="text-xs text-muted">Scope:</span>
+                        <select class="form-control form-control-sm text-xs" onchange="updateStepParam(${idx}, 'per_signal', this.value === 'true')">
+                            <option value="true" ${perSig ? "selected" : ""}>Per-waveform</option>
+                            <option value="false" ${!perSig ? "selected" : ""}>Global dataset</option>
+                        </select>
+                    </div>
+                </div>
+            `;
+        }
+        if (step.name === "subtract_gaussian_peak") {
+            const perSig = p.per_signal !== false;
+            const bins = p.bins ?? 100;
+            const fitWin = p.fit_window_bins ?? 5;
+            return `
+                <div class="stack-xs mt-1">
+                    <div class="row">
+                        <span class="text-xs text-muted">Bins:</span>
+                        <input type="number" class="form-control form-control-sm mono text-xs" value="${bins}" min="16" max="2048" onchange="updateStepParam(${idx}, 'bins', Number(this.value))" title="Histogram bin count">
+                        <span class="text-xs text-muted">Fit +/-bins:</span>
+                        <input type="number" class="form-control form-control-sm mono text-xs" value="${fitWin}" min="2" max="50" onchange="updateStepParam(${idx}, 'fit_window_bins', Number(this.value))" title="Half-window bins around histogram peak for Gaussian fit">
+                    </div>
+                    <div class="row">
+                        <span class="text-xs text-muted">Scope:</span>
+                        <select class="form-control form-control-sm text-xs" onchange="updateStepParam(${idx}, 'per_signal', this.value === 'true')">
+                            <option value="true" ${perSig ? "selected" : ""}>Per-waveform (fit Gaussian per signal)</option>
+                            <option value="false" ${!perSig ? "selected" : ""}>Global dataset</option>
+                        </select>
+                    </div>
                 </div>
             `;
         }
@@ -168,6 +211,8 @@
         else if (type === "peak_window") defaultParams = { window_size: 256, mode: "max_abs" };
         else if (type === "slice") defaultParams = { start: 0, stop: null, stride: 1 };
         else if (type === "subtract_median") defaultParams = { per_signal: true };
+        else if (type === "subtract_mode") defaultParams = { bins: 100, per_signal: true };
+        else if (type === "subtract_gaussian_peak") defaultParams = { bins: 100, fit_window_bins: 5, per_signal: true };
         else if (type === "normalize_zscore") defaultParams = { per_signal: true };
         else if (type === "normalize_minmax") defaultParams = { min: 0.0, max: 1.0, per_signal: true };
         else if (type === "handle_missing") defaultParams = { strategy: "interpolate", fill_value: 0.0 };

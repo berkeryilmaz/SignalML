@@ -87,11 +87,11 @@ NODE_CATALOG: Dict[str, Dict[str, Any]] = {
     "normalize": {
         "display_name": "Normalize",
         "category": "Signal Preprocessing",
-        "description": "Normalizes signals using Min-Max, Z-Score, or Median Baseline Subtraction",
+        "description": "Normalizes signals using Min-Max, Z-Score, Median, Mode, or Gaussian Peak Baseline",
         "inputs": [{"name": "signals", "type": PortType.SIGNAL}],
         "outputs": [{"name": "signals", "type": PortType.SIGNAL}],
         "parameters": {
-            "method": {"type": "select", "options": ["zscore", "minmax", "median"], "default": "zscore"},
+            "method": {"type": "select", "options": ["zscore", "minmax", "median", "mode", "gaussian_peak"], "default": "zscore"},
             "per_signal": {"type": "boolean", "default": True}
         }
     },
@@ -102,6 +102,29 @@ NODE_CATALOG: Dict[str, Dict[str, Any]] = {
         "inputs": [{"name": "signals", "type": PortType.SIGNAL}],
         "outputs": [{"name": "signals", "type": PortType.SIGNAL}],
         "parameters": {
+            "per_signal": {"type": "boolean", "default": True}
+        }
+    },
+    "subtract_mode": {
+        "display_name": "Mode Baseline Subtraction",
+        "category": "Signal Preprocessing",
+        "description": "Subtracts the most frequent amplitude (mode) so baseline is centered at 0",
+        "inputs": [{"name": "signals", "type": PortType.SIGNAL}],
+        "outputs": [{"name": "signals", "type": PortType.SIGNAL}],
+        "parameters": {
+            "bins": {"type": "int", "default": 100, "min": 0},
+            "per_signal": {"type": "boolean", "default": True}
+        }
+    },
+    "subtract_gaussian_peak": {
+        "display_name": "Gaussian Peak Baseline",
+        "category": "Signal Preprocessing",
+        "description": "Builds amplitude histogram, fits a Gaussian to the peak lobe, and subtracts peak center",
+        "inputs": [{"name": "signals", "type": PortType.SIGNAL}],
+        "outputs": [{"name": "signals", "type": PortType.SIGNAL}],
+        "parameters": {
+            "bins": {"type": "int", "default": 100, "min": 16},
+            "fit_window_bins": {"type": "int", "default": 5, "min": 2},
             "per_signal": {"type": "boolean", "default": True}
         }
     },

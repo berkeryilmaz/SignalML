@@ -272,6 +272,167 @@ def subtract_median(
         return (arr - median_val).astype(np.float32)
 
 
+def _estimate_mode_1d(sig: np.ndarray, bins: int = 100) -> float:
+    """
+    Estimates the baseline mode (most frequent amplitude) of a 1D signal.
+    Uses exact value counts when the signal is discrete/quantized, or histogram
+    dominant-bin sample average for continuous signals.
+    """
+    if sig.size == 0:
+        return 0.0
+    s_min = float(np.min(sig))
+    s_max = float(np.max(sig))
+    if s_max <= s_min:
+        return s_min
+
+    vals, counts = np.unique(sig, return_counts=True)
+    max_count = int(np.max(counts))
+    # If an exact value repeats frequently (quantized ADC / flat baseline) or bins <= 0
+    if bins <= 0 or vals.size <= 32 or (max_count >= max(3, int(0.15 * sig.size))):
+        return float(vals[int(np.argmax(counts))])
+
+    n_bins = max(10, int(bins))
+    hist, edges = np.histogram(sig, bins=n_bins, range=(s_min, s_max))
+    k_max = int(np.argmax(hist))
+    lo, hi = edges[k_max], edges[k_max + 1]
+    if k_max == n_bins - 1:
+        in_bin = sig[(sig >= lo) & (sig <= hi)]
+    else:
+        in_bin = sig[(sig >= lo) & (sig < hi)]
+    if in_bin.size > 0:
+        return float(np.mean(in_bin))
+    return float(0.5 * (lo + hi))
+
+
+def subtract_mode(
+    signals: np.ndarray,
+    bins: int = 100,
+    per_signal: bool = True
+) -> np.ndarray:
+    """
+    Subtracts the most frequent amplitude (mode) from each signal (or across dataset)
+    to shift baseline to 0.
+    """
+    arr = np.nan_to_num(ensure_2d_array(signals), copy=True, nan=0.0, posinf=0.0, neginf=0.0)
+    if per_signal:
+        modes = np.array([[_estimate_mode_1d(arr[i], bins=bins)] for i in range(arr.shape[0])], dtype=np.float32)
+        return (arr - modes).astype(np.float32)
+    else:
+        mode_val = _estimate_mode_1d(arr.ravel(), bins=bins)
+        return (arr - mode_val).astype(np.float32)
+
+
+def _estimate_gaussian_peak_1d(sig: np.ndarray, bins: int = 100, fit_window_bins: int = 5) -> float:
+    """
+    Builds an amplitude histogram of `sig`, isolates the dominant baseline lobe around
+    the histogram maximum, fits a 1D Gaussian curve A * exp(-(x - mu)^2 / (2 * sigma^2)),
+    and returns the fitted Gaussian peak center `mu` as the baseline offset.
+    """
+    if sig.size == 0:
+        return 0.0
+    s_min = float(np.min(sig))
+    s_max = float(np.max(sig))
+    if s_max <= s_min:
+        return s_min
+
+    n_bins = max(16, int(bins))
+    hist, edges = np.histogram(sig, bins=n_bins, range=(s_min, s_max))
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    bin_width = float(edges[1] - edges[0])
+
+    k_max = int(np.argmax(hist))
+    win = max(2, int(fit_window_bins))
+    start_k = max(0, k_max - win)
+    end_k = min(n_bins, k_max + win + 1)
+
+    x_loc = centers[start_k:end_k]
+    y_loc = hist[start_k:end_k].astype(np.float64)
+
+    # Keep bins that belong to the main baseline lobe (>10% of peak height)
+    mask = y_loc >= (0.10 * float(hist[k_max]))
+    if np.sum(mask) >= 3:
+        x_fit = x_loc[mask]
+        y_fit = y_loc[mask]
+    else:
+        x_fit = x_loc
+        y_fit = y_loc
+
+    w_sum = float(np.sum(y_fit))
+    if w_sum <= 0:
+        return float(centers[k_max])
+
+    # Initial moment estimates in the peak window
+    mu0 = float(np.sum(x_fit * y_fit) / w_sum)
+    var0 = float(np.sum(y_fit * (x_fit - mu0) ** 2) / w_sum)
+    sigma0 = max(np.sqrt(max(var0, 0.0)), bin_width * 0.5)
+    a0 = float(hist[k_max])
+
+    # Weighted log-parabolic Gaussian estimate as a fast, exact closed-form initializer
+    pos = y_fit > 0
+    if np.sum(pos) >= 3:
+        xp = x_fit[pos]
+        yp = y_fit[pos]
+        try:
+            coeffs = np.polyfit(xp, np.log(yp), deg=2, w=yp)
+            if coeffs[0] < -1e-12:
+                mu_quad = float(-coeffs[1] / (2.0 * coeffs[0]))
+                if float(x_fit[0]) <= mu_quad <= float(x_fit[-1]):
+                    mu0 = mu_quad
+        except Exception:
+            pass
+
+    # Nonlinear least-squares Gaussian refinement via scipy.optimize.curve_fit
+    if x_fit.size >= 3:
+        try:
+            from scipy.optimize import curve_fit
+
+            def _gauss(x, a, mu, sigma):
+                return a * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
+
+            lo_bound = [0.0, float(x_fit[0]), bin_width * 0.1]
+            hi_bound = [float(hist[k_max]) * 2.5 + 1.0, float(x_fit[-1]), (s_max - s_min) + bin_width]
+            mu0_clamped = min(max(mu0, lo_bound[1]), hi_bound[1])
+            sigma0_clamped = min(max(sigma0, lo_bound[2]), hi_bound[2])
+
+            popt, _ = curve_fit(
+                _gauss,
+                x_fit,
+                y_fit,
+                p0=[a0, mu0_clamped, sigma0_clamped],
+                bounds=(lo_bound, hi_bound),
+                maxfev=400
+            )
+            mu_fit = float(popt[1])
+            if np.isfinite(mu_fit):
+                return mu_fit
+        except Exception:
+            pass
+
+    return mu0
+
+
+def subtract_gaussian_peak(
+    signals: np.ndarray,
+    bins: int = 100,
+    fit_window_bins: int = 5,
+    per_signal: bool = True
+) -> np.ndarray:
+    """
+    Computes an amplitude histogram, fits a Gaussian curve around the dominant peak,
+    and subtracts the Gaussian peak center (mu) so the baseline is centered at 0.
+    """
+    arr = np.nan_to_num(ensure_2d_array(signals), copy=True, nan=0.0, posinf=0.0, neginf=0.0)
+    if per_signal:
+        peaks = np.array(
+            [[_estimate_gaussian_peak_1d(arr[i], bins=bins, fit_window_bins=fit_window_bins)] for i in range(arr.shape[0])],
+            dtype=np.float32
+        )
+        return (arr - peaks).astype(np.float32)
+    else:
+        peak_val = _estimate_gaussian_peak_1d(arr.ravel(), bins=bins, fit_window_bins=fit_window_bins)
+        return (arr - peak_val).astype(np.float32)
+
+
 def handle_missing(
     signals: np.ndarray,
     strategy: str = "interpolate",
@@ -387,6 +548,17 @@ def run_pipeline(signals: np.ndarray, steps: List[Dict[str, Any]]) -> np.ndarray
             per_sig_raw = params.get("per_signal", True)
             per_sig = per_sig_raw.lower() in ("true", "1", "yes") if isinstance(per_sig_raw, str) else bool(per_sig_raw)
             arr = subtract_median(arr, per_signal=per_sig)
+        elif name in ("subtract_mode", "baseline_mode", "mode_baseline"):
+            bins = int(params.get("bins", 100))
+            per_sig_raw = params.get("per_signal", True)
+            per_sig = per_sig_raw.lower() in ("true", "1", "yes") if isinstance(per_sig_raw, str) else bool(per_sig_raw)
+            arr = subtract_mode(arr, bins=bins, per_signal=per_sig)
+        elif name in ("subtract_gaussian_peak", "gaussian_baseline", "baseline_gaussian", "histogram_gaussian_baseline"):
+            bins = int(params.get("bins", 100))
+            fit_win = int(params.get("fit_window_bins", 5))
+            per_sig_raw = params.get("per_signal", True)
+            per_sig = per_sig_raw.lower() in ("true", "1", "yes") if isinstance(per_sig_raw, str) else bool(per_sig_raw)
+            arr = subtract_gaussian_peak(arr, bins=bins, fit_window_bins=fit_win, per_signal=per_sig)
         elif name == "handle_missing":
             strat = params.get("strategy", "interpolate")
             fval = float(params.get("fill_value", 0.0))

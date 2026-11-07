@@ -65,6 +65,8 @@ class WorkflowEditor {
         registerWfNode("signal_pad", "Signal Pad", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { target_length: 1024, mode: "constant", constant_value: 0.0 });
         registerWfNode("peak_window", "Peak Window", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { left_m: 100, right_k: 200, mode: "max_abs" });
         registerWfNode("subtract_median", "Median Baseline", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { per_signal: true });
+        registerWfNode("subtract_mode", "Mode Baseline", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { bins: 100, per_signal: true });
+        registerWfNode("subtract_gaussian_peak", "Gaussian Peak Baseline", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { bins: 100, fit_window_bins: 5, per_signal: true });
         registerWfNode("normalize", "Normalize", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { method: "zscore", per_signal: true });
 
         // 4. Feature Extractor
@@ -155,6 +157,8 @@ class WorkflowEditor {
                             <option value="zscore" ${curMethod === 'zscore' ? 'selected' : ''}>Z-Score Standardization ((x - mu) / sigma)</option>
                             <option value="minmax" ${curMethod === 'minmax' ? 'selected' : ''}>Min-Max Scaling ([0, 1])</option>
                             <option value="median" ${curMethod === 'median' ? 'selected' : ''}>Median Baseline Subtraction (x - median)</option>
+                            <option value="mode" ${curMethod === 'mode' ? 'selected' : ''}>Mode Baseline Subtraction (Most Frequent Value)</option>
+                            <option value="gaussian_peak" ${curMethod === 'gaussian_peak' ? 'selected' : ''}>Histogram Gaussian Peak Baseline (x - mu_peak)</option>
                         </select>
                     </div>
                     <div class="form-group">
