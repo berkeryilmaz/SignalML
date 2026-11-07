@@ -116,12 +116,29 @@
 
             <div class="toolbar-divider"></div>
 
-            <!-- 2. Center Group: Canvas Operations -->
+            <!-- 2. Center Group: Canvas Operations, Flow & Snapping -->
             <div class="toolbar-group toolbar-group-center">
                 <button class="btn btn-secondary toolbar-btn btn-wizard" onclick="openWizardModal()" title="Pre-built deep learning architecture wizard">
                     {{ icon('wand-sparkles') }} <span>Wizard</span>
                 </button>
-                <button class="btn btn-secondary toolbar-btn" onclick="nnEditorInstance.autoLayout()" title="Auto-align nodes">
+                <div class="btn-group flow-btn-group" role="group" aria-label="Graph Flow Direction" title="Flow direction: Left-to-Right, Right-to-Left, Top-to-Bottom, Bottom-to-Top">
+                    <button type="button" class="btn btn-secondary toolbar-btn flow-btn is-active" id="flow-btn-lr" onclick="nnEditorInstance.setFlowMode('lr')" title="Left to Right flow (Default)">
+                        {{ icon('arrow-right') }} <span>L&rarr;R</span>
+                    </button>
+                    <button type="button" class="btn btn-secondary toolbar-btn flow-btn" id="flow-btn-rl" onclick="nnEditorInstance.setFlowMode('rl')" title="Right to Left flow">
+                        {{ icon('arrow-left') }} <span>R&larr;L</span>
+                    </button>
+                    <button type="button" class="btn btn-secondary toolbar-btn flow-btn" id="flow-btn-tb" onclick="nnEditorInstance.setFlowMode('tb')" title="Top to Bottom flow">
+                        {{ icon('arrow-down') }} <span>T&darr;B</span>
+                    </button>
+                    <button type="button" class="btn btn-secondary toolbar-btn flow-btn" id="flow-btn-bt" onclick="nnEditorInstance.setFlowMode('bt')" title="Bottom to Top flow">
+                        {{ icon('arrow-up') }} <span>B&uarr;T</span>
+                    </button>
+                </div>
+                <button type="button" class="btn btn-secondary toolbar-btn is-active" id="toolbar-snap-btn" onclick="nnEditorInstance.toggleSnap()" title="Toggle Grid Snapping (20px)">
+                    {{ icon('grid') }} <span>Snap: On</span>
+                </button>
+                <button class="btn btn-secondary toolbar-btn" onclick="nnEditorInstance.autoLayout()" title="Auto-align nodes in current flow direction">
                     {{ icon('sparkles') }} <span>Auto-layout</span>
                 </button>
                 <button class="btn btn-secondary toolbar-btn btn-validate" id="btn-toolbar-validate" onclick="nnEditorInstance.validateGraph()" title="Validate tensor shapes and calculate parameters">
@@ -691,7 +708,11 @@
         if (!nnEditorInstance) return;
         const node = LiteGraph.createNode(`keras/${type}`);
         if (node) {
-            node.pos = [300 + Math.random() * 80, 200 + Math.random() * 80];
+            const grid = (nnEditorInstance.canvas && nnEditorInstance.canvas.snap_grid_size) || 20;
+            node.pos = [
+                Math.round((300 + Math.random() * 80) / grid) * grid,
+                Math.round((200 + Math.random() * 80) / grid) * grid
+            ];
             nnEditorInstance.graph.add(node);
             SignalML.toast(`Added ${node.title}`, "info");
         }

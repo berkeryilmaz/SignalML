@@ -1,12 +1,434 @@
 // Neural Network Visual Node Editor (LiteGraph integration for Keras Functional API)
 
+// ==========================================================================
+// LiteGraph Extensions: 4-Way Node Flow (LR, RL, TB, BT) & Real-time Grid Snapping
+// ==========================================================================
+(function() {
+    if (typeof LiteGraph === "undefined") return;
+
+    // Synchronize LiteGraph canvas grid size to 20px (matching background dot pattern)
+    LiteGraph.CANVAS_GRID_SIZE = 20;
+
+    // 1. Enhanced Connection / Port Positioning supporting LR, RL, TB, BT
+    LGraphNode.prototype.getConnectionPos = function(is_input, slot_number, out) {
+        out = out || new Float32Array(2);
+        const flow = this.flowMode || (this.graph && this.graph.flowMode) || "lr";
+        const numInputs = (this.inputs && this.inputs.length) || 1;
+        const numOutputs = (this.outputs && this.outputs.length) || 1;
+        const slotH = LiteGraph.NODE_SLOT_HEIGHT || 20;
+        const startY = this.constructor.slot_start_y || 0;
+        const f = 0.5 * slotH; // 10px offset for side ports
+        const titleH = LiteGraph.NODE_TITLE_HEIGHT || 30;
+
+        if (slot_number === -1) {
+            out[0] = this.pos[0] + 0.5 * titleH;
+            out[1] = this.pos[1] + 0.5 * titleH;
+            return out;
+        }
+
+        if (is_input && this.inputs && this.inputs[slot_number] && this.inputs[slot_number].pos) {
+            out[0] = this.pos[0] + this.inputs[slot_number].pos[0];
+            out[1] = this.pos[1] + this.inputs[slot_number].pos[1];
+            return out;
+        }
+        if (!is_input && this.outputs && this.outputs[slot_number] && this.outputs[slot_number].pos) {
+            out[0] = this.pos[0] + this.outputs[slot_number].pos[0];
+            out[1] = this.pos[1] + this.outputs[slot_number].pos[1];
+            return out;
+        }
+
+        if (this.flags && this.flags.collapsed) {
+            const w = this._collapsed_width || LiteGraph.NODE_COLLAPSED_WIDTH || 80;
+            if (flow === "tb" || flow === "bt") {
+                out[0] = this.pos[0] + 0.5 * w;
+                out[1] = (flow === "tb")
+                    ? (is_input ? this.pos[1] - titleH : this.pos[1])
+                    : (is_input ? this.pos[1] : this.pos[1] - titleH);
+            } else if (flow === "rl") {
+                out[0] = is_input ? this.pos[0] + w : this.pos[0];
+                out[1] = this.pos[1] - 0.5 * titleH;
+            } else {
+                out[0] = is_input ? this.pos[0] : this.pos[0] + w;
+                out[1] = this.pos[1] - 0.5 * titleH;
+            }
+            return out;
+        }
+
+        if (flow === "rl") {
+            // Right-to-Left: Inputs on Right edge, Outputs on Left edge
+            if (is_input) {
+                out[0] = this.pos[0] + this.size[0] + 1 - f;
+                out[1] = this.pos[1] + (slot_number + 0.7) * slotH + startY;
+            } else {
+                out[0] = this.pos[0] + f;
+                out[1] = this.pos[1] + (slot_number + 0.7) * slotH + startY;
+            }
+        } else if (flow === "tb") {
+            // Top-to-Bottom: Inputs on Top edge (below title bar), Outputs on Bottom edge
+            if (is_input) {
+                out[0] = this.pos[0] + (this.size[0] / (numInputs + 1)) * (slot_number + 1);
+                out[1] = this.pos[1];
+            } else {
+                out[0] = this.pos[0] + (this.size[0] / (numOutputs + 1)) * (slot_number + 1);
+                out[1] = this.pos[1] + this.size[1];
+            }
+        } else if (flow === "bt") {
+            // Bottom-to-Top: Inputs on Bottom edge, Outputs on Top edge
+            if (is_input) {
+                out[0] = this.pos[0] + (this.size[0] / (numInputs + 1)) * (slot_number + 1);
+                out[1] = this.pos[1] + this.size[1];
+            } else {
+                out[0] = this.pos[0] + (this.size[0] / (numOutputs + 1)) * (slot_number + 1);
+                out[1] = this.pos[1];
+            }
+        } else {
+            // Left-to-Right (Default): Inputs on Left edge, Outputs on Right edge
+            if (is_input) {
+                out[0] = this.pos[0] + f;
+                out[1] = this.pos[1] + (slot_number + 0.7) * slotH + startY;
+            } else {
+                out[0] = this.pos[0] + this.size[0] + 1 - f;
+                out[1] = this.pos[1] + (slot_number + 0.7) * slotH + startY;
+            }
+        }
+        return out;
+    };
+
+    // 2. Symmetric Radial Hit-Testing for Input Connection Dropping
+    if (typeof LGraphCanvas !== "undefined") {
+        LGraphCanvas.prototype.isOverNodeInput = function(node, canvasX, canvasY, out) {
+            if (node.inputs) {
+                for (let i = 0; i < node.inputs.length; ++i) {
+                    const pos = node.getConnectionPos(true, i);
+                    const dx = canvasX - pos[0];
+                    const dy = canvasY - pos[1];
+                    // 20px hit-radius around slot center (symmetrical across all 4 flow directions)
+                    if (dx * dx + dy * dy <= 400) {
+                        if (out) { out[0] = pos[0]; out[1] = pos[1]; }
+                        return i;
+                    }
+                }
+            }
+            return -1;
+        };
+    }
+
+    // 3. Symmetric Radial Hit-Testing for Slot Interaction
+    LGraphNode.prototype.getSlotInPosition = function(canvasX, canvasY) {
+        const pos = new Float32Array(2);
+        if (this.inputs) {
+            for (let i = 0; i < this.inputs.length; ++i) {
+                this.getConnectionPos(true, i, pos);
+                const dx = canvasX - pos[0];
+                const dy = canvasY - pos[1];
+                if (dx * dx + dy * dy <= 400) {
+                    return { input: this.inputs[i], slot: i, link_pos: pos };
+                }
+            }
+        }
+        if (this.outputs) {
+            for (let i = 0; i < this.outputs.length; ++i) {
+                this.getConnectionPos(false, i, pos);
+                const dx = canvasX - pos[0];
+                const dy = canvasY - pos[1];
+                if (dx * dx + dy * dy <= 400) {
+                    return { output: this.outputs[i], slot: i, link_pos: pos };
+                }
+            }
+        }
+        return null;
+    };
+
+    // 4. Direction-Aware Node & Slot Label Drawing
+    if (typeof LGraphCanvas !== "undefined") {
+        LGraphCanvas.prototype.drawNode = function(node, ctx) {
+            this.current_node = node;
+            const color = node.color || node.constructor.color || LiteGraph.NODE_DEFAULT_COLOR;
+            let bgcolor = node.bgcolor || node.constructor.bgcolor || LiteGraph.NODE_DEFAULT_BGCOLOR;
+            const lowScale = this.ds.scale < 0.6;
+
+            if (this.live_mode) {
+                if (!node.flags.collapsed && node.onDrawForeground) {
+                    ctx.shadowColor = "transparent";
+                    node.onDrawForeground(ctx, this, this.canvas);
+                }
+                return;
+            }
+
+            const alpha = this.editor_alpha;
+            ctx.globalAlpha = alpha;
+            if (this.render_shadows && !lowScale) {
+                ctx.shadowColor = LiteGraph.DEFAULT_SHADOW_COLOR;
+                ctx.shadowOffsetX = 2 * this.ds.scale;
+                ctx.shadowOffsetY = 2 * this.ds.scale;
+                ctx.shadowBlur = 3 * this.ds.scale;
+            } else {
+                ctx.shadowColor = "transparent";
+            }
+
+            if (node.flags.collapsed && node.onDrawCollapsed && node.onDrawCollapsed(ctx, this)) {
+                return;
+            }
+
+            const shape = node._shape || LiteGraph.BOX_SHAPE;
+            const size = [node.size[0], node.size[1]];
+            const flow = node.flowMode || (node.graph && node.graph.flowMode) || "lr";
+
+            if (node.flags.collapsed) {
+                ctx.font = this.inner_text_font;
+                const title = node.getTitle ? node.getTitle() : node.title;
+                if (title != null) {
+                    node._collapsed_width = Math.min(node.size[0], ctx.measureText(title).width + 2 * (LiteGraph.NODE_TITLE_HEIGHT || 30));
+                    size[0] = node._collapsed_width;
+                    size[1] = 0;
+                }
+            }
+
+            if (node.clip_area) {
+                ctx.save();
+                ctx.beginPath();
+                if (shape === LiteGraph.BOX_SHAPE) ctx.rect(0, 0, size[0], size[1]);
+                else if (shape === LiteGraph.ROUND_SHAPE) ctx.roundRect ? ctx.roundRect(0, 0, size[0], size[1], 10) : ctx.rect(0, 0, size[0], size[1]);
+                else if (shape === LiteGraph.CIRCLE_SHAPE) ctx.arc(0.5 * size[0], 0.5 * size[1], 0.5 * size[0], 0, 2 * Math.PI);
+                ctx.clip();
+            }
+
+            if (node.has_errors) bgcolor = "red";
+            this.drawNodeShape(node, ctx, size, color, bgcolor, node.is_selected, node.mouseOver);
+            ctx.shadowColor = "transparent";
+
+            if (node.onDrawForeground) {
+                node.onDrawForeground(ctx, this, this.canvas);
+            }
+
+            ctx.font = this.inner_text_font;
+            const showLabels = !lowScale;
+            const connectingOutput = this.connecting_output;
+            ctx.lineWidth = 1;
+            const posHelper = new Float32Array(2);
+
+            if (!node.flags.collapsed) {
+                // Draw Inputs
+                if (node.inputs) {
+                    for (let i = 0; i < node.inputs.length; i++) {
+                        const slot = node.inputs[i];
+                        ctx.globalAlpha = alpha;
+                        if (this.connecting_node && !LiteGraph.isValidConnection(slot.type, connectingOutput && connectingOutput.type)) {
+                            ctx.globalAlpha = 0.4 * alpha;
+                        }
+                        ctx.fillStyle = (slot.link != null)
+                            ? (slot.color_on || this.default_connection_color.input_on)
+                            : (slot.color_off || this.default_connection_color.input_off);
+
+                        const slotPos = node.getConnectionPos(true, i, posHelper);
+                        const localX = slotPos[0] - node.pos[0];
+                        const localY = slotPos[1] - node.pos[1];
+
+                        ctx.beginPath();
+                        if (lowScale) {
+                            ctx.rect(localX - 4, localY - 4, 8, 8);
+                        } else {
+                            ctx.arc(localX, localY, 4.5, 0, 2 * Math.PI);
+                        }
+                        ctx.fill();
+
+                        if (showLabels) {
+                            const label = slot.label != null ? slot.label : slot.name;
+                            if (label) {
+                                ctx.fillStyle = LiteGraph.NODE_TEXT_COLOR;
+                                if (flow === "rl") {
+                                    ctx.textAlign = "right";
+                                    ctx.fillText(label, localX - 10, localY + 4);
+                                } else if (flow === "tb") {
+                                    ctx.textAlign = "center";
+                                    ctx.fillText(label, localX, localY + 16);
+                                } else if (flow === "bt") {
+                                    ctx.textAlign = "center";
+                                    ctx.fillText(label, localX, localY - 8);
+                                } else { // "lr"
+                                    ctx.textAlign = "left";
+                                    ctx.fillText(label, localX + 10, localY + 4);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Draw Outputs
+                if (this.connecting_node) {
+                    ctx.globalAlpha = 0.4 * alpha;
+                }
+                ctx.strokeStyle = "black";
+                if (node.outputs) {
+                    for (let i = 0; i < node.outputs.length; i++) {
+                        const slot = node.outputs[i];
+                        ctx.fillStyle = (slot.links && slot.links.length)
+                            ? (slot.color_on || this.default_connection_color.output_on)
+                            : (slot.color_off || this.default_connection_color.output_off);
+
+                        const slotPos = node.getConnectionPos(false, i, posHelper);
+                        const localX = slotPos[0] - node.pos[0];
+                        const localY = slotPos[1] - node.pos[1];
+
+                        ctx.beginPath();
+                        if (lowScale) {
+                            ctx.rect(localX - 4, localY - 4, 8, 8);
+                        } else {
+                            ctx.arc(localX, localY, 4.5, 0, 2 * Math.PI);
+                        }
+                        ctx.fill();
+                        if (!lowScale) ctx.stroke();
+
+                        if (showLabels) {
+                            const label = slot.label != null ? slot.label : slot.name;
+                            if (label) {
+                                ctx.fillStyle = LiteGraph.NODE_TEXT_COLOR;
+                                if (flow === "rl") {
+                                    ctx.textAlign = "left";
+                                    ctx.fillText(label, localX + 10, localY + 4);
+                                } else if (flow === "tb") {
+                                    ctx.textAlign = "center";
+                                    ctx.fillText(label, localX, localY - 8);
+                                } else if (flow === "bt") {
+                                    ctx.textAlign = "center";
+                                    ctx.fillText(label, localX, localY + 16);
+                                } else { // "lr"
+                                    ctx.textAlign = "right";
+                                    ctx.fillText(label, localX - 10, localY + 4);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                ctx.textAlign = "left";
+                ctx.globalAlpha = 1;
+                if (node.widgets) {
+                    let startY = 2;
+                    if (node.widgets_start_y != null) startY = node.widgets_start_y;
+                    this.drawNodeWidgets(node, startY, ctx, this.node_widget && this.node_widget[0] === node ? this.node_widget[1] : null);
+                }
+            } else if (this.render_collapsed_slots) {
+                const w = node._collapsed_width || LiteGraph.NODE_COLLAPSED_WIDTH || 80;
+                const titleH = LiteGraph.NODE_TITLE_HEIGHT || 30;
+                let hasConnectedInput = false;
+                let hasConnectedOutput = false;
+                if (node.inputs) {
+                    for (let d = 0; d < node.inputs.length; d++) {
+                        if (node.inputs[d].link != null) { hasConnectedInput = true; break; }
+                    }
+                }
+                if (node.outputs) {
+                    for (let d = 0; d < node.outputs.length; d++) {
+                        if (node.outputs[d].links && node.outputs[d].links.length) { hasConnectedOutput = true; break; }
+                    }
+                }
+
+                ctx.fillStyle = (this.default_connection_color && this.default_connection_color.input_on) || "#0090ff";
+                if (hasConnectedInput) {
+                    let ix, iy;
+                    if (flow === "tb") { ix = 0.5 * w; iy = -titleH; }
+                    else if (flow === "bt") { ix = 0.5 * w; iy = 0; }
+                    else if (flow === "rl") { ix = w; iy = -0.5 * titleH; }
+                    else { ix = 0; iy = -0.5 * titleH; }
+
+                    ctx.beginPath();
+                    ctx.arc(ix, iy, 4, 0, 2 * Math.PI);
+                    ctx.fill();
+                }
+
+                ctx.fillStyle = (this.default_connection_color && this.default_connection_color.output_on) || "#0090ff";
+                if (hasConnectedOutput) {
+                    let ox, oy;
+                    if (flow === "tb") { ox = 0.5 * w; oy = 0; }
+                    else if (flow === "bt") { ox = 0.5 * w; oy = -titleH; }
+                    else if (flow === "rl") { ox = 0; oy = -0.5 * titleH; }
+                    else { ox = w; oy = -0.5 * titleH; }
+
+                    ctx.beginPath();
+                    ctx.arc(ox, oy, 4, 0, 2 * Math.PI);
+                    ctx.fill();
+                }
+            }
+
+            if (node.clip_area) ctx.restore();
+            ctx.globalAlpha = 1;
+        };
+
+        // 5. Real-Time Grid Snapping on Node Drag
+        const origProcessMouseDown = LGraphCanvas.prototype.processMouseDown;
+        LGraphCanvas.prototype.processMouseDown = function(e) {
+            const res = origProcessMouseDown ? origProcessMouseDown.apply(this, arguments) : undefined;
+            if (this.node_dragged) {
+                this._dragStartMouse = [e.canvasX, e.canvasY];
+                this._dragStartPosMap = new Map();
+                if (this.selected_nodes) {
+                    for (const id in this.selected_nodes) {
+                        const n = this.selected_nodes[id];
+                        if (n && n.pos) {
+                            this._dragStartPosMap.set(n.id, [n.pos[0], n.pos[1]]);
+                        }
+                    }
+                }
+                if (this.node_dragged && !this._dragStartPosMap.has(this.node_dragged.id)) {
+                    this._dragStartPosMap.set(this.node_dragged.id, [this.node_dragged.pos[0], this.node_dragged.pos[1]]);
+                }
+            }
+            return res;
+        };
+
+        const origProcessMouseMove = LGraphCanvas.prototype.processMouseMove;
+        LGraphCanvas.prototype.processMouseMove = function(e) {
+            const res = origProcessMouseMove ? origProcessMouseMove.apply(this, arguments) : undefined;
+            if (this.snap_to_grid && this.node_dragged && this._dragStartMouse && this._dragStartPosMap) {
+                const grid = this.snap_grid_size || LiteGraph.CANVAS_GRID_SIZE || 20;
+                const totalDx = e.canvasX - this._dragStartMouse[0];
+                const totalDy = e.canvasY - this._dragStartMouse[1];
+                const snappedDx = Math.round(totalDx / grid) * grid;
+                const snappedDy = Math.round(totalDy / grid) * grid;
+
+                this._dragStartPosMap.forEach((origPos, nId) => {
+                    const n = (this.graph && this.graph._nodes_by_id) ? this.graph._nodes_by_id[nId] : null;
+                    if (n && n.pos) {
+                        n.pos[0] = Math.round((origPos[0] + snappedDx) / grid) * grid;
+                        n.pos[1] = Math.round((origPos[1] + snappedDy) / grid) * grid;
+                    }
+                });
+                this.dirty_bgcanvas = this.dirty_canvas = true;
+            }
+            return res;
+        };
+
+        const origProcessMouseUp = LGraphCanvas.prototype.processMouseUp;
+        LGraphCanvas.prototype.processMouseUp = function(e) {
+            if (this.snap_to_grid && this._dragStartPosMap) {
+                const grid = this.snap_grid_size || LiteGraph.CANVAS_GRID_SIZE || 20;
+                this._dragStartPosMap.forEach((_, nId) => {
+                    const n = (this.graph && this.graph._nodes_by_id) ? this.graph._nodes_by_id[nId] : null;
+                    if (n && n.pos) {
+                        n.pos[0] = Math.round(n.pos[0] / grid) * grid;
+                        n.pos[1] = Math.round(n.pos[1] / grid) * grid;
+                    }
+                });
+            }
+            this._dragStartMouse = null;
+            this._dragStartPosMap = null;
+            return origProcessMouseUp ? origProcessMouseUp.apply(this, arguments) : undefined;
+        };
+    }
+})();
+
 class NNEditor {
     constructor(canvasId) {
         this.canvasId = canvasId;
         this.graph = new LGraph();
         this.canvas = null;
         this.selectedNode = null;
+        this.flowMode = "lr"; // Default flow mode: Left-to-Right
+        this.snapToGrid = true; // Default: Snap to Grid enabled
+        this.snapGridSize = 20; // 20px grid matches canvas background dot pattern
         this.init();
+        window.nnEditorInstance = this;
     }
 
     init() {
@@ -18,9 +440,23 @@ class NNEditor {
         canvasElement.height = canvasElement.parentElement.clientHeight;
 
         this.canvas = new LGraphCanvas(canvasElement, this.graph);
+        this.canvas.snap_to_grid = this.snapToGrid;
+        this.canvas.align_to_grid = this.snapToGrid;
+        this.canvas.snap_grid_size = this.snapGridSize;
+
         if (window.SignalML && typeof window.SignalML.applyGraphTheme === "function") {
             window.SignalML.applyGraphTheme(this.canvas);
         }
+
+        // Snap newly added nodes to 20px grid and inherit active flow
+        this.graph.onNodeAdded = (node) => {
+            if (node && node.pos) {
+                const grid = this.snapGridSize || 20;
+                node.pos[0] = Math.round(node.pos[0] / grid) * grid;
+                node.pos[1] = Math.round(node.pos[1] / grid) * grid;
+            }
+            this.applyNodeSlotDirections(node, node.flowMode || this.flowMode);
+        };
 
         this.registerKerasNodes();
         this.setupDefaultGraph();
@@ -33,6 +469,9 @@ class NNEditor {
             }
         });
         this.setupEventHandlers();
+
+        this.updateFlowToolbarUI(this.flowMode);
+        this.updateSnapToolbarUI();
 
         this.graph.start();
     }
@@ -151,7 +590,153 @@ class NNEditor {
         registerLayer("custom_layer", "Custom Layer", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { class_name: "CustomSignalLayer", units: 32, activation: "relu", code: "" }, ["customlayer", "customsignallayer"], "Clustering & Custom");
     }
 
+    applyNodeSlotDirections(node, flow) {
+        if (!node) return;
+        const mode = flow || node.flowMode || (node.graph && node.graph.flowMode) || this.flowMode || "lr";
+        if (mode === "rl") {
+            if (node.inputs) node.inputs.forEach(s => { s.dir = LiteGraph.RIGHT; });
+            if (node.outputs) node.outputs.forEach(s => { s.dir = LiteGraph.LEFT; });
+        } else if (mode === "tb") {
+            if (node.inputs) node.inputs.forEach(s => { s.dir = LiteGraph.UP; });
+            if (node.outputs) node.outputs.forEach(s => { s.dir = LiteGraph.DOWN; });
+        } else if (mode === "bt") {
+            if (node.inputs) node.inputs.forEach(s => { s.dir = LiteGraph.DOWN; });
+            if (node.outputs) node.outputs.forEach(s => { s.dir = LiteGraph.UP; });
+        } else { // "lr"
+            if (node.inputs) node.inputs.forEach(s => { s.dir = LiteGraph.LEFT; });
+            if (node.outputs) node.outputs.forEach(s => { s.dir = LiteGraph.RIGHT; });
+        }
+
+        // Auto-expand node width for multi-port layers in vertical flows so port labels don't collide
+        if (mode === "tb" || mode === "bt") {
+            const numInputs = (node.inputs && node.inputs.length) || 1;
+            const numOutputs = (node.outputs && node.outputs.length) || 1;
+            const maxPorts = Math.max(numInputs, numOutputs);
+            const minW = Math.max(180, (maxPorts + 1) * 45);
+            if (node.size && node.size[0] < minW) {
+                node.size[0] = minW;
+            }
+        }
+    }
+
+    setFlowMode(mode, triggerAutoLayout = true) {
+        const validModes = ["lr", "rl", "tb", "bt"];
+        if (!validModes.includes(mode)) mode = "lr";
+
+        this.flowMode = mode;
+        if (this.graph) {
+            this.graph.flowMode = mode;
+            if (this.graph._nodes) {
+                this.graph._nodes.forEach(node => {
+                    this.applyNodeSlotDirections(node, node.flowMode || mode);
+                });
+            }
+        }
+
+        if (triggerAutoLayout) {
+            this.autoLayout(mode);
+        }
+
+        this.updateFlowToolbarUI(mode);
+
+        if (this.selectedNode) {
+            this.updateInspector(this.selectedNode);
+        }
+
+        if (this.canvas) {
+            this.canvas.setDirty(true, true);
+            if (typeof this.canvas.draw === "function") {
+                this.canvas.draw(true, true);
+            }
+        }
+
+        const flowLabels = {
+            lr: "Left → Right",
+            rl: "Right ← Left",
+            tb: "Top ↓ Bottom",
+            bt: "Bottom ↑ Top"
+        };
+        this.toast(`Graph flow: ${flowLabels[mode] || mode}`, "info");
+    }
+
+    setNodeOrientation(nodeId, orientation) {
+        if (!this.graph) return;
+        const node = typeof nodeId === "object" ? nodeId : this.graph.getNodeById(nodeId);
+        if (!node) return;
+
+        if (orientation === null || orientation === "default" || orientation === "inherit") {
+            delete node.flowMode;
+        } else {
+            node.flowMode = orientation;
+        }
+
+        this.applyNodeSlotDirections(node, node.flowMode || this.flowMode || "lr");
+
+        if (this.canvas) {
+            this.canvas.setDirty(true, true);
+            if (typeof this.canvas.draw === "function") {
+                this.canvas.draw(true, true);
+            }
+        }
+
+        this.updateInspector(node);
+
+        const currentActive = node.flowMode || this.flowMode || "lr";
+        const flowLabels = { lr: "L→R", rl: "R←L", tb: "T↓B", bt: "B↑T" };
+        const label = node.flowMode
+            ? `${flowLabels[node.flowMode] || node.flowMode}`
+            : `Graph Default (${flowLabels[this.flowMode] || this.flowMode})`;
+        this.toast(`${node.title || "Layer"} ports: ${label}`, "info");
+    }
+
+    cycleNodeOrientation(nodeId) {
+        if (!this.graph) return;
+        const node = typeof nodeId === "object" ? nodeId : this.graph.getNodeById(nodeId);
+        if (!node) return;
+
+        const modes = ["lr", "rl", "tb", "bt"];
+        const current = node.flowMode || this.flowMode || "lr";
+        const nextIdx = (modes.indexOf(current) + 1) % modes.length;
+        this.setNodeOrientation(node, modes[nextIdx]);
+    }
+
+    toggleSnap() {
+        this.snapToGrid = !this.snapToGrid;
+        if (this.canvas) {
+            this.canvas.snap_to_grid = this.snapToGrid;
+            this.canvas.align_to_grid = this.snapToGrid;
+        }
+        this.updateSnapToolbarUI();
+        this.toast(`Snap to grid: ${this.snapToGrid ? "Enabled (20px)" : "Disabled (Free)"}`, "info");
+    }
+
+    updateFlowToolbarUI(mode) {
+        const current = mode || this.flowMode || "lr";
+        ["lr", "rl", "tb", "bt"].forEach(m => {
+            const btn = document.getElementById(`flow-btn-${m}`);
+            if (btn) {
+                btn.classList.toggle("is-active", m === current);
+                btn.setAttribute("aria-pressed", m === current ? "true" : "false");
+            }
+        });
+    }
+
+    updateSnapToolbarUI() {
+        const btn = document.getElementById("toolbar-snap-btn");
+        if (btn) {
+            btn.classList.toggle("is-active", Boolean(this.snapToGrid));
+            btn.setAttribute("aria-pressed", this.snapToGrid ? "true" : "false");
+            const span = btn.querySelector("span");
+            if (span) {
+                span.textContent = this.snapToGrid ? "Snap: On" : "Snap: Off";
+            }
+        }
+    }
+
     setupDefaultGraph() {
+        this.flowMode = "lr";
+        if (this.graph) this.graph.flowMode = "lr";
+
         // Create an example deep learning pipeline: Input -> Conv1D -> LSTM -> Dense
         const nodeInput = LiteGraph.createNode("keras/input");
         nodeInput.pos = [100, 180];
@@ -180,6 +765,10 @@ class NNEditor {
         nodeInput.connect(0, nodeConv, 0);
         nodeConv.connect(0, nodeLSTM, 0);
         nodeLSTM.connect(0, nodeDense, 0);
+
+        if (this.graph && this.graph._nodes) {
+            this.graph._nodes.forEach(n => this.applyNodeSlotDirections(n, "lr"));
+        }
     }
 
     setupEventHandlers() {
@@ -202,7 +791,7 @@ class NNEditor {
             }
         });
 
-        // Add Model Wizard to Canvas Right-Click Context Menu
+        // Add Model Wizard & Graph Flow Options to Canvas Right-Click Context Menu
         const origGetMenuOptions = this.canvas.getCanvasMenuOptions;
         this.canvas.getCanvasMenuOptions = () => {
             const opts = origGetMenuOptions ? origGetMenuOptions.call(this.canvas) : [];
@@ -214,7 +803,44 @@ class NNEditor {
                     }
                 }
             };
-            return [wizardItem, null, ...(opts || [])];
+            const flowSubmenu = {
+                content: "Graph Flow Layout",
+                has_submenu: true,
+                submenu: {
+                    options: [
+                        { content: "Left to Right (L→R)", callback: () => this.setFlowMode("lr") },
+                        { content: "Right to Left (R←L)", callback: () => this.setFlowMode("rl") },
+                        { content: "Top to Bottom (T↓B)", callback: () => this.setFlowMode("tb") },
+                        { content: "Bottom to Top (B↑T)", callback: () => this.setFlowMode("bt") }
+                    ]
+                }
+            };
+            const snapItem = {
+                content: this.snapToGrid ? "Disable Snap to Grid" : "Enable Snap to Grid (20px)",
+                callback: () => this.toggleSnap()
+            };
+            return [wizardItem, flowSubmenu, snapItem, null, ...(opts || [])];
+        };
+
+        // Add Port Orientation to Node Right-Click Context Menu
+        const origGetNodeMenuOptions = this.canvas.getNodeMenuOptions;
+        this.canvas.getNodeMenuOptions = (node) => {
+            const opts = origGetNodeMenuOptions ? origGetNodeMenuOptions.call(this.canvas, node) : [];
+            const flowSubmenu = {
+                content: "Port Orientation",
+                has_submenu: true,
+                submenu: {
+                    options: [
+                        { content: "Left to Right (→ LR)", callback: () => this.setNodeOrientation(node.id, "lr") },
+                        { content: "Right to Left (← RL)", callback: () => this.setNodeOrientation(node.id, "rl") },
+                        { content: "Top to Bottom (↓ TB)", callback: () => this.setNodeOrientation(node.id, "tb") },
+                        { content: "Bottom to Top (↑ BT)", callback: () => this.setNodeOrientation(node.id, "bt") },
+                        null,
+                        { content: "Inherit Graph Default", callback: () => this.setNodeOrientation(node.id, null) }
+                    ]
+                }
+            };
+            return [flowSubmenu, null, ...(opts || [])];
         };
     }
 
@@ -249,6 +875,33 @@ class NNEditor {
             `;
         }
 
+        const currentFlow = node.flowMode || this.flowMode || "lr";
+        const flowLabels = { lr: "L→R", rl: "R←L", tb: "T↓B", bt: "B↑T" };
+        const nodeFlowBadge = node.flowMode
+            ? `${flowLabels[node.flowMode] || node.flowMode}`
+            : `Graph (${flowLabels[this.flowMode] || this.flowMode})`;
+
+        const orientationTileHtml = `
+            <div class="tile mb-3">
+                <div class="row-between mb-2">
+                    <span class="text-xs text-muted fw-600 uppercase">Port Orientation</span>
+                    <span class="badge badge-mono text-xs" id="inspector-node-flow-badge">${nodeFlowBadge}</span>
+                </div>
+                <div class="btn-group w-full mb-2">
+                    <button type="button" class="btn btn-secondary btn-xs flex-1 ${currentFlow === 'lr' ? 'btn-primary' : ''}" data-flow-action="set" data-flow="lr" data-node-id="${node.id}" title="Left to Right (Inputs Left, Outputs Right)">&rarr; LR</button>
+                    <button type="button" class="btn btn-secondary btn-xs flex-1 ${currentFlow === 'rl' ? 'btn-primary' : ''}" data-flow-action="set" data-flow="rl" data-node-id="${node.id}" title="Right to Left (Inputs Right, Outputs Left)">&larr; RL</button>
+                    <button type="button" class="btn btn-secondary btn-xs flex-1 ${currentFlow === 'tb' ? 'btn-primary' : ''}" data-flow-action="set" data-flow="tb" data-node-id="${node.id}" title="Top to Bottom (Inputs Top, Outputs Bottom)">&darr; TB</button>
+                    <button type="button" class="btn btn-secondary btn-xs flex-1 ${currentFlow === 'bt' ? 'btn-primary' : ''}" data-flow-action="set" data-flow="bt" data-node-id="${node.id}" title="Bottom to Top (Inputs Bottom, Outputs Top)">&uarr; BT</button>
+                </div>
+                <div class="row-between">
+                    <button type="button" class="btn btn-ghost btn-xs text-muted" data-flow-action="cycle" data-node-id="${node.id}" title="Cycle orientation">
+                        ${iconFn('rotate-cw', 'icon-xs')} <span>Cycle flow</span>
+                    </button>
+                    <button type="button" class="btn btn-ghost btn-xs text-muted" data-flow-action="reset" data-node-id="${node.id}" title="Inherit graph default flow">Reset default</button>
+                </div>
+            </div>
+        `;
+
         let html = `
             <div class="mb-3">
                 <div class="text-subhead">${node.title}</div>
@@ -258,6 +911,7 @@ class NNEditor {
                 <label class="form-label">Layer name</label>
                 <input class="form-control mono" id="inspector-custom-name" type="text" value="${safeCustomName}" placeholder="e.g. encoder_bottleneck">
             </div>
+            ${orientationTileHtml}
             ${shapeBadgeHtml}
             <hr class="divider mb-3">
         `;
@@ -315,6 +969,21 @@ class NNEditor {
             });
         }
 
+        // Bind node port orientation action events
+        body.querySelectorAll("[data-flow-action]").forEach(btn => {
+            btn.addEventListener("click", () => {
+                const action = btn.dataset.flowAction;
+                const targetId = Number(btn.dataset.nodeId);
+                if (action === "set") {
+                    this.setNodeOrientation(targetId, btn.dataset.flow);
+                } else if (action === "cycle") {
+                    this.cycleNodeOrientation(targetId);
+                } else if (action === "reset") {
+                    this.setNodeOrientation(targetId, null);
+                }
+            });
+        });
+
         // Bind boolean select change events
         body.querySelectorAll(".prop-input-bool").forEach(sel => {
             sel.addEventListener("change", (e) => {
@@ -353,12 +1022,13 @@ class NNEditor {
         }
     }
 
-    autoLayout() {
+    autoLayout(direction) {
         if (!this.graph || !this.graph._nodes || this.graph._nodes.length === 0) {
             this.toast("No nodes to align", "warning");
             return;
         }
 
+        const flow = direction || this.flowMode || "lr";
         const nodes = this.graph._nodes;
         const links = this.graph.links || {};
 
@@ -449,37 +1119,72 @@ class NNEditor {
             });
         }
 
+        // Check for unvisited nodes (e.g. if graph had an accidental cycle or unreached component)
+        const unvisited = nodes.filter(n => (inDegree[n.id] || 0) > 0);
+        if (unvisited.length > 0) {
+            let nextD = 0;
+            nodes.forEach(n => {
+                if (depth[n.id] > nextD) nextD = depth[n.id];
+            });
+            nextD += 1;
+            unvisited.forEach(n => {
+                depth[n.id] = nextD++;
+            });
+        }
+
         // Group nodes by depth
         const depthGroups = {};
+        let maxDepth = 0;
         nodes.forEach(n => {
             const d = depth[n.id] !== undefined ? depth[n.id] : 0;
+            if (d > maxDepth) maxDepth = d;
             if (!depthGroups[d]) depthGroups[d] = [];
             depthGroups[d].push(n);
         });
 
-        // Position nodes into clean horizontal columns and vertically centered rows
         const colWidth = 260;
         const rowHeight = 160;
         const startX = 80;
         const startY = 140;
+        const grid = (this.canvas && this.canvas.snap_grid_size) || 20;
 
         Object.keys(depthGroups).sort((a, b) => Number(a) - Number(b)).forEach(dStr => {
             const d = Number(dStr);
             const groupNodes = depthGroups[d];
-            const x = startX + d * colWidth;
-            const totalGroupHeight = groupNodes.length * rowHeight;
-            
+
             groupNodes.forEach((node, idx) => {
-                const y = startY + idx * rowHeight;
-                node.pos = [x, y];
+                let x, y;
+                if (flow === "lr") {
+                    x = startX + d * colWidth;
+                    y = startY + idx * rowHeight;
+                } else if (flow === "rl") {
+                    x = startX + (maxDepth - d) * colWidth;
+                    y = startY + idx * rowHeight;
+                } else if (flow === "tb") {
+                    x = startX + idx * colWidth;
+                    y = startY + d * rowHeight;
+                } else if (flow === "bt") {
+                    x = startX + idx * colWidth;
+                    y = startY + (maxDepth - d) * rowHeight;
+                } else {
+                    x = startX + d * colWidth;
+                    y = startY + idx * rowHeight;
+                }
+
+                node.pos[0] = Math.round(x / grid) * grid;
+                node.pos[1] = Math.round(y / grid) * grid;
             });
         });
 
         if (this.canvas) {
             this.canvas.setDirty(true, true);
+            if (typeof this.canvas.draw === "function") {
+                this.canvas.draw(true, true);
+            }
         }
 
-        this.toast("Nodes aligned", "success");
+        const flowLabels = { lr: "Left → Right", rl: "Right ← Left", tb: "Top ↓ Bottom", bt: "Bottom ↑ Top" };
+        this.toast(`Nodes aligned (${flowLabels[flow] || flow})`, "success");
     }
 
     convertKerasConfigToLiteGraph(kerasConfig) {
@@ -672,7 +1377,13 @@ class NNEditor {
             graphData = this.convertKerasConfigToLiteGraph(graphData);
         }
 
+        // Default to Left-to-Right for loaded models unless explicitly defined
+        const loadedFlow = (graphData && (graphData.flowMode || graphData.flow_mode)) || "lr";
+        this.flowMode = loadedFlow;
+        if (this.graph) this.graph.flowMode = loadedFlow;
+
         if (graphData.nodes && Array.isArray(graphData.nodes)) {
+            const grid = (this.canvas && this.canvas.snap_grid_size) || 20;
             for (let n of graphData.nodes) {
                 if (!n.type) continue;
                 let t = String(n.type).toLowerCase().trim();
@@ -700,6 +1411,10 @@ class NNEditor {
                 if (!n.pos || !Array.isArray(n.pos)) {
                     n.pos = [100 + Math.random() * 200, 100 + Math.random() * 200];
                 }
+                // Snap loaded node positions to 20px grid
+                n.pos[0] = Math.round(n.pos[0] / grid) * grid;
+                n.pos[1] = Math.round(n.pos[1] / grid) * grid;
+
                 if (!n.properties || typeof n.properties !== "object") {
                     n.properties = {};
                 }
@@ -708,6 +1423,15 @@ class NNEditor {
 
         this.graph.clear();
         this.graph.configure(graphData);
+
+        if (this.graph && this.graph._nodes) {
+            this.graph._nodes.forEach(node => {
+                this.applyNodeSlotDirections(node, node.flowMode || loadedFlow);
+            });
+        }
+
+        this.updateFlowToolbarUI(loadedFlow);
+
         if (this.canvas) {
             this.canvas.setDirty(true, true);
         }
@@ -717,13 +1441,17 @@ class NNEditor {
     serializeGraph() {
         if (!this.graph) return { nodes: [], links: [] };
         const serialized = this.graph.serialize();
-        if (serialized && serialized.nodes && this.graph._nodes) {
-            serialized.nodes.forEach(n => {
-                const actualNode = this.graph.getNodeById(n.id);
-                if (actualNode && actualNode.title) {
-                    n.title = actualNode.title;
-                }
-            });
+        if (serialized) {
+            serialized.flowMode = this.flowMode || "lr";
+            if (serialized.nodes && this.graph._nodes) {
+                serialized.nodes.forEach(n => {
+                    const actualNode = this.graph.getNodeById(n.id);
+                    if (actualNode) {
+                        if (actualNode.title) n.title = actualNode.title;
+                        if (actualNode.flowMode) n.flowMode = actualNode.flowMode;
+                    }
+                });
+            }
         }
         return serialized;
     }
