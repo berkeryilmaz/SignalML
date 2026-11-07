@@ -1,31 +1,36 @@
 {% extends "base.html" %}
+{% from "_macros.html" import icon %}
 
 {% block title %}Signal Processing — SignalML{% endblock %}
 
 {% block content %}
 <div class="page-header">
     <div>
-        <h1 class="page-title">Signal Processing & Preprocessing Pipelines</h1>
+        <h1 class="page-title">Signal Processing &amp; Preprocessing Pipelines</h1>
         <p class="page-desc">Chain transformations (alignment, truncation, padding, peak windowing, normalization) and export exact-length signals</p>
     </div>
-    <div style="display: flex; gap: 8px;">
-        <button class="btn btn-secondary" id="preview-pipeline-btn">Preview Pipeline</button>
-        <button class="btn btn-primary" id="apply-pipeline-btn">Apply & Save Dataset</button>
+    <div class="page-actions">
+        <button type="button" class="btn btn-secondary" id="preview-pipeline-btn">
+            {{ icon('play') }} <span>Preview pipeline</span>
+        </button>
+        <button type="button" class="btn btn-primary" id="apply-pipeline-btn">
+            {{ icon('save') }} <span>Apply &amp; save dataset</span>
+        </button>
     </div>
 </div>
 
-<div style="display: grid; grid-template-columns: 360px 1fr; gap: 1.5rem; margin-bottom: 1.5rem;">
+<div class="grid-sidebar mb-6">
     <!-- Pipeline Configuration Panel -->
     <div class="card">
-        <div class="card-title">Preprocessing Pipeline</div>
+        <div class="card-title">{{ icon('sliders') }} <span>Preprocessing pipeline</span></div>
         <div class="form-group">
-            <label class="form-label">Input Dataset</label>
+            <label class="form-label" for="proc-dataset-select">Input Dataset</label>
             <select id="proc-dataset-select" class="form-control"></select>
         </div>
 
-        <div style="margin-bottom: 1rem;">
-            <label class="form-label">Add Transformation Step</label>
-            <div style="display: flex; gap: 6px;">
+        <div class="form-group">
+            <label class="form-label" for="add-step-select">Add Transformation Step</label>
+            <div class="row">
                 <select id="add-step-select" class="form-control">
                     <option value="to_fixed_length">To Fixed Length N (Pad/Truncate)</option>
                     <option value="first_n">Select First N Samples</option>
@@ -39,20 +44,22 @@
                     <option value="normalize_minmax">Min-Max Scaling</option>
                     <option value="handle_missing">Missing Value Handler</option>
                 </select>
-                <button class="btn btn-secondary btn-sm" id="add-step-btn">+ Add</button>
+                <button type="button" class="btn btn-secondary btn-sm" id="add-step-btn">
+                    {{ icon('plus') }} <span>Add</span>
+                </button>
             </div>
         </div>
 
-        <div id="pipeline-steps-list" style="display: flex; flex-direction: column; gap: 8px; max-height: 380px; overflow-y: auto;">
+        <div id="pipeline-steps-list" class="stack-sm max-h-md scroll-y mb-4">
             <!-- Rendered pipeline steps -->
         </div>
 
-        <hr style="border: none; border-top: 1px solid var(--border-color); margin: 1rem 0;">
+        <hr class="mb-4">
 
         <!-- Export Box -->
-        <div style="font-weight: 600; font-size: 13px; margin-bottom: 0.5rem;">Exact-Length Signal Export</div>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 0.5rem;">
-            <input type="number" id="export-target-len" class="form-control" placeholder="Exact N length..." value="512">
+        <div class="text-subhead mb-2">Exact-Length Signal Export</div>
+        <div class="form-row mb-2">
+            <input type="number" id="export-target-len" class="form-control mono" placeholder="Exact N length..." value="512">
             <select id="export-format" class="form-control">
                 <option value="csv">CSV Format</option>
                 <option value="txt">TXT / TSV Format</option>
@@ -60,13 +67,15 @@
                 <option value="npz">NPZ Archive</option>
             </select>
         </div>
-        <button class="btn btn-secondary btn-sm" style="width: 100%; justify-content: center;" id="direct-export-btn">Download Exact N Signals</button>
+        <button type="button" class="btn btn-secondary btn-sm btn-block justify-center" id="direct-export-btn">
+            {{ icon('download') }} <span>Download exact N signals</span>
+        </button>
     </div>
 
     <!-- Comparison Viewer -->
     <div class="card">
-        <div class="card-title">Before vs. After Transformation Comparison</div>
-        <div id="comparison-chart" style="width: 100%; height: 500px;"></div>
+        <div class="card-title">{{ icon('chart-line') }} <span>Before vs. after transformation comparison</span></div>
+        <div id="comparison-chart" class="chart-box-lg w-full"></div>
     </div>
 </div>
 {% endblock %}
@@ -82,12 +91,10 @@
 
     function initChart() {
         comparisonChart = Highcharts.chart("comparison-chart", {
-            chart: { type: "line", backgroundColor: "transparent" },
+            chart: { type: "line" },
             title: { text: null },
-            credits: { enabled: false },
-            xAxis: { title: { text: "Time Points", style: { color: "#94a3b8" } }, labels: { style: { color: "#94a3b8" } }, gridLineColor: "#1e293b" },
-            yAxis: { title: { text: "Normalized / Processed Amplitude", style: { color: "#94a3b8" } }, labels: { style: { color: "#94a3b8" } }, gridLineColor: "#1e293b" },
-            legend: { itemStyle: { color: "#f1f5f9" } },
+            xAxis: { title: { text: "Time Points" } },
+            yAxis: { title: { text: "Normalized / Processed Amplitude" } },
             series: []
         });
     }
@@ -95,12 +102,14 @@
     function renderPipelineList() {
         const container = document.getElementById("pipeline-steps-list");
         container.innerHTML = pipelineSteps.map((step, idx) => `
-            <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); border-radius: 6px; padding: 8px 10px; font-size: 12px;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+            <div class="tile p-2 text-sm">
+                <div class="row-between mb-1">
                     <strong>${idx + 1}. ${step.name.toUpperCase()}</strong>
-                    <button onclick="removeStep(${idx})" style="background: none; border: none; color: var(--accent-rose); cursor: pointer;">&times;</button>
+                    <button type="button" class="btn btn-ghost btn-xs btn-icon text-danger" onclick="removeStep(${idx})" aria-label="Remove step">
+                        ${SignalML.icon('trash', 'icon-xs')}
+                    </button>
                 </div>
-                <div style="font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);">${JSON.stringify(step.params)}</div>
+                <div class="mono text-micro text-muted break-all">${JSON.stringify(step.params)}</div>
             </div>
         `).join("");
     }
@@ -148,11 +157,12 @@
 
             if (data.results && data.results.length > 0) {
                 const r = data.results[0];
-                comparisonChart.addSeries({ name: `Original (len ${r.original.length})`, data: r.original.y, color: "#94a3b8", dashStyle: "ShortDash" }, false);
-                comparisonChart.addSeries({ name: `Processed (len ${r.processed.length})`, data: r.processed.y, color: "#38bdf8", lineWidth: 2 }, false);
+                const p = SignalML.getThemePalette();
+                comparisonChart.addSeries({ name: `Original (len ${r.original.length})`, data: r.original.y, color: p.textMuted, dashStyle: "ShortDash" }, false);
+                comparisonChart.addSeries({ name: `Processed (len ${r.processed.length})`, data: r.processed.y, color: p.accent, lineWidth: 2 }, false);
                 comparisonChart.redraw();
             }
-            SignalML.toast("Pipeline preview updated!", "success");
+            SignalML.toast("Pipeline preview updated", "success");
         } catch (e) {
             SignalML.toast(`Error: ${e.message}`, "error");
         }
@@ -207,7 +217,7 @@
                 document.body.appendChild(a);
                 a.click();
                 a.remove();
-                SignalML.toast("Exact N signal export downloaded!", "success");
+                SignalML.toast("Exact N signal export downloaded", "success");
             }
         } catch (e) {
             SignalML.toast(`Export error: ${e.message}`, "error");

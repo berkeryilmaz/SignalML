@@ -1,39 +1,44 @@
 {% extends "base.html" %}
+{% from "_macros.html" import icon %}
 
 {% block title %}Model Evaluation — SignalML{% endblock %}
 
 {% block content %}
 <div class="page-header">
     <div>
-        <h1 class="page-title">Model Evaluation & Validation Metrics</h1>
+        <h1 class="page-title">Model Evaluation &amp; Validation Metrics</h1>
         <p class="page-desc">In-depth statistical validation, confusion matrices, classification reports, and training history</p>
     </div>
-    <div>
-        <select id="eval-model-select" class="form-control" style="width: 280px;"></select>
+    <div class="page-actions">
+        <select id="eval-model-select" class="form-control max-w-sm"></select>
     </div>
 </div>
 
-<div class="card" style="margin-bottom: 1.5rem;" id="batch-predict-card">
-    <div class="card-title" style="display: flex; align-items: center; gap: 8px;">
-        <span>🧪 Batch Tahmin CSV Dışa Aktarma</span>
+<div class="card mb-6" id="batch-predict-card">
+    <div class="card-title">
+        {{ icon('flask-conical') }} <span>Batch Prediction CSV Export</span>
     </div>
-    <p class="stat-desc" style="margin-bottom: 1rem;">
-        Seçili model ile kayıtlı bir veri kümesi üzerinde toplu çıkarım (batch inference) gerçekleştirin ve tahminleri, sınıf olasılıklarını ve gerçek etiketleri içeren CSV dosyasını indirin.
+    <p class="text-secondary text-sm mb-4">
+        Run batch inference with the selected model on a registered dataset, then download the CSV containing predictions, class probabilities, and ground truth labels.
     </p>
-    <div style="display: flex; gap: 12px; align-items: flex-end; max-width: 650px;">
-        <div class="form-group" style="flex: 1; margin-bottom: 0;">
-            <label class="form-label">Değerlendirme Veri Kümesi (Evaluation Dataset)</label>
+    <div class="row items-end max-w-md">
+        <div class="form-group flex-1 mb-0">
+            <label class="form-label" for="batch-eval-dataset-select">Evaluation Dataset</label>
             <select id="batch-eval-dataset-select" class="form-control"></select>
         </div>
-        <button id="download-predict-csv-btn" class="btn btn-primary" style="white-space: nowrap; height: 38px;">
-            📥 CSV Olarak İndir
+        <button type="button" id="download-predict-csv-btn" class="btn btn-primary nowrap">
+            {{ icon('download') }} <span>Download CSV</span>
         </button>
     </div>
 </div>
 
 <div id="eval-content-area">
     <div class="card">
-        <div style="color: var(--text-muted); padding: 2rem; text-align: center;">Select a model above to view evaluation metrics and historical performance logs.</div>
+        <div class="empty-state">
+            {{ icon('flask-conical', 'icon-xl') }}
+            <div class="empty-state-title">Select a model to view evaluation</div>
+            <div class="empty-state-hint">Select a model above to view evaluation metrics and historical performance logs.</div>
+        </div>
     </div>
 </div>
 {% endblock %}
@@ -89,53 +94,66 @@
             const runsData = await SignalML.safeJson(res);
             const runs = Array.isArray(runsData) ? runsData : [];
             if (runs.length === 0) {
-                container.innerHTML = `<div class="card"><div style="text-align: center; color: var(--text-muted); padding: 2rem;">No completed training runs recorded for this model yet. Go to <a href="/training" style="color: var(--accent-blue);">Training</a> to run an experiment.</div></div>`;
+                container.innerHTML = `
+                    <div class="card">
+                        <div class="empty-state">
+                            ${SignalML.icon('flask-conical', 'icon-xl')}
+                            <div class="empty-state-title">No completed training runs recorded</div>
+                            <div class="empty-state-hint">Go to <a href="/training" class="text-accent">Training</a> to run an experiment.</div>
+                        </div>
+                    </div>
+                `;
                 return;
             }
 
             const latest = runs[0];
             const evalData = latest.evaluation || {};
-            const statusColor = latest.status === "completed" ? "var(--accent-green)" : "var(--accent-rose)";
+            const isCompleted = latest.status === "completed";
+            const statusBadgeClass = isCompleted ? "status-badge success" : "status-badge error";
 
             let html = "";
             if (latest.error_message || evalData.error) {
                 html += `
-                    <div style="padding: 0.75rem 1rem; background: rgba(244, 63, 94, 0.15); border: 1px solid var(--accent-rose); border-radius: 6px; color: #fca5a5; margin-bottom: 1.5rem; font-size: 13px;">
-                        <strong>Değerlendirme Uyarısı / Eğitim Hatası:</strong> ${latest.error_message || evalData.error}
+                    <div class="alert alert-danger mb-6">
+                        ${SignalML.icon('triangle-alert', 'icon-sm')}
+                        <div class="alert-body">
+                            <span class="alert-title">Evaluation Warning / Training Error</span>
+                            <div>${latest.error_message || evalData.error}</div>
+                        </div>
                     </div>
                 `;
             }
 
             html += `
-                <div class="grid-cards" style="margin-bottom: 1.5rem;">
-                    <div class="card">
-                        <div class="card-title">Run Status</div>
-                        <div class="stat-val" style="color: ${statusColor};">${latest.status.toUpperCase()}</div>
-                        <div class="stat-desc">Run ID: ${latest.id.slice(0, 8)}</div>
+                <div class="stat-grid mb-6">
+                    <div class="stat">
+                        <div class="stat-label">Run Status</div>
+                        <div class="stat-value"><span class="${statusBadgeClass}">${latest.status.toUpperCase()}</span></div>
+                        <div class="stat-meta">Run ID: <span class="mono">${latest.id.slice(0, 8)}</span></div>
                     </div>
             `;
 
             if (evalData.accuracy !== undefined && evalData.accuracy !== null) {
                 html += `
-                    <div class="card">
-                        <div class="card-title">Accuracy</div>
-                        <div class="stat-val">${(evalData.accuracy * 100).toFixed(2)}%</div>
-                        <div class="stat-desc">Validation / Test Set</div>
+                    <div class="stat">
+                        <div class="stat-label">Accuracy</div>
+                        <div class="stat-value num">${(evalData.accuracy * 100).toFixed(2)}%</div>
+                        <div class="stat-meta">Validation / Test Set</div>
                     </div>
                 `;
             } else if (evalData.rmse !== undefined && evalData.rmse !== null) {
                 html += `
-                    <div class="card">
-                        <div class="card-title">RMSE</div>
-                        <div class="stat-val">${evalData.rmse}</div>
+                    <div class="stat">
+                        <div class="stat-label">RMSE</div>
+                        <div class="stat-value num">${evalData.rmse}</div>
                     </div>
-                    <div class="card">
-                        <div class="card-title">MAE</div>
-                        <div class="stat-val">${evalData.mae !== undefined && evalData.mae !== null ? evalData.mae : "—"}</div>
+                    <div class="stat">
+                        <div class="stat-label">MAE</div>
+                        <div class="stat-value num">${evalData.mae !== undefined && evalData.mae !== null ? evalData.mae : "—"}</div>
                     </div>
-                    <div class="card">
-                        <div class="card-title">R² Score</div>
-                        <div class="stat-val">${evalData.r2}</div>
+                    <div class="stat">
+                        <div class="stat-label">R² Score</div>
+                        <div class="stat-value num">${evalData.r2}</div>
                     </div>
                 `;
             }
@@ -144,21 +162,21 @@
 
             if (evalData.confusion_matrix) {
                 html += `
-                    <div class="card" style="margin-bottom: 1.5rem;">
-                        <div class="card-title">Confusion Matrix</div>
-                        <div class="table-responsive">
+                    <div class="card mb-6">
+                        <div class="card-title">${SignalML.icon('grid')} <span>Confusion Matrix</span></div>
+                        <div class="table-wrap">
                             <table class="data-table">
                                 <thead>
                                     <tr>
                                         <th>True \\ Predicted</th>
-                                        ${evalData.class_labels.map(l => `<th>Class ${l}</th>`).join("")}
+                                        ${evalData.class_labels.map(l => `<th class="num">Class ${l}</th>`).join("")}
                                     </tr>
                                 </thead>
                                 <tbody>
                                     ${evalData.confusion_matrix.map((row, i) => `
                                         <tr>
                                             <td><strong>Class ${evalData.class_labels[i]}</strong></td>
-                                            ${row.map(v => `<td style="font-family: var(--font-mono); font-weight: 600;">${v}</td>`).join("")}
+                                            ${row.map(v => `<td class="num mono fw-600">${v}</td>`).join("")}
                                         </tr>
                                     `).join("")}
                                 </tbody>
@@ -171,26 +189,26 @@
             // Training Run History
             html += `
                 <div class="card">
-                    <div class="card-title">Training History Runs</div>
-                    <div class="table-responsive">
+                    <div class="card-title">${SignalML.icon('history')} <span>Training History Runs</span></div>
+                    <div class="table-wrap">
                         <table class="data-table">
                             <thead>
                                 <tr>
                                     <th>Run ID</th>
                                     <th>Status</th>
-                                    <th>Epochs</th>
-                                    <th>Learning Rate</th>
+                                    <th class="num">Epochs</th>
+                                    <th class="num">Learning Rate</th>
                                     <th>Started At</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 ${runs.map(r => `
                                     <tr>
-                                        <td style="font-family: var(--font-mono);">${r.id.slice(0, 8)}...</td>
+                                        <td class="mono">${r.id.slice(0, 8)}...</td>
                                         <td><span class="status-badge ${r.status === 'completed' ? 'success' : 'error'}">${r.status}</span></td>
-                                        <td>${r.config.epochs || '—'}</td>
-                                        <td>${r.config.learning_rate || '—'}</td>
-                                        <td style="font-size: 12px; color: var(--text-muted);">${new Date(r.created_at).toLocaleString()}</td>
+                                        <td class="num">${r.config.epochs || '—'}</td>
+                                        <td class="num">${r.config.learning_rate || '—'}</td>
+                                        <td class="text-sm text-secondary">${new Date(r.created_at).toLocaleString()}</td>
                                     </tr>
                                 `).join("")}
                             </tbody>
@@ -207,14 +225,14 @@
             const modelId = document.getElementById("eval-model-select").value;
             const datasetId = document.getElementById("batch-eval-dataset-select").value;
             if (!modelId) {
-                SignalML.toast("Lütfen önce bir model seçin.", "error");
+                SignalML.toast("Please select a model first", "error");
                 return;
             }
             if (!datasetId) {
-                SignalML.toast("Lütfen bir değerlendirme veri kümesi seçin.", "error");
+                SignalML.toast("Please select an evaluation dataset", "error");
                 return;
             }
-            SignalML.toast("Batch tahmin CSV hazırlanıyor ve indiriliyor...", "info");
+            SignalML.toast("Generating batch prediction CSV export...", "info");
             window.location.href = `/api/training/predict_csv/${modelId}/${datasetId}`;
         };
     }

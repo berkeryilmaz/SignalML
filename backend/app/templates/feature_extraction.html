@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import icon %}
 
 {% block title %}Feature Extraction — SignalML{% endblock %}
 
@@ -10,87 +11,93 @@
     </div>
 </div>
 
-<div style="display: grid; grid-template-columns: 360px 1fr; gap: 1.5rem; margin-bottom: 1.5rem;">
+<div class="grid-sidebar mb-6">
     <!-- Extraction Configuration -->
     <div class="card">
-        <div class="card-title">Extract Activations</div>
+        <div class="card-title">{{ icon('layers') }} <span>Extract activations</span></div>
         <div class="form-group">
-            <label class="form-label">Trained Keras Model</label>
+            <label class="form-label" for="feat-model-select">Trained Keras Model</label>
             <select id="feat-model-select" class="form-control"></select>
         </div>
         <div class="form-group">
-            <label class="form-label">Target Dataset</label>
+            <label class="form-label" for="feat-dataset-select">Target Dataset</label>
             <select id="feat-dataset-select" class="form-control"></select>
         </div>
         <div class="form-group">
-            <label class="form-label">Select Intermediate Layer</label>
+            <label class="form-label" for="feat-layer-select">Select Intermediate Layer</label>
             <select id="feat-layer-select" class="form-control"></select>
         </div>
         <div class="form-group">
-            <label class="form-label">Batch Size</label>
-            <input type="number" id="feat-batch-size" class="form-control" value="32">
+            <label class="form-label" for="feat-batch-size">Batch Size</label>
+            <input type="number" id="feat-batch-size" class="form-control mono" value="32">
         </div>
-        <button class="btn btn-primary" style="width: 100%; justify-content: center;" id="extract-features-btn">⚡ Run Batch Feature Extraction</button>
+        <button type="button" class="btn btn-primary btn-block justify-center" id="extract-features-btn">
+            {{ icon('zap') }} <span>Run batch feature extraction</span>
+        </button>
     </div>
 
     <!-- Output Information -->
-    <div>
-        <div class="card" id="feat-result-card" style="display: none; margin-bottom: 1.5rem;">
+    <div class="stack">
+        <div class="card is-hidden" id="feat-result-card">
             <div class="card-title">
                 <span>Extracted Feature Matrix Summary</span>
-                <span id="feat-shape-badge" class="shape-badge"></span>
+                <span id="feat-shape-badge" class="badge badge-accent mono"></span>
             </div>
-            <div class="grid-cards" style="margin-bottom: 1rem;">
-                <div class="card">
-                    <div class="card-title">Samples Processed</div>
-                    <div class="stat-val" id="feat-stat-samples">0</div>
+            <div class="stat-grid mb-4">
+                <div class="stat">
+                    <div class="stat-label">Samples Processed</div>
+                    <div class="stat-value num" id="feat-stat-samples">0</div>
                 </div>
-                <div class="card">
-                    <div class="card-title">Feature Dimensions</div>
-                    <div class="stat-val" id="feat-stat-dims">0</div>
+                <div class="stat">
+                    <div class="stat-label">Feature Dimensions</div>
+                    <div class="stat-value num" id="feat-stat-dims">0</div>
                 </div>
             </div>
-            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-                <a id="feat-to-clustering-btn" href="/clustering" class="btn btn-primary">Analyze with Clustering & PCA &rarr;</a>
-                <a id="feat-export-csv-btn" href="#" class="btn btn-secondary">📥 CSV Olarak İndir (Input ID ile)</a>
+            <div class="cluster">
+                <a id="feat-to-clustering-btn" href="/clustering" class="btn btn-primary">
+                    {{ icon('orbit') }} <span>Analyze with Clustering &amp; PCA</span> {{ icon('arrow-right', 'icon-xs') }}
+                </a>
+                <a id="feat-export-csv-btn" href="#" class="btn btn-secondary">
+                    {{ icon('download') }} <span>Download CSV (with input IDs)</span>
+                </a>
             </div>
         </div>
 
         <div class="card">
-            <div class="card-title">Model Layer Architecture Overview</div>
-            <div class="table-responsive">
+            <div class="card-title">{{ icon('cpu') }} <span>Model Layer Architecture Overview</span></div>
+            <div class="table-wrap">
                 <table class="data-table">
                     <thead>
                         <tr>
-                            <th>#</th>
+                            <th class="num">#</th>
                             <th>Layer Name</th>
                             <th>Layer Type</th>
-                            <th>Output Tensor Shape</th>
+                            <th class="mono">Output Tensor Shape</th>
                         </tr>
                     </thead>
                     <tbody id="feat-layers-tbody">
-                        <tr><td colspan="4" style="text-align: center; color: var(--text-muted);">Select a model above to inspect layers.</td></tr>
+                        <tr><td colspan="4" class="text-center text-muted">Select a model above to inspect layers.</td></tr>
                     </tbody>
                 </table>
             </div>
         </div>
 
-        <div class="card" style="margin-top: 1.5rem;">
-            <div class="card-title">Kayıtlı Özellik Çıkarımları (Saved Feature Extractions)</div>
-            <div class="table-responsive">
+        <div class="card">
+            <div class="card-title">{{ icon('folder-archive') }} <span>Saved Feature Extractions</span></div>
+            <div class="table-wrap">
                 <table class="data-table">
                     <thead>
                         <tr>
                             <th>Feature ID / Layer</th>
-                            <th>Samples</th>
-                            <th>Dimensions</th>
-                            <th>Shape</th>
+                            <th class="num">Samples</th>
+                            <th class="num">Dimensions</th>
+                            <th class="mono">Shape</th>
                             <th>Created At</th>
-                            <th>Actions</th>
+                            <th class="text-right">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="saved-features-tbody">
-                        <tr><td colspan="6" style="text-align: center; color: var(--text-muted);">Loading saved features...</td></tr>
+                        <tr><td colspan="6" class="text-center text-muted">Loading saved features...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -111,23 +118,34 @@
                 if (Array.isArray(feats) && feats.length > 0) {
                     tbody.innerHTML = feats.map(f => `
                         <tr>
-                            <td><strong style="font-family: var(--font-mono);">${f.layer_id || f.id.substring(0, 8)}</strong><br><span style="font-size: 10px; color: var(--text-muted);">${f.id}</span></td>
-                            <td>${f.sample_count}</td>
-                            <td>${f.feature_dim}</td>
-                            <td style="font-family: var(--font-mono);">${JSON.stringify(f.shape)}</td>
-                            <td>${f.created_at ? new Date(f.created_at).toLocaleString() : '-'}</td>
                             <td>
-                                <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-                                    <a href="/api/features/${f.id}/export_csv" class="btn btn-secondary btn-sm" title="CSV İndir">📥 CSV İndir</a>
-                                    <a href="/clustering?feature_id=${f.id}" class="btn btn-primary btn-sm" title="Kümeleme Analizi">🔬 Kümele</a>
-                                    <button class="btn btn-secondary btn-sm" onclick="promptRenameFeature('${f.id}', '${f.layer_id || ''}')" title="Özellik Adını Düzenle">✏️ Adlandır</button>
-                                    <button class="btn btn-secondary btn-sm" onclick="deleteFeatureExtraction('${f.id}')" title="Sil" style="color: #f87171; border-color: rgba(239, 68, 68, 0.3);">🗑️ Sil</button>
+                                <strong class="mono">${f.layer_id || f.id.substring(0, 8)}</strong>
+                                <div class="mono text-micro text-muted">${f.id}</div>
+                            </td>
+                            <td class="num">${f.sample_count}</td>
+                            <td class="num">${f.feature_dim}</td>
+                            <td class="mono text-sm">${JSON.stringify(f.shape)}</td>
+                            <td class="text-sm text-secondary">${f.created_at ? new Date(f.created_at).toLocaleString() : '-'}</td>
+                            <td class="text-right">
+                                <div class="cluster justify-end">
+                                    <a href="/api/features/${f.id}/export_csv" class="btn btn-secondary btn-sm" title="Download CSV">
+                                        ${SignalML.icon('download')} <span>CSV</span>
+                                    </a>
+                                    <a href="/clustering?feature_id=${f.id}" class="btn btn-primary btn-sm" title="Cluster Analysis">
+                                        ${SignalML.icon('orbit')} <span>Cluster</span>
+                                    </a>
+                                    <button type="button" class="btn btn-secondary btn-sm" onclick="promptRenameFeature('${f.id}', '${f.layer_id || ''}')" title="Rename feature">
+                                        ${SignalML.icon('pencil')} <span>Rename</span>
+                                    </button>
+                                    <button type="button" class="btn btn-danger btn-sm" onclick="deleteFeatureExtraction('${f.id}')" title="Delete feature">
+                                        ${SignalML.icon('trash')} <span>Delete</span>
+                                    </button>
                                 </div>
                             </td>
                         </tr>
                     `).join("");
                 } else {
-                    tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-muted);">Henüz kayıtlı özellik çıkarımı bulunmuyor. Sol panelden çalıştırabilirsiniz.</td></tr>`;
+                    tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted">No saved feature extractions found. Run an extraction using the panel on the left.</td></tr>`;
                 }
             }
         } catch (e) {
@@ -136,7 +154,7 @@
     }
 
     async function promptRenameFeature(featureId, currentName) {
-        const newName = prompt("Yeni Özellik / Katman Adını Girin:", currentName);
+        const newName = prompt("Enter new feature extraction name:", currentName);
         if (!newName || !newName.trim()) return;
 
         try {
@@ -148,18 +166,18 @@
 
             if (!res.ok) {
                 const err = await SignalML.safeJson(res);
-                throw new Error(err.detail || "Adlandırma başarısız");
+                throw new Error(err.detail || "Rename failed");
             }
 
-            SignalML.toast("Özellik adı başarıyla güncellendi!", "success");
+            SignalML.toast("Feature extraction renamed", "success");
             loadSavedFeatureExtractions();
         } catch (e) {
-            SignalML.toast(`Hata: ${e.message}`, "error");
+            SignalML.toast(`Error: ${e.message}`, "error");
         }
     }
 
     async function deleteFeatureExtraction(featureId) {
-        if (!confirm("Bu kayıtlı özellik çıkarımını silmek istediğinize emin misiniz?")) return;
+        if (!confirm("Delete this saved feature extraction?")) return;
 
         try {
             const res = await fetch(`/api/features/${featureId}`, {
@@ -168,13 +186,13 @@
 
             if (!res.ok) {
                 const err = await SignalML.safeJson(res);
-                throw new Error(err.detail || "Silme başarısız");
+                throw new Error(err.detail || "Delete failed");
             }
 
-            SignalML.toast("Özellik çıkarımı başarıyla silindi!", "success");
+            SignalML.toast("Feature extraction deleted", "success");
             loadSavedFeatureExtractions();
         } catch (e) {
-            SignalML.toast(`Hata: ${e.message}`, "error");
+            SignalML.toast(`Error: ${e.message}`, "error");
         }
     }
 
@@ -219,10 +237,10 @@
                     const displayName = l.custom_name || l.name;
                     return `
                         <tr>
-                            <td>${l.index}</td>
-                            <td><strong>${displayName}</strong> ${l.custom_name ? `<span style="font-size:10px; color:#38bdf8; margin-left:4px;">(${l.name})</span>` : ''}</td>
-                            <td><span class="shape-badge">${l.class_name}</span></td>
-                            <td style="font-family: var(--font-mono);">${JSON.stringify(l.output_shape)}</td>
+                            <td class="num">${l.index}</td>
+                            <td><strong>${displayName}</strong> ${l.custom_name ? `<span class="text-micro text-accent ml-1">(${l.name})</span>` : ''}</td>
+                            <td><span class="badge badge-accent">${l.class_name}</span></td>
+                            <td class="mono">${JSON.stringify(l.output_shape)}</td>
                         </tr>
                     `;
                 }).join("");
@@ -259,8 +277,10 @@
 
             if (res.ok) {
                 const data = await SignalML.safeJson(res);
-                SignalML.toast("Feature extraction completed successfully!", "success");
-                document.getElementById("feat-result-card").style.display = "block";
+                SignalML.toast("Feature extraction completed successfully", "success");
+                const resultCard = document.getElementById("feat-result-card");
+                resultCard.classList.remove("is-hidden");
+                resultCard.style.display = "block";
                 document.getElementById("feat-shape-badge").textContent = `Shape: ${JSON.stringify(data.shape)}`;
                 document.getElementById("feat-stat-samples").textContent = data.sample_count;
                 document.getElementById("feat-stat-dims").textContent = data.feature_dim;
