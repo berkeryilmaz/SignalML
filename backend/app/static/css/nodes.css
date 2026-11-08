@@ -181,6 +181,37 @@
 .toolbar-btn:active { background: var(--surface-5); }
 .toolbar-btn:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-ring); }
 .toolbar-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.toolbar-btn.is-active,
+.flow-btn.is-active {
+    background: var(--surface-4);
+    border-color: var(--accent);
+    color: var(--accent);
+    font-weight: 600;
+}
+
+/* Flow Direction segmented button group */
+.flow-btn-group {
+    display: inline-flex;
+    vertical-align: middle;
+}
+.flow-btn-group .toolbar-btn {
+    border-radius: 0;
+    padding: 0 7px;
+    font-size: 11px;
+}
+.flow-btn-group .toolbar-btn:first-child {
+    border-radius: var(--radius-md) 0 0 var(--radius-md);
+}
+.flow-btn-group .toolbar-btn:last-child {
+    border-radius: 0 var(--radius-md) var(--radius-md) 0;
+}
+.flow-btn-group .toolbar-btn + .toolbar-btn {
+    margin-left: -1px;
+}
+.flow-btn .icon {
+    width: 12px;
+    height: 12px;
+}
 /* Variants collapse to the neutral palette; only primary/destructive differ */
 .toolbar-btn.btn-wizard,
 .toolbar-btn.btn-primary {
