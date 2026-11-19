@@ -111,11 +111,14 @@ def register_dataset(
     label_col: Optional[str] = Form(default=None),
     exclude_cols: Optional[str] = Form(default=None),
     transpose: bool = Form(default=False),
-    schema_config: Optional[str] = Form(default=None)
+    schema_config: Optional[str] = Form(default=None),
+    missing_strategy: Optional[str] = Form(default="zero"),
+    split_config: Optional[str] = Form(default=None)
 ):
     """
     Registers a raw data file (CSV, TXT, TSV, JSON, NPY, NPZ) into the project as a persistent dataset.
-    Supports excluding columns (e.g. ID, timestamp), specifying label columns, and multi-modal schema config.
+    Supports excluding columns (e.g. ID, timestamp), specifying label columns, missing value strategy,
+    train/val split config, and multi-modal schema config.
     """
     src = resolve_storage_path(file_path) or Path(file_path)
     if not src.exists():
@@ -137,7 +140,9 @@ def register_dataset(
             label_col=label_col if label_col and label_col.strip() else None,
             exclude_cols=exclude_cols if exclude_cols and exclude_cols.strip() else None,
             transpose=transpose,
-            schema_config=schema_config if schema_config and schema_config.strip() else None
+            schema_config=schema_config if schema_config and schema_config.strip() else None,
+            missing_strategy=missing_strategy,
+            split_config=split_config
         )
         return res
     except Exception as e:
@@ -149,13 +154,17 @@ def update_dataset(
     dataset_id: str,
     payload: DatasetUpdateConfig
 ):
-    """Renames dataset or updates its schema_config / metadata_json."""
+    """Renames dataset or updates its schema_config / metadata_json / row_count."""
     try:
+        rc = payload.row_count if payload.row_count is not None else payload.num_rows
+        cc = payload.col_count if payload.col_count is not None else payload.num_cols
         return DataManager.update_dataset(
             dataset_id=dataset_id,
             name=payload.name,
             metadata=payload.metadata,
-            schema_config=payload.schema_config
+            schema_config=payload.schema_config,
+            row_count=rc,
+            col_count=cc
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -185,6 +194,29 @@ def get_dataset_sample_ids(dataset_id: str):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.get("/{dataset_id}/extra_columns", response_model=Dict[str, Any])
+def get_dataset_extra_columns(dataset_id: str):
+    """Returns available extra metadata/non-signal column names from the main table for optional export."""
+    try:
+        cols = DataManager.get_available_extra_columns(dataset_id)
+        return {"dataset_id": dataset_id, "extra_columns": cols}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/{dataset_id}/io_schema", response_model=Dict[str, Any])
+def get_dataset_io_schema(dataset_id: str):
+    """Returns dataset IO schema, signal length, channels, available derived channels, and targets."""
+    try:
+        return DataManager.get_dataset_io_schema(dataset_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 
 @router.get("/preview/{dataset_id}", response_model=Dict[str, Any])
 def preview_dataset(
@@ -204,4 +236,12 @@ def list_project_datasets(project_id: str):
     """Lists all datasets belonging to a project."""
     with get_db_connection() as conn:
         rows = conn.execute("SELECT * FROM datasets WHERE project_id = ? ORDER BY created_at DESC", (project_id,)).fetchall()
-        return [dict(r) for r in rows]
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["num_rows"] = d.get("row_count", 0)
+            d["total_rows"] = d.get("row_count", 0)
+            d["num_cols"] = d.get("col_count", 0)
+            d["total_cols"] = d.get("col_count", 0)
+            result.append(d)
+        return result

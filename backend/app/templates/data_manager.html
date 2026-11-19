@@ -7,7 +7,24 @@
 <div class="page-header">
     <div>
         <h1 class="page-title">Data Manager</h1>
-        <p class="page-desc">Upload ZIP archives, inspect mounted /data directory, preview time series, and register datasets</p>
+        <p class="page-desc">Import signal datasets, inspect signal columns &amp; waveforms, manage target labels, and prepare data for Signal Processing and Model Training.</p>
+    </div>
+</div>
+
+<!-- Workflow Guidance Banner -->
+<div class="tile mb-4 row-between flex-wrap gap-3 bg-subtle p-3">
+    <div class="row gap-2">
+        {{ icon('info', 'icon-sm text-accent') }}
+        <div>
+            <span class="fw-600 text-sm">SignalML Workflow Guide</span>
+            <div class="text-xs text-muted">
+                Data Manager preserves raw signal amplitudes. For scaling (Z-score, MinMax), filtering, detrending, and smoothing, navigate to <a href="/signal-processing" class="text-accent fw-600">Signal Processing</a>. For statistical, spectral (FFT), and wavelet features, navigate to <a href="/feature-extraction" class="text-accent fw-600">Feature Extraction</a>.
+            </div>
+        </div>
+    </div>
+    <div class="row gap-2">
+        <a href="/signal-processing" class="btn btn-secondary btn-sm">{{ icon('activity', 'icon-xs') }} <span>Go to Signal Processing</span></a>
+        <a href="/feature-extraction" class="btn btn-secondary btn-sm">{{ icon('cpu', 'icon-xs') }} <span>Go to Feature Extraction</span></a>
     </div>
 </div>
 
@@ -76,6 +93,24 @@
             <label class="form-label" for="reg-label">Label Column (optional)</label>
             <input type="text" id="reg-label" class="form-control" placeholder="e.g. 'label' or column index" onchange="triggerRawPreview()">
         </div>
+        <div class="form-group">
+            <label class="form-label" for="reg-missing">Missing Value Strategy</label>
+            <select id="reg-missing" class="form-control">
+                <option value="zero" selected>Fill with 0.0 (Zero-padding)</option>
+                <option value="mean">Fill with Column Mean</option>
+                <option value="ffill">Forward Fill (Interpolation)</option>
+                <option value="drop">Drop Rows with Missing Values</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label class="form-label" for="reg-split">Train / Val / Test Split</label>
+            <select id="reg-split" class="form-control">
+                <option value="70_15_15" selected>70% Train / 15% Val / 15% Test</option>
+                <option value="80_10_10">80% Train / 10% Val / 10% Test</option>
+                <option value="80_20_0">80% Train / 20% Val (No Test)</option>
+                <option value="100_0_0">100% Train (Full Dataset)</option>
+            </select>
+        </div>
     </div>
     <input type="hidden" id="reg-filepath">
     <div class="row-between border-t pt-3">
@@ -83,6 +118,9 @@
             Excluded Columns: <span id="reg-exclude-count" class="text-accent fw-600">0</span>
         </div>
         <div class="row">
+            <button type="button" class="btn btn-secondary text-accent" id="reg-auto-cnn-btn" onclick="autoGroupAllChannelsForCNN()" title="Auto-detect prefix series (s0..sN, a_0..a_N, dvdt_0..dvdt_N) for 1D-CNN">
+                {{ icon('zap', 'icon-xs') }} <span>⚡ Auto-Group All Channels for 1D-CNN (s*, a_*, dvdt_*)</span>
+            </button>
             <button type="button" class="btn btn-secondary" onclick="triggerRawPreview()">Preview &amp; Filter Columns</button>
             <button type="button" class="btn btn-primary" id="register-btn">Save to Project Workspace</button>
         </div>
@@ -121,29 +159,18 @@
         <!-- 1D-Sequence Column Grouping Bar -->
         <div class="tile mb-3">
             <div class="row-between mb-2">
-                <span class="row fw-600 text-xs">{{ icon('zap', 'icon-xs') }} <span>1D-Sequence Column Grouping &amp; Normalization</span></span>
-                <span class="text-muted text-xs">Grouping continuous signals into 3D tensors: (batch, seq_len, 1)</span>
+                <span class="row fw-600 text-xs">{{ icon('zap', 'icon-xs') }} <span>1D-Sequence Channel Grouping (1D-CNN Multi-Channel)</span></span>
+                <span class="text-muted text-xs">Group sequential signal columns into multi-channel tensor inputs (raw amplitudes preserved)</span>
             </div>
             <div class="row flex-wrap gap-2">
                 <div class="flex-1 min-w-0">
-                    <input type="text" id="seq-pattern-input" class="form-control mono text-xs" placeholder="Pattern e.g. s* or s1-s100 or 0-511">
+                    <input type="text" id="seq-pattern-input" class="form-control mono text-xs" placeholder="Pattern e.g. s* or s0-s511 or s0-s511, a_0-a_511">
                 </div>
-                <div class="w-auto">
-                    <select id="seq-norm-select" class="form-control text-xs">
-                        <option value="row_zscore" selected>Row-wise Z-Score ((x - &mu;) / &sigma;)</option>
-                        <option value="row_median">Row-wise Median Baseline (x - median)</option>
-                        <option value="row_mode">Row-wise Mode Baseline (Most Frequent Value)</option>
-                        <option value="row_gaussian_peak">Row-wise Histogram Gaussian Peak Baseline</option>
-                        <option value="row_scale_min">Row-wise Min Scaler (x / |min|)</option>
-                        <option value="row_scale_max">Row-wise Max Scaler (x / max)</option>
-                        <option value="global_standard">Global StandardScaler</option>
-                        <option value="global_minmax">Global MinMaxScaler ([0, 1])</option>
-                        <option value="row_minmax">Row-wise MinMax ([0, 1])</option>
-                        <option value="none">None (Raw Amplitudes)</option>
-                    </select>
-                </div>
-                <button type="button" class="btn btn-primary btn-sm fw-600" id="btn-group-seq" onclick="applySequenceGrouping()">
+                <button type="button" class="btn btn-secondary btn-sm fw-600" id="btn-group-seq" onclick="applySequenceGrouping()">
                     {{ icon('zap', 'icon-xs') }} <span>Group for 1D-CNN</span>
+                </button>
+                <button type="button" class="btn btn-accent btn-sm fw-600" id="btn-autogroup-all-channels" onclick="autoGroupAllChannelsForCNN()" title="Auto-detect prefix series (s*, a_*, dvdt_*) as multi-channel 1D-CNN tensor">
+                    {{ icon('zap', 'icon-xs') }} <span>⚡ Auto-Group All Channels for 1D-CNN (s*, a_*, dvdt_*)</span>
                 </button>
             </div>
             <!-- Auto-detected Sequence Group Suggestions -->
@@ -152,7 +179,7 @@
 
         <!-- Per-Column Schema Inspector Table -->
         <div class="row-between mb-2 gap-2">
-            <div class="text-xs text-muted">Configure types, roles, scalers, and encoders per column:</div>
+            <div class="text-xs text-muted">Configure column roles (Input, Target, ID Key, Excluded) and signal types (raw values preserved):</div>
             <input type="text" id="schema-col-search" class="form-control form-control-sm max-w-sm" placeholder="Filter schema columns..." oninput="filterSchemaTable(this.value)">
         </div>
         <div class="table-responsive max-h-sm scroll-y">
@@ -162,7 +189,7 @@
                         <th>Column Name</th>
                         <th>Role</th>
                         <th>Data Type</th>
-                        <th>Preprocessing / Scaler / Encoder</th>
+                        <th>Signal Status</th>
                         <th class="num">Unique</th>
                         <th>Sample Values</th>
                     </tr>
@@ -394,7 +421,8 @@
         chartInstance: null,
         columnSchema: [],
         suggestedSequenceGroups: [],
-        sequenceGroups: []
+        sequenceGroups: [],
+        sequenceStackMode: "multichannel"
     };
 
     function toggleSchemaPanel() {
@@ -422,31 +450,20 @@
         tbody.innerHTML = cols.map(c => {
             const role = c.inferred_role || "input";
             const type = c.inferred_type || "numeric";
-            const scaler = c.scaler || "standard";
-            const encoder = c.encoder || "onehot";
 
-            let prepHtml = "";
+            let statusHtml = "";
             if (role === "id") {
-                prepHtml = `<span class="badge badge-warning">ID Key (Excluded)</span>`;
+                statusHtml = `<span class="badge badge-warning">ID Key (Excluded)</span>`;
             } else if (role === "ignore") {
-                prepHtml = `<span class="badge badge-danger">Excluded from Training</span>`;
+                statusHtml = `<span class="badge badge-danger">Excluded / Dropped</span>`;
+            } else if (role === "output") {
+                statusHtml = `<span class="badge badge-success">Target</span>`;
             } else if (type === "sequence") {
-                prepHtml = `<span class="badge badge-accent">1D-Signal (Sequence)</span>`;
-            } else if (type === "numeric") {
-                prepHtml = `
-                    <select class="form-control form-control-sm text-xs py-0" onchange="updateColumnScaler('${c.name.replace(/'/g, "\\'")}', this.value)">
-                        <option value="standard" ${scaler === "standard" ? "selected" : ""}>StandardScaler</option>
-                        <option value="minmax" ${scaler === "minmax" ? "selected" : ""}>MinMaxScaler</option>
-                        <option value="none" ${scaler === "none" ? "selected" : ""}>None (Raw)</option>
-                    </select>
-                `;
-            } else if (type === "categorical") {
-                prepHtml = `
-                    <select class="form-control form-control-sm text-xs py-0" onchange="updateColumnEncoder('${c.name.replace(/'/g, "\\'")}', this.value)">
-                        <option value="onehot" ${encoder === "onehot" ? "selected" : ""}>One-Hot</option>
-                        <option value="label" ${encoder === "label" ? "selected" : ""}>Label Encoding</option>
-                    </select>
-                `;
+                const group = (previewState.sequenceGroups || []).find(g => (g.columns || []).includes(c.name));
+                const chName = group ? (group.channel_name || group.name) : "Signal";
+                statusHtml = `<span class="badge badge-accent">1D Signal (${chName})</span>`;
+            } else {
+                statusHtml = `<span class="badge badge-mono">Raw Signal Value</span>`;
             }
 
             const sampleStr = (c.sample_values || []).map(v => typeof v === 'number' ? v.toFixed(3) : String(v)).slice(0, 4).join(", ") || "—";
@@ -456,20 +473,19 @@
                     <td class="mono fw-600 text-primary">${c.name}</td>
                     <td>
                         <select class="form-control form-control-sm text-xs py-0" onchange="updateColumnRole('${c.name.replace(/'/g, "\\'")}', this.value)">
-                            <option value="input" ${role === "input" ? "selected" : ""}>Input</option>
+                            <option value="input" ${role === "input" ? "selected" : ""}>Input (Feature)</option>
                             <option value="output" ${role === "output" ? "selected" : ""}>Output (Target)</option>
                             <option value="id" ${role === "id" ? "selected" : ""}>ID (Sample ID)</option>
-                            <option value="ignore" ${role === "ignore" ? "selected" : ""}>Ignore</option>
+                            <option value="ignore" ${role === "ignore" ? "selected" : ""}>Ignore (Drop)</option>
                         </select>
                     </td>
                     <td>
                         <select class="form-control form-control-sm text-xs py-0" onchange="updateColumnType('${c.name.replace(/'/g, "\\'")}', this.value)">
-                            <option value="numeric" ${type === "numeric" ? "selected" : ""}>Numeric</option>
-                            <option value="categorical" ${type === "categorical" ? "selected" : ""}>Categorical</option>
-                            <option value="sequence" ${type === "sequence" ? "selected" : ""}>Sequential/1D-Signal</option>
+                            <option value="numeric" ${type === "numeric" ? "selected" : ""}>Numeric (Scalar)</option>
+                            <option value="sequence" ${type === "sequence" ? "selected" : ""}>Sequential (1D-Signal)</option>
                         </select>
                     </td>
-                    <td>${prepHtml}</td>
+                    <td>${statusHtml}</td>
                     <td class="num mono text-muted text-xs">${c.unique_count || 0}</td>
                     <td class="mono text-muted text-xs truncate max-w-sm">${sampleStr}</td>
                 </tr>
@@ -505,16 +521,6 @@
         renderSchemaInspector(document.getElementById("schema-col-search") ? document.getElementById("schema-col-search").value : "");
     }
 
-    function updateColumnScaler(colName, newScaler) {
-        const item = (previewState.columnSchema || []).find(c => c.name === colName);
-        if (item) item.scaler = newScaler;
-    }
-
-    function updateColumnEncoder(colName, newEncoder) {
-        const item = (previewState.columnSchema || []).find(c => c.name === colName);
-        if (item) item.encoder = newEncoder;
-    }
-
     function updateOutputTaskBadge() {
         const outBadge = document.getElementById("output-task-badge");
         const seqBadge = document.getElementById("seq-tensor-badge");
@@ -522,67 +528,294 @@
 
         const outItem = (previewState.columnSchema || []).find(c => c.inferred_role === "output");
         if (outItem) {
-            if (outItem.inferred_type === "categorical") {
+            const isClassification = (outItem.unique_count > 0 && outItem.unique_count <= 20) || outItem.inferred_type === "categorical";
+            if (isClassification) {
                 outBadge.className = "badge badge-success";
-                outBadge.innerHTML = `${SignalML.icon('target', 'icon-xs')} Classification: Softmax / sparse_categorical_crossentropy (Target: ${outItem.name})`;
+                outBadge.innerHTML = `${SignalML.icon('target', 'icon-xs')} Classification Target: ${outItem.name} (${outItem.unique_count || 'N'} classes)`;
             } else {
                 outBadge.className = "badge badge-warning";
-                outBadge.innerHTML = `${SignalML.icon('trending-up', 'icon-xs')} Regression: Linear / MSE (Target: ${outItem.name})`;
+                outBadge.innerHTML = `${SignalML.icon('trending-up', 'icon-xs')} Regression Target: ${outItem.name}`;
             }
         } else {
             outBadge.className = "badge badge-accent";
-            outBadge.innerHTML = `${SignalML.icon('zap', 'icon-xs')} Unsupervised / Feature Extraction Pipeline`;
+            outBadge.innerHTML = `${SignalML.icon('zap', 'icon-xs')} Unsupervised / Signal Pipeline`;
         }
 
         const seqCols = (previewState.columnSchema || []).filter(c => c.inferred_type === "sequence" && c.inferred_role === "input");
         if (seqBadge) {
-            if (seqCols.length > 0) {
+            const numGroups = (previewState.sequenceGroups && previewState.sequenceGroups.length) || 0;
+            const rowCountStr = previewState.totalRows || 'N';
+
+            if (numGroups > 1) {
                 seqBadge.style.display = "inline-flex";
-                seqBadge.textContent = `1D-Sequence Tensor: (${previewState.totalRows || 'N'}, ${seqCols.length}, 1)`;
+                const channelNames = previewState.sequenceGroups.map(g => g.channel_name || g.prefix || g.name).join(", ");
+                const l = previewState.sequenceGroups[0].columns ? previewState.sequenceGroups[0].columns.length : 0;
+                const c = numGroups;
+                if (previewState.sequenceStackMode === "concat") {
+                    seqBadge.textContent = `1D-CNN Concatenated Tensor: (${rowCountStr}, ${l * c}, 1) [Channels: ${channelNames}]`;
+                } else {
+                    seqBadge.textContent = `1D-CNN Multi-Channel Tensor: (${rowCountStr}, ${l}, ${c}) [Channels: ${channelNames}]`;
+                }
+            } else if (numGroups === 1) {
+                seqBadge.style.display = "inline-flex";
+                const g = previewState.sequenceGroups[0];
+                const chName = g.channel_name || g.prefix || "signal";
+                const l = g.columns ? g.columns.length : seqCols.length;
+                seqBadge.textContent = `1D-Sequence Tensor: (${rowCountStr}, ${l}, 1) [Channel: ${chName}]`;
+            } else if (seqCols.length > 0) {
+                seqBadge.style.display = "inline-flex";
+                seqBadge.textContent = `1D-Sequence Tensor: (${rowCountStr}, ${seqCols.length}, 1)`;
             } else {
                 seqBadge.style.display = "none";
             }
         }
     }
 
+    function detectColumnPrefixGroups(columns = null, excludedSet = null) {
+        const cols = columns || previewState.allColumns || [];
+        const exSet = excludedSet || previewState.excludedColumns || new Set();
+        const rx = /^([a-zA-Z_][a-zA-Z0-9_]*?)_?(\d+)$/;
+        const groupsMap = new Map();
+
+        const schemaRoleMap = new Map();
+        (previewState.columnSchema || []).forEach(c => {
+            schemaRoleMap.set(c.name, c.inferred_role);
+        });
+
+        for (const col of cols) {
+            const cStr = String(col);
+            if (exSet.has(cStr)) continue;
+            const role = schemaRoleMap.get(cStr);
+            if (role === "id" || role === "output" || role === "ignore") continue;
+
+            const m = cStr.match(rx);
+            if (!m) continue;
+            const prefix = m[1];
+            const num = parseInt(m[2], 10);
+            if (!groupsMap.has(prefix)) {
+                groupsMap.set(prefix, []);
+            }
+            groupsMap.get(prefix).push({ col: cStr, num });
+        }
+
+        const result = [];
+        for (const [prefix, items] of groupsMap.entries()) {
+            if (items.length < 2) continue;
+            items.sort((a, b) => a.num - b.num);
+            const groupCols = items.map(it => it.col);
+            const firstCol = groupCols[0];
+            const lastCol = groupCols[groupCols.length - 1];
+            const pattern = `${firstCol}-${lastCol}`;
+            result.push({
+                name: "channel_" + prefix,
+                channel_name: prefix,
+                prefix: prefix,
+                pattern: pattern,
+                columns: groupCols,
+                count: groupCols.length
+            });
+        }
+        return result;
+    }
+
+    function autoGroupAllChannelsForCNN() {
+        const clientGroups = detectColumnPrefixGroups(previewState.allColumns);
+        const backendGroups = previewState.suggestedSequenceGroups || [];
+
+        const detectedMap = new Map();
+        clientGroups.forEach(g => detectedMap.set(g.pattern, g));
+        backendGroups.forEach(g => {
+            if (!detectedMap.has(g.pattern)) {
+                detectedMap.set(g.pattern, {
+                    name: g.name || ("channel_" + (g.prefix || "seq")),
+                    channel_name: g.prefix || g.name || "seq",
+                    prefix: g.prefix || "seq",
+                    pattern: g.pattern,
+                    columns: g.columns,
+                    count: g.count || (g.columns ? g.columns.length : 0)
+                });
+            }
+        });
+
+        const detectedGroups = Array.from(detectedMap.values());
+        if (detectedGroups.length === 0) {
+            SignalML.toast("No sequence prefix patterns detected (e.g. s0..sN, a_0..a_N, dvdt_0..dvdt_N)", "info");
+            return;
+        }
+
+        const normMethod = "none";
+
+        const allGroupCols = new Set();
+        detectedGroups.forEach(g => {
+            (g.columns || []).forEach(c => allGroupCols.add(c));
+        });
+
+        (previewState.columnSchema || []).forEach(col => {
+            if (allGroupCols.has(col.name)) {
+                col.inferred_type = "sequence";
+                col.inferred_role = "input";
+            }
+        });
+
+        previewState.sequenceGroups = detectedGroups.map(g => ({
+            name: g.name || ("channel_" + (g.channel_name || g.prefix)),
+            channel_name: g.channel_name || g.prefix,
+            prefix: g.prefix,
+            pattern: g.pattern,
+            columns: g.columns,
+            count: g.columns.length,
+            normalization: normMethod
+        }));
+
+        previewState.sequenceStackMode = previewState.sequenceStackMode || "multichannel";
+
+        const patternInput = document.getElementById("seq-pattern-input");
+        if (patternInput) {
+            patternInput.value = detectedGroups.map(g => g.pattern).join(", ");
+        }
+
+        const stackSelect = document.getElementById("seq-stack-mode-select");
+        if (stackSelect) {
+            stackSelect.value = previewState.sequenceStackMode;
+        }
+
+        updateOutputTaskBadge();
+        renderSchemaInspector(document.getElementById("schema-col-search") ? document.getElementById("schema-col-search").value : "");
+        renderSequenceSuggestions();
+
+        const chList = detectedGroups.map(g => g.channel_name || g.prefix).join(", ");
+        SignalML.toast(`Auto-grouped ${detectedGroups.length} channels (${allGroupCols.size} cols) for 1D-CNN: [${chList}]`, "success");
+    }
+
     function renderSequenceSuggestions() {
         const container = document.getElementById("seq-suggestions-row");
         if (!container) return;
-        const suggestions = previewState.suggestedSequenceGroups || [];
+
+        const clientGroups = detectColumnPrefixGroups(previewState.allColumns);
+        const backendGroups = previewState.suggestedSequenceGroups || [];
+        const groupMap = new Map();
+        clientGroups.forEach(g => groupMap.set(g.pattern, g));
+        backendGroups.forEach(g => {
+            if (!groupMap.has(g.pattern)) {
+                groupMap.set(g.pattern, {
+                    name: g.name || ("channel_" + (g.prefix || "seq")),
+                    channel_name: g.prefix || g.name || "seq",
+                    prefix: g.prefix || "seq",
+                    pattern: g.pattern,
+                    columns: g.columns,
+                    count: g.count || (g.columns ? g.columns.length : 0)
+                });
+            }
+        });
+        const suggestions = Array.from(groupMap.values());
+
         if (suggestions.length === 0) {
-            container.innerHTML = `<span class="text-muted text-xs">No sequential patterns detected automatically. Type a pattern like 's*' or 's1-s100'.</span>`;
+            container.innerHTML = `<span class="text-muted text-xs">No sequential patterns detected automatically. Type a pattern like 's*' or 's0-s511'.</span>`;
             return;
         }
 
-        container.innerHTML = `<span class="text-muted text-xs fw-600">Suggested Groups:</span>` +
-            suggestions.map(sg => `
-                <button type="button" class="btn btn-secondary btn-sm mono text-xs text-accent" onclick="useSequenceSuggestion('${sg.pattern}', '${sg.name}')">
-                    ${SignalML.icon('lightbulb', 'icon-xs')} <span>${sg.pattern} (${sg.count} cols)</span>
+        const selectedPatterns = new Set((previewState.sequenceGroups || []).map(g => g.pattern));
+
+        let html = `
+            <div class="row flex-wrap gap-2 align-items-center w-full">
+                <button type="button" class="btn btn-accent btn-sm fw-600" onclick="autoGroupAllChannelsForCNN()" title="Select all ${suggestions.length} prefix series as multi-channel 1D-CNN">
+                    ${SignalML.icon('zap', 'icon-xs')} <span>⚡ Auto-Group All (${suggestions.length} Channels)</span>
                 </button>
-            `).join("");
+                <span class="text-muted text-micro fw-600 ml-1">Detected Channels:</span>
+        `;
+
+        suggestions.forEach((sg, idx) => {
+            const isSel = selectedPatterns.has(sg.pattern);
+            const btnClass = isSel ? "btn btn-primary btn-sm mono text-xs" : "btn btn-secondary btn-sm mono text-xs";
+            const iconName = isSel ? "check" : "plus";
+            const chName = sg.channel_name || sg.prefix || `Ch${idx + 1}`;
+            html += `
+                <button type="button" class="${btnClass}" onclick="toggleChannelGroup('${sg.pattern.replace(/'/g, "\\'")}', '${(sg.name || '').replace(/'/g, "\\'")}')" title="Toggle channel ${chName} in/out of sequence tensor">
+                    ${SignalML.icon(iconName, 'icon-xs')} <span>${chName}: ${sg.pattern} (${sg.count} cols)</span>
+                </button>
+            `;
+        });
+
+        html += `
+                <div class="row gap-1 align-items-center ml-auto">
+                    <label class="text-muted text-micro fw-600" for="seq-stack-mode-select">Stack Mode:</label>
+                    <select id="seq-stack-mode-select" class="form-control form-control-sm text-xs py-0" onchange="updateSequenceStackMode(this.value)">
+                        <option value="multichannel" ${(previewState.sequenceStackMode || "multichannel") === "multichannel" ? "selected" : ""}>Multi-Channel 3D (N, L, C)</option>
+                        <option value="concat" ${previewState.sequenceStackMode === "concat" ? "selected" : ""}>Single Concatenated 1D (N, L*C, 1)</option>
+                    </select>
+                </div>
+            </div>
+        `;
+        container.innerHTML = html;
+    }
+
+    function toggleChannelGroup(pattern, name) {
+        const clientGroups = detectColumnPrefixGroups(previewState.allColumns);
+        const backendGroups = previewState.suggestedSequenceGroups || [];
+        const allDetected = [...clientGroups, ...backendGroups];
+        const target = allDetected.find(g => g.pattern === pattern || g.name === name);
+        if (!target) return;
+
+        const currentGroups = previewState.sequenceGroups || [];
+        const existingIdx = currentGroups.findIndex(g => g.pattern === pattern || g.name === name);
+
+        const normMethod = "none";
+
+        if (existingIdx >= 0) {
+            // Remove group
+            currentGroups.splice(existingIdx, 1);
+            const remainingCols = new Set();
+            currentGroups.forEach(g => (g.columns || []).forEach(c => remainingCols.add(c)));
+            (previewState.columnSchema || []).forEach(col => {
+                if (target.columns.includes(col.name) && !remainingCols.has(col.name)) {
+                    col.inferred_type = "numeric";
+                }
+            });
+            SignalML.toast(`Removed channel ${target.channel_name || target.prefix}`, "info");
+        } else {
+            // Add group
+            const chName = target.channel_name || target.prefix || ("channel_" + (currentGroups.length + 1));
+            currentGroups.push({
+                name: target.name || ("channel_" + chName),
+                channel_name: chName,
+                prefix: target.prefix,
+                pattern: target.pattern,
+                columns: target.columns,
+                count: target.columns.length,
+                normalization: normMethod
+            });
+            const targetColSet = new Set(target.columns);
+            (previewState.columnSchema || []).forEach(col => {
+                if (targetColSet.has(col.name)) {
+                    col.inferred_type = "sequence";
+                    col.inferred_role = "input";
+                }
+            });
+            SignalML.toast(`Added channel ${chName} (${target.columns.length} cols)`, "success");
+        }
+
+        previewState.sequenceGroups = currentGroups;
+        const patternInput = document.getElementById("seq-pattern-input");
+        if (patternInput) {
+            patternInput.value = currentGroups.map(g => g.pattern).join(", ");
+        }
+
+        updateOutputTaskBadge();
+        renderSchemaInspector(document.getElementById("schema-col-search") ? document.getElementById("schema-col-search").value : "");
+        renderSequenceSuggestions();
+    }
+
+    function updateSequenceStackMode(val) {
+        previewState.sequenceStackMode = val;
+        updateOutputTaskBadge();
     }
 
     function useSequenceSuggestion(pattern, name) {
-        const input = document.getElementById("seq-pattern-input");
-        if (input) input.value = pattern;
-        applySequenceGrouping(pattern);
+        toggleChannelGroup(pattern, name);
     }
 
-    function applySequenceGrouping(customPattern = null) {
-        const input = document.getElementById("seq-pattern-input");
-        const pattern = (customPattern || (input ? input.value : "")).trim();
-        if (!pattern) {
-            SignalML.toast("Please specify a pattern (e.g. s* or s1-s100)", "error");
-            return;
-        }
-
-        const normSelect = document.getElementById("seq-norm-select");
-        const normMethod = normSelect ? normSelect.value : "row_zscore";
-
+    function _matchPatternColumns(pattern, allCols) {
         let matched = [];
-        const allCols = previewState.allColumns || [];
-
-        // Check range: e.g. s1-s100 or sample_0-sample_511 or 0-511
         const rangeMatch = pattern.match(/^([a-zA-Z_]*?)(\d+)\s*-\s*([a-zA-Z_]*?)(\d+)$/);
         if (rangeMatch) {
             const pfx = rangeMatch[1];
@@ -617,9 +850,69 @@
         } else {
             matched = allCols.filter(c => c === pattern);
         }
+        return matched;
+    }
 
+    function applySequenceGrouping(customPattern = null) {
+        const input = document.getElementById("seq-pattern-input");
+        const rawInput = (customPattern || (input ? input.value : "")).trim();
+        if (!rawInput) {
+            SignalML.toast("Please specify a pattern (e.g. s* or s0-s511 or s0-s511, a_0-a_511)", "error");
+            return;
+        }
+
+        const normMethod = "none";
+        const allCols = previewState.allColumns || [];
+
+        // Check if multiple comma-separated patterns were entered (e.g. "s0-s511, a_0-a_511, dvdt_0-dvdt_511")
+        const tokens = rawInput.split(",").map(t => t.trim()).filter(Boolean);
+        const isMultiChannelInput = tokens.length > 1 && tokens.some(t => t.includes("-") || t.includes("*"));
+
+        if (isMultiChannelInput) {
+            const newGroups = [];
+            const allMatched = new Set();
+            tokens.forEach((tok, idx) => {
+                const subCols = _matchPatternColumns(tok, allCols);
+                if (subCols.length > 0) {
+                    subCols.forEach(c => allMatched.add(c));
+                    const pfxMatch = tok.match(/^([a-zA-Z_]+)/);
+                    const chName = pfxMatch ? pfxMatch[1].replace(/_+$/, "") : `channel_${idx + 1}`;
+                    newGroups.push({
+                        name: "channel_" + chName,
+                        channel_name: chName,
+                        prefix: chName,
+                        pattern: tok,
+                        columns: subCols,
+                        count: subCols.length,
+                        normalization: normMethod
+                    });
+                }
+            });
+
+            if (newGroups.length === 0) {
+                SignalML.toast(`No columns matched patterns in '${rawInput}'`, "error");
+                return;
+            }
+
+            (previewState.columnSchema || []).forEach(col => {
+                if (allMatched.has(col.name)) {
+                    col.inferred_type = "sequence";
+                    col.inferred_role = "input";
+                }
+            });
+
+            previewState.sequenceGroups = newGroups;
+            previewState.sequenceStackMode = previewState.sequenceStackMode || "multichannel";
+            updateOutputTaskBadge();
+            renderSchemaInspector(document.getElementById("schema-col-search") ? document.getElementById("schema-col-search").value : "");
+            renderSequenceSuggestions();
+            SignalML.toast(`Grouped ${newGroups.length} channels (${allMatched.size} columns) for 1D-CNN!`, "success");
+            return;
+        }
+
+        const matched = _matchPatternColumns(rawInput, allCols);
         if (matched.length === 0) {
-            SignalML.toast(`No columns matched pattern '${pattern}'`, "error");
+            SignalML.toast(`No columns matched pattern '${rawInput}'`, "error");
             return;
         }
 
@@ -631,15 +924,22 @@
             }
         });
 
+        const pfxMatch = rawInput.match(/^([a-zA-Z_]+)/);
+        const chName = pfxMatch ? pfxMatch[1].replace(/_+$/, "") : "signal";
+
         previewState.sequenceGroups = [{
-            name: "sequence_group_1",
-            pattern: pattern,
+            name: "channel_" + chName,
+            channel_name: chName,
+            prefix: chName,
+            pattern: rawInput,
             columns: matched,
+            count: matched.length,
             normalization: normMethod
         }];
 
         updateOutputTaskBadge();
         renderSchemaInspector(document.getElementById("schema-col-search") ? document.getElementById("schema-col-search").value : "");
+        renderSequenceSuggestions();
         SignalML.toast(`Grouped ${matched.length} columns into 1D-Sequence Tensor!`, "success");
     }
 
@@ -710,7 +1010,7 @@
             previewState.allColumns = data.all_columns || data.columns || [];
             previewState.activeColumns = data.active_columns || data.columns || [];
             previewState.suggestedIdCols = data.suggested_id_cols || [];
-            previewState.totalRows = data.total_rows || 0;
+            previewState.totalRows = data.total_rows ?? data.row_count ?? data.num_rows ?? 0;
             previewState.previewRows = data.preview_rows || [];
             previewState.sampleWaveforms = data.sample_waveforms || [];
             previewState.offset = data.offset || 0;
@@ -731,6 +1031,11 @@
         previewState.mode = "dataset";
         previewState.datasetId = datasetId;
         previewState.offset = offset;
+        previewState.selectedRowIdx = 0;
+        previewState.excludedColumns = new Set();
+        previewState.sequenceGroups = [];
+        previewState.suggestedSequenceGroups = [];
+        previewState.columnSchema = [];
 
         try {
             const res = await fetch(`/api/data/preview/${datasetId}?offset=${offset}&max_rows=${previewState.pageSize}`);
@@ -742,7 +1047,7 @@
 
             previewState.allColumns = data.columns || [];
             previewState.activeColumns = data.columns || [];
-            previewState.totalRows = data.row_count || 0;
+            previewState.totalRows = data.row_count ?? data.total_rows ?? data.num_rows ?? 0;
             previewState.previewRows = data.preview_rows || [];
             previewState.sampleWaveforms = data.sample_waveforms || [];
             previewState.offset = data.offset || 0;
@@ -763,8 +1068,10 @@
         previewCard.classList.remove("is-hidden");
         previewCard.style.display = "block";
 
+        const totalR = data.total_rows ?? data.row_count ?? data.num_rows ?? previewState.totalRows ?? 0;
+        const totalC = data.total_cols ?? data.col_count ?? data.num_cols ?? 0;
         document.getElementById("preview-mode-badge").textContent = modeTitle;
-        document.getElementById("preview-shape-badge").textContent = `${data.total_rows || data.row_count} rows x ${data.total_cols || data.col_count} cols`;
+        document.getElementById("preview-shape-badge").textContent = `${totalR} rows x ${totalC} cols`;
 
         // Update stats
         const stats = data.summary_stats || {};
@@ -792,6 +1099,12 @@
         }
         if (data.suggested_sequence_groups) {
             previewState.suggestedSequenceGroups = data.suggested_sequence_groups;
+        }
+        if (data.schema_config && data.schema_config.sequence_groups) {
+            previewState.sequenceGroups = data.schema_config.sequence_groups;
+            if (data.schema_config.sequence_stack_mode) {
+                previewState.sequenceStackMode = data.schema_config.sequence_stack_mode;
+            }
         }
 
         renderSchemaInspector();
@@ -1100,21 +1413,27 @@
             fd.append("exclude_cols", JSON.stringify(Array.from(previewState.excludedColumns)));
         }
 
-        // Send multi-modal schema_config
+        const missingStrat = document.getElementById("reg-missing") ? document.getElementById("reg-missing").value : "zero";
+        const splitVal = document.getElementById("reg-split") ? document.getElementById("reg-split").value : "70_15_15";
+        fd.append("missing_strategy", missingStrat);
+        fd.append("split_config", splitVal);
+
+        // Send multi-modal schema_config (raw signals, no scaling/encoding)
         if (previewState.columnSchema && previewState.columnSchema.length > 0) {
             const schemaConfig = {
                 columns: {},
                 sequence_groups: previewState.sequenceGroups || [],
-                sequence_normalization: document.getElementById("seq-norm-select") ? document.getElementById("seq-norm-select").value : "row_zscore",
-                default_numeric_scaler: "standard",
-                default_categorical_encoder: "onehot"
+                sequence_stack_mode: previewState.sequenceStackMode || "multichannel",
+                sequence_normalization: "none",
+                default_numeric_scaler: "none",
+                default_categorical_encoder: "none"
             };
             previewState.columnSchema.forEach(col => {
                 schemaConfig.columns[col.name] = {
                     role: col.inferred_role,
                     type: col.inferred_type,
-                    scaler: col.scaler || "standard",
-                    encoder: col.encoder || "onehot"
+                    scaler: "none",
+                    encoder: "none"
                 };
             });
             fd.append("schema_config", JSON.stringify(schemaConfig));
@@ -1209,6 +1528,9 @@
             console.error(e);
         }
     }
+
+    window.detectColumnPrefixGroups = detectColumnPrefixGroups;
+    window.autoGroupAllChannelsForCNN = autoGroupAllChannelsForCNN;
 
     document.addEventListener("DOMContentLoaded", () => {
         loadProjectDatasets();

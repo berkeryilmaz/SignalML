@@ -427,6 +427,8 @@ class NNEditor {
         this.flowMode = "lr"; // Default flow mode: Left-to-Right
         this.snapToGrid = true; // Default: Snap to Grid enabled
         this.snapGridSize = 20; // 20px grid matches canvas background dot pattern
+        this.datasetContext = null; // Active dataset context schema
+        this.projectDatasets = []; // Cached project datasets
         this.init();
         window.nnEditorInstance = this;
     }
@@ -460,6 +462,7 @@ class NNEditor {
 
         this.registerKerasNodes();
         this.setupDefaultGraph();
+        this.loadProjectDatasets();
         if (window.SignalML && typeof window.SignalML.applyGraphTheme === "function") {
             window.SignalML.applyGraphTheme(this.canvas);
         }
@@ -543,8 +546,26 @@ class NNEditor {
         };
 
         // 1. Core & IO
-        registerLayer("input", "Input", [], [{ name: "tensor", type: "Tensor" }], { shape: "512, 1" }, ["inputlayer"], "Core & IO");
-        registerLayer("output", "Model Output", [{ name: "in", type: "Tensor" }], [], { activation: "linear" }, ["modeloutput"], "Core & IO");
+        registerLayer("input", "Input", [], [{ name: "tensor", type: "Tensor" }], {
+            shape: "512, 1",
+            input_source: "signal_1d",
+            channels: "raw",
+            normalize_channels: false,
+            region_threshold: 2.0,
+            selected_columns: "",
+            dataset_id: "",
+            dataset_name: ""
+        }, ["inputlayer"], "Core & IO");
+        registerLayer("output", "Model Output", [{ name: "in", type: "Tensor" }], [], {
+            activation: "linear",
+            target_source: "auto",
+            loss: "auto",
+            loss_weight: 1.0,
+            target_channels: "all",
+            target_column: "",
+            dataset_id: "",
+            dataset_name: ""
+        }, ["modeloutput"], "Core & IO");
         registerLayer("dense", "Dense", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { units: 64, activation: "relu" }, [], "Core & IO");
         registerLayer("activation", "Activation", [{ name: "in", type: "Tensor" }], [{ name: "out", type: "Tensor" }], { activation: "relu" }, [], "Core & IO");
 
@@ -822,7 +843,7 @@ class NNEditor {
             return [wizardItem, flowSubmenu, snapItem, null, ...(opts || [])];
         };
 
-        // Add Port Orientation to Node Right-Click Context Menu
+        // Add Port Orientation and Merge Port Management to Node Right-Click Context Menu
         const origGetNodeMenuOptions = this.canvas.getNodeMenuOptions;
         this.canvas.getNodeMenuOptions = (node) => {
             const opts = origGetNodeMenuOptions ? origGetNodeMenuOptions.call(this.canvas, node) : [];
@@ -840,7 +861,23 @@ class NNEditor {
                     ]
                 }
             };
-            return [flowSubmenu, null, ...(opts || [])];
+            const customMenu = [flowSubmenu];
+            const nodeType = (node.type || "").toLowerCase();
+            const isMerge = nodeType.includes("concatenate") || nodeType.includes("add") || nodeType.includes("multiply") || nodeType.includes("average");
+            if (isMerge) {
+                customMenu.push(null);
+                customMenu.push({
+                    content: "Add Input Port (+)",
+                    callback: () => this.addMergeInputPort(node)
+                });
+                if (node.inputs && node.inputs.length > 2) {
+                    customMenu.push({
+                        content: "Remove Input Port (-)",
+                        callback: () => this.removeMergeInputPort(node)
+                    });
+                }
+            }
+            return [...customMenu, null, ...(opts || [])];
         };
     }
 
@@ -851,8 +888,14 @@ class NNEditor {
         const currentCustomName = (node.properties && node.properties.custom_name) !== undefined ? node.properties.custom_name : (node.title || "");
 
         const sml = (typeof window !== "undefined" && window.SignalML) || (typeof SignalML !== "undefined" ? SignalML : null);
-        const safeCustomName = (sml && typeof sml.escapeHtml === "function") ? sml.escapeHtml(currentCustomName) : currentCustomName;
+        const escapeHtml = (sml && typeof sml.escapeHtml === "function") ? sml.escapeHtml.bind(sml) : (s => (s == null ? "" : String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")));
+        const safeCustomName = escapeHtml(currentCustomName);
         const iconFn = (sml && typeof sml.icon === "function") ? sml.icon.bind(sml) : (() => "");
+
+        const nodeType = (node.type || "").toLowerCase();
+        const isInputNode = nodeType === "keras/input" || nodeType === "input" || nodeType === "keras/inputlayer" || nodeType.endsWith("input");
+        const isOutputNode = nodeType === "keras/output" || nodeType === "output" || nodeType === "keras/modeloutput" || nodeType.endsWith("output");
+        const isMergeNode = nodeType.includes("concatenate") || nodeType.includes("add") || nodeType.includes("multiply") || nodeType.includes("average");
 
         let shapeBadgeHtml = "";
         if (node._inferredShape !== undefined || node._paramCount !== undefined) {
@@ -902,6 +945,230 @@ class NNEditor {
             </div>
         `;
 
+        // 1. Rich Input Node Card
+        let richCardHtml = "";
+        if (isInputNode) {
+            const curSource = node.properties.input_source || "signal_1d";
+            const curChannels = (node.properties.channels || "raw").split(",").map(c => c.trim()).filter(Boolean);
+            const shapeStr = String(node.properties.shape || "512, 1");
+            const curSeqLen = parseInt(shapeStr.split(",")[0], 10) || 512;
+            const hasRegionMask = curChannels.includes("region_mask") || curSource === "region_mask";
+
+            const channelDefs = [
+                { id: "raw", name: "Raw Signal x(t)", tag: "Ham Sinyal" },
+                { id: "derivative_1", name: "1st Derivative dx/dt", tag: "1. Türev" },
+                { id: "derivative_2", name: "2nd Derivative d²x/dt²", tag: "2. Türev" },
+                { id: "region_mask", name: "Regional Labels / Mask", tag: "Bölgesel Etiket" },
+                { id: "envelope_rms", name: "RMS Envelope", tag: "Zarf / Enerji" },
+                { id: "rolling_mean", name: "Rolling Mean", tag: "Hareketli Ort." },
+                { id: "fft_magnitude", name: "FFT Magnitude", tag: "Spektrum" }
+            ];
+
+            const channelChipsHtml = channelDefs.map(c => {
+                const isChecked = curChannels.includes(c.id);
+                return `
+                    <label class="channel-chip-label ${isChecked ? 'is-active' : ''}">
+                        <input type="checkbox" class="channel-chk" value="${c.id}" ${isChecked ? 'checked' : ''}>
+                        <span class="channel-chip-name">${escapeHtml(c.name)}</span>
+                        <span class="channel-chip-tag">${escapeHtml(c.tag)}</span>
+                    </label>
+                `;
+            }).join("");
+
+            let columnsSelectorHtml = "";
+            const availCols = (this.datasetContext && this.datasetContext.columns) || [];
+            const selectedCols = (node.properties.selected_columns || "").split(",").map(c => c.trim()).filter(Boolean);
+            if (availCols.length > 0) {
+                const chipsHtml = availCols.map(col => {
+                    const isSel = selectedCols.includes(col);
+                    return `<span class="col-chip ${isSel ? 'is-active' : ''}" data-col="${escapeHtml(col)}">${escapeHtml(col)}</span>`;
+                }).join("");
+                columnsSelectorHtml = `
+                    <div class="form-group mb-2">
+                        <div class="row-between mb-1">
+                            <label class="form-label m-0">Dataset columns (${selectedCols.length} selected)</label>
+                            <button type="button" class="btn btn-ghost btn-xs text-muted" id="btn-select-all-cols">Select all</button>
+                        </div>
+                        <div class="col-chips-wrap" id="col-chips-container">${chipsHtml}</div>
+                    </div>
+                `;
+            } else {
+                columnsSelectorHtml = `
+                    <div class="form-group mb-2">
+                        <label class="form-label">Selected columns / features (comma-separated)</label>
+                        <input type="text" id="inspector-input-cols-text" class="form-control mono" value="${escapeHtml(node.properties.selected_columns || '')}" placeholder="e.g. col_1, col_2, col_3">
+                    </div>
+                `;
+            }
+
+            richCardHtml = `
+                <div class="io-config-card mb-3">
+                    <div class="io-card-header">
+                        <div class="io-card-title">${iconFn('database', 'icon-xs')} <span>Input Data &amp; Channel Selector</span></div>
+                        <span class="io-card-badge" id="inspector-badge-shape">${escapeHtml(node.properties.shape || '512, 1')}</span>
+                    </div>
+
+                    <div class="form-group mb-2">
+                        <label class="form-label">Source dataset (dataset_id)</label>
+                        <select id="inspector-input-dataset" class="form-control" title="Select a dataset in this project specifically for this Input node">
+                            <option value="">Use Training / Active Dataset (Default)</option>
+                            ${(this.projectDatasets || []).map(d => `<option value="${d.id}" ${node.properties.dataset_id === d.id ? 'selected' : ''}>${escapeHtml(d.name)} (${d.col_count || 0} cols)</option>`).join('')}
+                        </select>
+                    </div>
+
+                    <div class="form-group mb-2">
+                        <label class="form-label">Data source (input_source)</label>
+                        <select id="inspector-input-source" class="form-control">
+                            <option value="signal_1d" ${curSource === 'signal_1d' ? 'selected' : ''}>1D Signal / Multi-Channel (Conv1D / RNN)</option>
+                            <option value="region_mask" ${curSource === 'region_mask' ? 'selected' : ''}>Regional Labels / Event Mask (Bölgesel Etiket)</option>
+                            <option value="tabular" ${curSource === 'tabular' ? 'selected' : ''}>Tabular / Metadata Features (2D)</option>
+                            <option value="columns" ${curSource === 'columns' ? 'selected' : ''}>Specific Dataset Columns</option>
+                        </select>
+                    </div>
+
+                    ${(curSource === 'signal_1d' || curSource === 'region_mask') ? `
+                        <div class="form-group mb-2">
+                            <label class="form-label mb-1">Multi-Channel Feature Channels (${curChannels.length} active)</label>
+                            <div class="channel-presets-bar">
+                                <button type="button" class="btn btn-secondary btn-xs channel-preset-btn" data-preset="raw">Raw (1ch)</button>
+                                <button type="button" class="btn btn-secondary btn-xs channel-preset-btn" data-preset="raw,derivative_1,derivative_2">Raw + 1st &amp; 2nd (3ch)</button>
+                                <button type="button" class="btn btn-secondary btn-xs channel-preset-btn" data-preset="raw,region_mask">Raw + Mask (2ch)</button>
+                                <button type="button" class="btn btn-secondary btn-xs channel-preset-btn" data-preset="raw,derivative_1,derivative_2,region_mask,envelope_rms">Full (5ch)</button>
+                            </div>
+                            <div class="channel-chips-grid mb-2">
+                                ${channelChipsHtml}
+                            </div>
+                        </div>
+
+                        <div class="form-row mb-2">
+                            <div class="form-group m-0 flex-1">
+                                <label class="form-label">Sequence length</label>
+                                <input type="number" id="inspector-input-seqlen" class="form-control mono" value="${curSeqLen}" min="16" step="16">
+                            </div>
+                            <div class="form-group m-0 flex-1" id="inspector-thresh-group" ${hasRegionMask ? '' : 'hidden'}>
+                                <label class="form-label">Region threshold (&sigma;)</label>
+                                <input type="number" id="inspector-input-thresh" class="form-control mono" value="${node.properties.region_threshold !== undefined ? node.properties.region_threshold : 2.0}" step="0.1" min="0.1">
+                            </div>
+                        </div>
+
+                        <div class="form-group mb-2">
+                            <label class="check">
+                                <input type="checkbox" id="inspector-input-norm" ${node.properties.normalize_channels ? 'checked' : ''}>
+                                <span>Normalize channels (Z-Score)</span>
+                            </label>
+                        </div>
+                    ` : ''}
+
+                    ${(curSource === 'tabular' || curSource === 'columns' || (this.datasetContext && this.datasetContext.columns && this.datasetContext.columns.length > 0)) ? columnsSelectorHtml : ''}
+
+                    ${this.datasetContext ? `
+                        <button type="button" class="btn btn-secondary btn-xs w-full mt-2" id="inspector-sync-dataset-btn">
+                            ${iconFn('sparkles', 'icon-xs')} <span>Sync shape with dataset (${escapeHtml(this.datasetContext.name || 'Context')})</span>
+                        </button>
+                    ` : ''}
+                </div>
+            `;
+        }
+        // 2. Rich Output Node Card
+        else if (isOutputNode) {
+            const curTarget = node.properties.target_source || "auto";
+            const curActivation = node.properties.activation || "linear";
+            const curLoss = node.properties.loss || "auto";
+            const curLossWeight = node.properties.loss_weight !== undefined ? node.properties.loss_weight : 1.0;
+
+            richCardHtml = `
+                <div class="io-config-card mb-3">
+                    <div class="io-card-header">
+                        <div class="io-card-title">${iconFn('target', 'icon-xs')} <span>Output Target &amp; Task Configuration</span></div>
+                        <span class="io-card-badge">${escapeHtml(curLoss)}</span>
+                    </div>
+
+                    <div class="form-group mb-2">
+                        <label class="form-label">Target dataset (dataset_id)</label>
+                        <select id="inspector-output-dataset" class="form-control" title="Select a target dataset in this project specifically for this Output node">
+                            <option value="">Use Training Dataset Target (Default)</option>
+                            ${(this.projectDatasets || []).map(d => `<option value="${d.id}" ${node.properties.dataset_id === d.id ? 'selected' : ''}>${escapeHtml(d.name)} (${d.col_count || 0} cols)</option>`).join('')}
+                        </select>
+                    </div>
+
+                    <div class="form-group mb-2">
+                        <label class="form-label">Target data (target_source)</label>
+                        <select id="inspector-output-target" class="form-control">
+                            <option value="auto" ${curTarget === 'auto' ? 'selected' : ''}>Auto-Detect from Architecture</option>
+                            <option value="reconstruction" ${curTarget === 'reconstruction' ? 'selected' : ''}>Signal Reconstruction (Autoencoder)</option>
+                            <option value="region_labels" ${curTarget === 'region_labels' ? 'selected' : ''}>Regional Labels / 1D Segmentation (Bölgesel Etiketler)</option>
+                            <option value="label_class" ${curTarget === 'label_class' ? 'selected' : ''}>Class Label (Whole-Signal Classification y)</option>
+                            <option value="regression" ${curTarget === 'regression' ? 'selected' : ''}>Continuous Value (Regression y)</option>
+                            <option value="clustering" ${curTarget === 'clustering' ? 'selected' : ''}>Cluster Distribution (IDEC P)</option>
+                        </select>
+                    </div>
+
+                    <div class="form-row mb-2">
+                        <div class="form-group m-0 flex-1">
+                            <label class="form-label">Activation</label>
+                            <select id="inspector-output-activation" class="form-control">
+                                ${['linear', 'sigmoid', 'softmax', 'tanh', 'relu'].map(a => `<option value="${a}" ${curActivation === a ? 'selected' : ''}>${a}</option>`).join('')}
+                            </select>
+                        </div>
+                        <div class="form-group m-0 flex-1">
+                            <label class="form-label">Loss function</label>
+                            <select id="inspector-output-loss" class="form-control">
+                                ${['auto', 'mse', 'mae', 'huber', 'binary_crossentropy', 'sparse_categorical_crossentropy', 'categorical_crossentropy', 'kld'].map(l => `<option value="${l}" ${curLoss === l ? 'selected' : ''}>${l}</option>`).join('')}
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-group mb-2">
+                        <label class="form-label">Loss weight</label>
+                        <input type="number" id="inspector-output-loss-weight" class="form-control mono" value="${curLossWeight}" step="0.1" min="0">
+                    </div>
+
+                    ${curTarget === 'reconstruction' ? `
+                        <div class="form-group m-0">
+                            <label class="form-label">Target channels</label>
+                            <select id="inspector-output-target-channels" class="form-control">
+                                <option value="all" ${(node.properties.target_channels || 'all') === 'all' ? 'selected' : ''}>All Input Channels</option>
+                                <option value="raw" ${node.properties.target_channels === 'raw' ? 'selected' : ''}>Raw Signal x(t) Only</option>
+                                <option value="derivative_1" ${node.properties.target_channels === 'derivative_1' ? 'selected' : ''}>1st Derivative Only</option>
+                                <option value="derivative_2" ${node.properties.target_channels === 'derivative_2' ? 'selected' : ''}>2nd Derivative Only</option>
+                            </select>
+                        </div>
+                    ` : ''}
+
+                    ${(curTarget === 'regression' || curTarget === 'label_class') ? `
+                        <div class="form-group m-0">
+                            <label class="form-label">Target column</label>
+                            <input type="text" id="inspector-output-target-col" class="form-control mono" value="${escapeHtml(node.properties.target_column || '')}" placeholder="e.g. y or target_col">
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        }
+        // 3. Rich Merge / Concatenate Multi-Port Card
+        else if (isMergeNode) {
+            const inputCount = (node.inputs || []).length;
+            const inputNames = (node.inputs || []).map(i => i.name).join(", ");
+            richCardHtml = `
+                <div class="io-config-card mb-3">
+                    <div class="io-card-header">
+                        <div class="io-card-title">${iconFn('git-merge', 'icon-xs')} <span>Merge Inputs Management</span></div>
+                        <span class="io-card-badge">${inputCount} Ports</span>
+                    </div>
+                    <div class="text-xs text-muted mb-2">
+                        Inputs: <span class="mono">${escapeHtml(inputNames)}</span>
+                    </div>
+                    <div class="merge-ports-bar">
+                        <button type="button" class="btn btn-secondary btn-xs flex-1" id="inspector-add-merge-port-btn">
+                            ${iconFn('plus', 'icon-xs')} <span>Add Input Port</span>
+                        </button>
+                        <button type="button" class="btn btn-secondary btn-xs flex-1" id="inspector-remove-merge-port-btn" ${inputCount > 2 ? '' : 'disabled'}>
+                            ${iconFn('minus', 'icon-xs')} <span>Remove Port</span>
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
         let html = `
             <div class="mb-3">
                 <div class="text-subhead">${node.title}</div>
@@ -913,16 +1180,26 @@ class NNEditor {
             </div>
             ${orientationTileHtml}
             ${shapeBadgeHtml}
+            ${richCardHtml}
             <hr class="divider mb-3">
         `;
 
+        // Render generic parameters (filtering out those already rendered in rich cards)
+        const skipInputProps = ["input_source", "channels", "normalize_channels", "region_threshold", "selected_columns", "dataset_id", "dataset_name", "shape", "custom_name"];
+        const skipOutputProps = ["activation", "target_source", "loss", "loss_weight", "target_channels", "target_column", "dataset_id", "dataset_name", "custom_name"];
+
         if (node.properties && Object.keys(node.properties).length > 0) {
-            html += `<div class="section-title">Parameters</div>`;
+            let renderedPropsCount = 0;
+            let propsHtml = `<div class="section-title">Parameters</div>`;
             for (let [k, v] of Object.entries(node.properties)) {
                 if (k === "custom_name") continue;
+                if (isInputNode && skipInputProps.includes(k)) continue;
+                if (isOutputNode && skipOutputProps.includes(k)) continue;
+
+                renderedPropsCount++;
                 if (k === "code") {
-                    const safeCode = (sml && typeof sml.escapeHtml === "function") ? sml.escapeHtml(v || "") : (v || "");
-                    html += `
+                    const safeCode = escapeHtml(v || "");
+                    propsHtml += `
                         <div class="form-group">
                             <div class="row-between mb-1">
                                 <label class="form-label m-0">Layer code</label>
@@ -932,7 +1209,7 @@ class NNEditor {
                         </div>
                     `;
                 } else if (typeof v === "boolean") {
-                    html += `
+                    propsHtml += `
                         <div class="form-group">
                             <label class="form-label">${k}</label>
                             <select class="form-control prop-input-bool" data-prop="${k}">
@@ -942,7 +1219,7 @@ class NNEditor {
                         </div>
                     `;
                 } else {
-                    html += `
+                    propsHtml += `
                         <div class="form-group">
                             <label class="form-label">${k}</label>
                             <input class="form-control prop-input" data-prop="${k}" type="${typeof v === 'number' ? 'number' : 'text'}" value="${v !== undefined && v !== null ? v : ''}">
@@ -950,8 +1227,9 @@ class NNEditor {
                     `;
                 }
             }
-        } else {
-            html += `<div class="text-muted text-sm">No configurable parameters for this layer.</div>`;
+            if (renderedPropsCount > 0) {
+                html += propsHtml;
+            }
         }
 
         body.innerHTML = html;
@@ -984,6 +1262,266 @@ class NNEditor {
             });
         });
 
+        // Bind Input Card Events
+        if (isInputNode) {
+            const inputDsSel = document.getElementById("inspector-input-dataset");
+            if (inputDsSel) {
+                inputDsSel.addEventListener("change", (e) => {
+                    const dsId = e.target.value;
+                    node.properties.dataset_id = dsId;
+                    const ds = (this.projectDatasets || []).find(d => d.id === dsId);
+                    node.properties.dataset_name = ds ? ds.name : "";
+                    if (ds && ds.col_count) {
+                        let sigLen = ds.col_count;
+                        if (ds.label_col && sigLen > 1) sigLen -= 1;
+                        const channels = (node.properties.channels || "raw").split(",").filter(Boolean);
+                        node.properties.shape = `${sigLen}, ${channels.length || 1}`;
+                    }
+                    if (this.canvas) this.canvas.setDirty(true, true);
+                    this.updateInspector(node);
+                    this.validateGraph();
+                });
+            }
+
+            const inputSrcSel = document.getElementById("inspector-input-source");
+            if (inputSrcSel) {
+                inputSrcSel.addEventListener("change", (e) => {
+                    node.properties.input_source = e.target.value;
+                    if (node.properties.input_source === "tabular" || node.properties.input_source === "columns") {
+                        const selected = (node.properties.selected_columns || "").split(",").filter(Boolean);
+                        node.properties.shape = String(selected.length || 16);
+                    } else {
+                        const channels = (node.properties.channels || "raw").split(",").filter(Boolean);
+                        const seqLen = parseInt((node.properties.shape || "512").split(",")[0], 10) || 512;
+                        node.properties.shape = `${seqLen}, ${channels.length || 1}`;
+                    }
+                    if (this.canvas) this.canvas.setDirty(true, true);
+                    this.updateInspector(node);
+                    this.validateGraph();
+                });
+            }
+
+            // Presets
+            body.querySelectorAll(".channel-preset-btn").forEach(btn => {
+                btn.addEventListener("click", () => {
+                    const preset = btn.dataset.preset;
+                    node.properties.channels = preset;
+                    const channels = preset.split(",");
+                    const seqLen = parseInt((node.properties.shape || "512").split(",")[0], 10) || 512;
+                    node.properties.shape = `${seqLen}, ${channels.length}`;
+                    if (this.canvas) this.canvas.setDirty(true, true);
+                    this.updateInspector(node);
+                    this.validateGraph();
+                });
+            });
+
+            // Channel checkboxes
+            body.querySelectorAll(".channel-chk").forEach(chk => {
+                chk.addEventListener("change", () => {
+                    const checked = [];
+                    body.querySelectorAll(".channel-chk:checked").forEach(c => checked.push(c.value));
+                    const finalChannels = checked.length > 0 ? checked : ["raw"];
+                    node.properties.channels = finalChannels.join(",");
+                    const seqLen = parseInt((node.properties.shape || "512").split(",")[0], 10) || 512;
+                    node.properties.shape = `${seqLen}, ${finalChannels.length}`;
+                    if (this.canvas) this.canvas.setDirty(true, true);
+                    this.updateInspector(node);
+                    this.validateGraph();
+                });
+            });
+
+            // Sequence Length input
+            const seqInput = document.getElementById("inspector-input-seqlen");
+            if (seqInput) {
+                seqInput.addEventListener("input", (e) => {
+                    const newSeq = parseInt(e.target.value, 10) || 512;
+                    const parts = (node.properties.shape || "512, 1").split(",").map(p => p.trim());
+                    if (parts.length >= 2) {
+                        node.properties.shape = `${newSeq}, ${parts.slice(1).join(", ")}`;
+                    } else {
+                        node.properties.shape = `${newSeq}, 1`;
+                    }
+                    if (this.canvas) this.canvas.setDirty(true, true);
+                    const badge = document.getElementById("inspector-badge-shape");
+                    if (badge) badge.textContent = node.properties.shape;
+                    this.validateGraph();
+                });
+            }
+
+            // Normalize checkbox
+            const normChk = document.getElementById("inspector-input-norm");
+            if (normChk) {
+                normChk.addEventListener("change", (e) => {
+                    node.properties.normalize_channels = e.target.checked;
+                    if (this.canvas) this.canvas.setDirty(true, true);
+                });
+            }
+
+            // Threshold input
+            const threshInput = document.getElementById("inspector-input-thresh");
+            if (threshInput) {
+                threshInput.addEventListener("input", (e) => {
+                    node.properties.region_threshold = parseFloat(e.target.value) || 2.0;
+                    if (this.canvas) this.canvas.setDirty(true, true);
+                });
+            }
+
+            // Sync with dataset context button
+            const syncBtn = document.getElementById("inspector-sync-dataset-btn");
+            if (syncBtn) {
+                syncBtn.addEventListener("click", () => {
+                    this.syncGraphWithDatasetContext();
+                });
+            }
+
+            // Column chips
+            body.querySelectorAll(".col-chip").forEach(chip => {
+                chip.addEventListener("click", () => {
+                    const col = chip.dataset.col;
+                    let selected = (node.properties.selected_columns || "").split(",").map(c => c.trim()).filter(Boolean);
+                    if (selected.includes(col)) {
+                        selected = selected.filter(c => c !== col);
+                    } else {
+                        selected.push(col);
+                    }
+                    node.properties.selected_columns = selected.join(",");
+                    if (node.properties.input_source === "tabular" || node.properties.input_source === "columns") {
+                        node.properties.shape = String(selected.length || 1);
+                    }
+                    if (this.canvas) this.canvas.setDirty(true, true);
+                    this.updateInspector(node);
+                    this.validateGraph();
+                });
+            });
+
+            const selAllColsBtn = document.getElementById("btn-select-all-cols");
+            if (selAllColsBtn && this.datasetContext && this.datasetContext.columns) {
+                selAllColsBtn.addEventListener("click", () => {
+                    node.properties.selected_columns = this.datasetContext.columns.join(",");
+                    if (node.properties.input_source === "tabular" || node.properties.input_source === "columns") {
+                        node.properties.shape = String(this.datasetContext.columns.length);
+                    }
+                    if (this.canvas) this.canvas.setDirty(true, true);
+                    this.updateInspector(node);
+                    this.validateGraph();
+                });
+            }
+
+            const colsTextInput = document.getElementById("inspector-input-cols-text");
+            if (colsTextInput) {
+                colsTextInput.addEventListener("input", (e) => {
+                    node.properties.selected_columns = e.target.value.trim();
+                    if (node.properties.input_source === "tabular" || node.properties.input_source === "columns") {
+                        const count = node.properties.selected_columns.split(",").filter(Boolean).length;
+                        node.properties.shape = String(count || 1);
+                    }
+                    if (this.canvas) this.canvas.setDirty(true, true);
+                });
+            }
+        }
+
+        // Bind Output Card Events
+        if (isOutputNode) {
+            const outDsSel = document.getElementById("inspector-output-dataset");
+            if (outDsSel) {
+                outDsSel.addEventListener("change", (e) => {
+                    const dsId = e.target.value;
+                    node.properties.dataset_id = dsId;
+                    const ds = (this.projectDatasets || []).find(d => d.id === dsId);
+                    node.properties.dataset_name = ds ? ds.name : "";
+                    if (this.canvas) this.canvas.setDirty(true, true);
+                    this.updateInspector(node);
+                    this.validateGraph();
+                });
+            }
+
+            const outTargetSel = document.getElementById("inspector-output-target");
+            if (outTargetSel) {
+                outTargetSel.addEventListener("change", (e) => {
+                    const target = e.target.value;
+                    node.properties.target_source = target;
+                    if (target === "reconstruction") {
+                        node.properties.activation = "linear";
+                        node.properties.loss = "mse";
+                    } else if (target === "region_labels") {
+                        node.properties.activation = "sigmoid";
+                        node.properties.loss = "binary_crossentropy";
+                    } else if (target === "label_class") {
+                        node.properties.activation = "softmax";
+                        node.properties.loss = "sparse_categorical_crossentropy";
+                    } else if (target === "regression") {
+                        node.properties.activation = "linear";
+                        node.properties.loss = "mse";
+                    } else if (target === "clustering") {
+                        node.properties.activation = "softmax";
+                        node.properties.loss = "kld";
+                    }
+                    if (this.canvas) this.canvas.setDirty(true, true);
+                    this.updateInspector(node);
+                    this.validateGraph();
+                });
+            }
+
+            const outActSel = document.getElementById("inspector-output-activation");
+            if (outActSel) {
+                outActSel.addEventListener("change", (e) => {
+                    node.properties.activation = e.target.value;
+                    if (this.canvas) this.canvas.setDirty(true, true);
+                    this.validateGraph();
+                });
+            }
+
+            const outLossSel = document.getElementById("inspector-output-loss");
+            if (outLossSel) {
+                outLossSel.addEventListener("change", (e) => {
+                    node.properties.loss = e.target.value;
+                    if (this.canvas) this.canvas.setDirty(true, true);
+                    this.validateGraph();
+                });
+            }
+
+            const outWeightInput = document.getElementById("inspector-output-loss-weight");
+            if (outWeightInput) {
+                outWeightInput.addEventListener("input", (e) => {
+                    node.properties.loss_weight = parseFloat(e.target.value) || 1.0;
+                    if (this.canvas) this.canvas.setDirty(true, true);
+                });
+            }
+
+            const outTargetChSel = document.getElementById("inspector-output-target-channels");
+            if (outTargetChSel) {
+                outTargetChSel.addEventListener("change", (e) => {
+                    node.properties.target_channels = e.target.value;
+                    if (this.canvas) this.canvas.setDirty(true, true);
+                });
+            }
+
+            const outTargetColInput = document.getElementById("inspector-output-target-col");
+            if (outTargetColInput) {
+                outTargetColInput.addEventListener("input", (e) => {
+                    node.properties.target_column = e.target.value.trim();
+                    if (this.canvas) this.canvas.setDirty(true, true);
+                });
+            }
+        }
+
+        // Bind Merge Card Events
+        if (isMergeNode) {
+            const addPortBtn = document.getElementById("inspector-add-merge-port-btn");
+            if (addPortBtn) {
+                addPortBtn.addEventListener("click", () => {
+                    this.addMergeInputPort(node);
+                });
+            }
+
+            const remPortBtn = document.getElementById("inspector-remove-merge-port-btn");
+            if (remPortBtn) {
+                remPortBtn.addEventListener("click", () => {
+                    this.removeMergeInputPort(node);
+                });
+            }
+        }
+
         // Bind boolean select change events
         body.querySelectorAll(".prop-input-bool").forEach(sel => {
             sel.addEventListener("change", (e) => {
@@ -1007,6 +1545,143 @@ class NNEditor {
                 }
             });
         });
+    }
+
+    async loadProjectDatasets() {
+        try {
+            const projectId = this.getActiveProjectId();
+            const res = await fetch(`/api/data/list/${projectId}`);
+            if (res.ok) {
+                const SML = (typeof window !== "undefined" && window.SignalML) || (typeof SignalML !== "undefined" ? SignalML : null);
+                const data = SML && typeof SML.safeJson === "function" ? await SML.safeJson(res) : await res.json();
+                if (Array.isArray(data)) {
+                    this.projectDatasets = data;
+                }
+            }
+        } catch (e) {
+            console.error("Failed to load project datasets for NNEditor", e);
+        }
+    }
+
+    async setDatasetContext(datasetId) {
+        if (!datasetId) {
+            this.datasetContext = null;
+            if (this.selectedNode) {
+                this.updateInspector(this.selectedNode);
+            }
+            this.toast("Dataset context cleared (Manual mode)", "info");
+            return;
+        }
+
+        const SML = (typeof window !== "undefined" && window.SignalML) || (typeof SignalML !== "undefined" ? SignalML : null);
+        const dsMeta = (this.projectDatasets || []).find(d => d.id === datasetId);
+
+        try {
+            let schema = null;
+            const res = await fetch(`/api/data/${datasetId}/io_schema`);
+            if (res.ok) {
+                schema = SML && typeof SML.safeJson === "function" ? await SML.safeJson(res) : await res.json();
+            } else {
+                const prevRes = await fetch(`/api/data/preview/${datasetId}`);
+                if (prevRes.ok) {
+                    const prevData = SML && typeof SML.safeJson === "function" ? await SML.safeJson(prevRes) : await prevRes.json();
+                    schema = {
+                        id: datasetId,
+                        name: dsMeta ? dsMeta.name : datasetId,
+                        columns: prevData.columns || (prevData.preview && Object.keys(prevData.preview[0] || {})) || [],
+                        row_count: prevData.total_rows || (dsMeta && dsMeta.row_count) || 0,
+                        col_count: prevData.columns ? prevData.columns.length : ((dsMeta && dsMeta.col_count) || 512),
+                        seq_len: dsMeta && dsMeta.col_count ? (dsMeta.label_col ? dsMeta.col_count - 1 : dsMeta.col_count) : 512,
+                        label_col: dsMeta && dsMeta.label_col
+                    };
+                }
+            }
+
+            if (!schema) {
+                schema = {
+                    id: datasetId,
+                    name: dsMeta ? dsMeta.name : datasetId,
+                    columns: [],
+                    seq_len: dsMeta && dsMeta.col_count ? (dsMeta.label_col ? dsMeta.col_count - 1 : dsMeta.col_count) : 512,
+                    col_count: dsMeta && dsMeta.col_count ? dsMeta.col_count : 512,
+                    label_col: dsMeta && dsMeta.label_col
+                };
+            }
+
+            if (dsMeta && dsMeta.name && !schema.name) {
+                schema.name = dsMeta.name;
+            }
+            if (!schema.seq_len && schema.col_count) {
+                schema.seq_len = schema.label_col && schema.col_count > 1 ? schema.col_count - 1 : schema.col_count;
+            }
+
+            this.datasetContext = schema;
+            this.toast(`Dataset context: ${schema.name || datasetId} (seq_len: ${schema.seq_len || 512})`, "success");
+
+            if (this.selectedNode) {
+                this.updateInspector(this.selectedNode);
+            }
+        } catch (e) {
+            console.error("Failed to load dataset io_schema", e);
+            this.toast(`Failed to load dataset schema: ${e.message}`, "error");
+        }
+    }
+
+    syncGraphWithDatasetContext() {
+        if (!this.datasetContext || !this.graph || !this.graph._nodes) {
+            this.toast("Select a dataset context first", "warning");
+            return;
+        }
+
+        const seqLen = this.datasetContext.seq_len || 512;
+        let updatedCount = 0;
+
+        this.graph._nodes.forEach(node => {
+            const type = (node.type || "").toLowerCase();
+            if (type === "keras/input" || type === "input" || type === "keras/inputlayer" || type.endsWith("input")) {
+                const curShape = String(node.properties.shape || "512, 1");
+                const parts = curShape.split(",").map(p => p.trim());
+                if (parts.length >= 2) {
+                    node.properties.shape = `${seqLen}, ${parts.slice(1).join(", ")}`;
+                } else if (parts.length === 1 && node.properties.input_source === "signal_1d") {
+                    node.properties.shape = `${seqLen}, 1`;
+                }
+                updatedCount++;
+            }
+        });
+
+        if (this.canvas) {
+            this.canvas.setDirty(true, true);
+        }
+        if (this.selectedNode) {
+            this.updateInspector(this.selectedNode);
+        }
+        this.validateGraph();
+        this.toast(`Synced ${updatedCount} input node(s) with dataset seq_len: ${seqLen}`, "success");
+    }
+
+    addMergeInputPort(node) {
+        if (!node) return;
+        const newIdx = (node.inputs ? node.inputs.length : 0) + 1;
+        node.addInput(`in${newIdx}`, "Tensor");
+        node.size[1] = Math.max(node.size[1] || 80, 40 + (node.inputs.length) * 24);
+        this.applyNodeSlotDirections(node);
+        if (this.canvas) this.canvas.setDirty(true, true);
+        if (this.selectedNode === node) this.updateInspector(node);
+        this.toast(`Added input port 'in${newIdx}' to ${node.title}`, "info");
+    }
+
+    removeMergeInputPort(node) {
+        if (!node || !node.inputs || node.inputs.length <= 2) {
+            this.toast("Merge nodes require at least 2 input ports", "warning");
+            return;
+        }
+        const lastIdx = node.inputs.length - 1;
+        node.removeInput(lastIdx);
+        this.applyNodeSlotDirections(node);
+        if (this.canvas) this.canvas.setDirty(true, true);
+        if (this.selectedNode === node) this.updateInspector(node);
+        this.toast(`Removed input port from ${node.title}`, "info");
     }
 
     clearInspector() {
@@ -1707,10 +2382,13 @@ class NNEditor {
             }
 
         } else if (type === "unet_1d") {
-            // 1D U-Net with Skip Connections
+            // 1D U-Net with Skip Connections & Multi-Channel Support
+            const channelsStr = params.inputChannels || "raw";
+            const numChannels = channelsStr.split(",").filter(Boolean).length || 1;
             const nInput = LiteGraph.createNode("keras/input");
             nInput.pos = [80, 140];
-            nInput.properties.shape = `${seqLen}, 1`;
+            nInput.properties.channels = channelsStr;
+            nInput.properties.shape = `${seqLen}, ${numChannels}`;
             this.graph.add(nInput);
 
             const nEnc1 = LiteGraph.createNode("keras/conv1d");
@@ -1782,16 +2460,18 @@ class NNEditor {
 
             const nFinal = LiteGraph.createNode("keras/conv1d");
             nFinal.pos = [360, 620];
-            nFinal.title = "U-Net Segment/Reconstruct";
+            nFinal.title = "1D Regional Segmentation Mask";
             nFinal.properties.filters = 1;
             nFinal.properties.kernel_size = 1;
-            nFinal.properties.activation = "linear";
+            nFinal.properties.activation = "sigmoid";
             this.graph.add(nFinal);
 
             const nOutput = LiteGraph.createNode("keras/output");
             nOutput.pos = [620, 620];
             nOutput.title = "Model Output";
-            nOutput.properties.activation = "linear";
+            nOutput.properties.activation = "sigmoid";
+            nOutput.properties.target_source = "region_labels";
+            nOutput.properties.loss = "binary_crossentropy";
             this.graph.add(nOutput);
 
             // Connections

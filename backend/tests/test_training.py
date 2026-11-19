@@ -401,3 +401,263 @@ def test_hybrid_model_multi_input_training_resume_freeze_and_predict_csv(tmp_pat
     assert features_concat_mat.shape[0] == n_samples
 
 
+def test_dataset_io_schema_endpoint(tmp_path):
+    # Setup dataset
+    np.random.seed(42)
+    n_samples, seq_len = 20, 128
+    X = np.sin(np.linspace(0, 4 * np.pi, seq_len))[np.newaxis, :] + np.random.randn(n_samples, seq_len) * 0.1
+    y = np.array([0] * 10 + [1] * 10, dtype=np.int32)
+
+    proj = ensure_default_project()
+    proj_id = proj["id"]
+
+    ds_dir = tmp_path / "datasets"
+    ds_dir.mkdir(parents=True, exist_ok=True)
+    npz_path = ds_dir / "schema_test.npz"
+    np.savez_compressed(str(npz_path), data=X.astype(np.float32), labels=y, sample_ids=np.array([f"s_{i}" for i in range(n_samples)]))
+
+    dataset_id = "schema-test-dataset-01"
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO datasets (
+                id, project_id, name, file_path, file_format, row_count, col_count,
+                has_header, label_col, created_at, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)
+            """,
+            (dataset_id, proj_id, "IO Schema Test Dataset", str(npz_path), "npz", n_samples, seq_len, 0, "labels", "{}")
+        )
+        conn.commit()
+
+    client = TestClient(app)
+    resp = client.get(f"/api/data/{dataset_id}/io_schema")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert data["dataset_id"] == dataset_id
+    assert data["row_count"] == n_samples
+    assert data["seq_len"] == seq_len
+    assert data["has_labels"] is True
+    assert data["n_classes"] == 2
+    assert len(data["available_signal_channels"]) == 7
+    channel_ids = [c["id"] for c in data["available_signal_channels"]]
+    assert "raw" in channel_ids
+    assert "derivative_1" in channel_ids
+    assert "derivative_2" in channel_ids
+    assert "region_mask" in channel_ids
+    assert "envelope_rms" in channel_ids
+    assert "rolling_mean" in channel_ids
+    assert "fft_magnitude" in channel_ids
+
+    assert len(data["available_target_sources"]) == 5
+    target_ids = [t["id"] for t in data["available_target_sources"]]
+    assert "reconstruction" in target_ids
+    assert "region_labels" in target_ids
+    assert "label_class" in target_ids
+
+
+def test_multichannel_1d_cnn_derived_training_and_region_mask(tmp_path):
+    # Setup test signal with clear events/peaks
+    np.random.seed(42)
+    n_samples, seq_len = 24, 64
+    t = np.linspace(0, 2 * np.pi, seq_len)
+    X = np.zeros((n_samples, seq_len), dtype=np.float32)
+    for i in range(n_samples):
+        X[i] = np.sin(t * (i % 3 + 1))
+        # Add peak event in center
+        X[i, 28:36] += 3.0
+
+    y = np.array([i % 2 for i in range(n_samples)], dtype=np.int32)
+
+    proj = ensure_default_project()
+    proj_id = proj["id"]
+
+    ds_dir = tmp_path / "datasets"
+    ds_dir.mkdir(parents=True, exist_ok=True)
+    npz_path = ds_dir / "derived_channels_test.npz"
+    np.savez_compressed(str(npz_path), data=X, labels=y, sample_ids=np.array([f"s_{i}" for i in range(n_samples)]))
+
+    dataset_id = "derived-channels-ds-01"
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO datasets (
+                id, project_id, name, file_path, file_format, row_count, col_count,
+                has_header, label_col, created_at, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)
+            """,
+            (dataset_id, proj_id, "Derived Channels Dataset", str(npz_path), "npz", n_samples, seq_len, 0, "labels", "{}")
+        )
+        conn.commit()
+
+    # Model with 3 channels: raw, derivative_1, region_mask
+    graph = {
+        "nodes": [
+            {
+                "id": "1",
+                "type": "input",
+                "properties": {
+                    "shape": f"{seq_len}, 1",
+                    "channels": ["raw", "derivative_1", "region_mask"],
+                    "normalize_channels": True
+                }
+            },
+            {"id": "2", "type": "conv1d", "properties": {"filters": 8, "kernel_size": 3, "activation": "relu"}},
+            {"id": "3", "type": "global_maxpooling1d", "properties": {}},
+            {"id": "4", "type": "dense", "properties": {"units": 2, "activation": "softmax"}},
+            {"id": "5", "type": "output", "properties": {"activation": "softmax", "target_source": "label_class"}}
+        ],
+        "links": [
+            ["l1", "1", 0, "2", 0],
+            ["l2", "2", 0, "3", 0],
+            ["l3", "3", 0, "4", 0],
+            ["l4", "4", 0, "5", 0]
+        ]
+    }
+
+    model, summary = KerasModelBuilder.build_model(graph)
+    compiled = KerasModelBuilder.compile_model(model, optimizer="adam", learning_rate=0.01)
+
+    model_dir = tmp_path / "models"
+    model_dir.mkdir(parents=True, exist_ok=True)
+    model_path = model_dir / "derived_model.keras"
+    compiled.save(str(model_path))
+
+    model_id = "derived-channels-model-01"
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO models (
+                id, project_id, name, task_type, graph_json, summary_json,
+                weights_path, trainable_params, non_trainable_params, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            """,
+            (model_id, proj_id, "Derived 1D-CNN Model", "classification", json.dumps(graph), json.dumps(summary), str(model_path), 500, 0)
+        )
+        conn.commit()
+
+    # Test prepare_model_inputs generates (24, 64, 3)
+    prep = TrainingService.prepare_model_inputs(model, dataset_id)
+    assert prep.X.shape == (n_samples, seq_len, 3)
+
+    # Launch training
+    job = TrainingService.start_training(
+        project_id=proj_id,
+        model_id=model_id,
+        dataset_id=dataset_id,
+        config={"epochs": 3, "batch_size": 8, "learning_rate": 0.01}
+    )
+    if job.thread is not None:
+        job.thread.join(timeout=30.0)
+
+    assert job.status == "completed"
+    assert "loss" in job.history
+    assert len(job.history["loss"]) == 3
+
+
+def test_separate_datasets_per_input_and_output_training(tmp_path):
+    # Setup 3 distinct datasets:
+    # Dataset A (Raw signal): shape (20, 64)
+    # Dataset B (1st derivative): shape (20, 64)
+    # Dataset C (Regional labels target): shape (20, 64)
+    np.random.seed(42)
+    n_samples, seq_len = 20, 64
+    raw_sig = np.random.randn(n_samples, seq_len).astype(np.float32)
+    d1_sig = np.gradient(raw_sig, axis=1).astype(np.float32)
+    mask_sig = (np.abs(raw_sig) > 1.2).astype(np.float32)
+
+    proj = ensure_default_project()
+    proj_id = proj["id"]
+    ds_dir = tmp_path / "datasets"
+    ds_dir.mkdir(parents=True, exist_ok=True)
+
+    path_a = ds_dir / "ds_a.npz"
+    path_b = ds_dir / "ds_b.npz"
+    path_c = ds_dir / "ds_c.npz"
+
+    np.savez_compressed(str(path_a), data=raw_sig, sample_ids=np.array([f"s_{i}" for i in range(n_samples)]))
+    np.savez_compressed(str(path_b), data=d1_sig, sample_ids=np.array([f"s_{i}" for i in range(n_samples)]))
+    np.savez_compressed(str(path_c), data=mask_sig, sample_ids=np.array([f"s_{i}" for i in range(n_samples)]))
+
+    ds_id_a, ds_id_b, ds_id_c = "ds-raw-a", "ds-d1-b", "ds-mask-c"
+    with get_db_connection() as conn:
+        for ds_id, path_f, name_f in [
+            (ds_id_a, path_a, "Raw Dataset"),
+            (ds_id_b, path_b, "D1 Dataset"),
+            (ds_id_c, path_c, "Mask Dataset")
+        ]:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO datasets (
+                    id, project_id, name, file_path, file_format, row_count, col_count,
+                    has_header, label_col, created_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)
+                """,
+                (ds_id, proj_id, name_f, str(path_f), "npz", n_samples, seq_len, 0, None, "{}")
+            )
+        conn.commit()
+
+    # Build 2-Input model: Input A (ds_id_a) + Input B (ds_id_b) -> Concatenate(axis=-1) -> Conv1D -> Output (ds_id_c)
+    graph = {
+        "nodes": [
+            {"id": "in_a", "type": "input", "properties": {"shape": f"{seq_len}, 1", "dataset_id": ds_id_a, "custom_name": "In_Raw"}},
+            {"id": "in_b", "type": "input", "properties": {"shape": f"{seq_len}, 1", "dataset_id": ds_id_b, "custom_name": "In_D1"}},
+            {"id": "concat", "type": "concatenate", "properties": {"axis": -1, "custom_name": "Channel_Merge"}},
+            {"id": "conv", "type": "conv1d", "properties": {"filters": 8, "kernel_size": 3, "activation": "relu"}},
+            {"id": "out_conv", "type": "conv1d", "properties": {"filters": 1, "kernel_size": 1, "activation": "sigmoid"}},
+            {"id": "out", "type": "output", "properties": {"activation": "sigmoid", "target_source": "region_labels", "dataset_id": ds_id_c}}
+        ],
+        "links": [
+            ["l1", "in_a", 0, "concat", 0],
+            ["l2", "in_b", 0, "concat", 1],
+            ["l3", "concat", 0, "conv", 0],
+            ["l4", "conv", 0, "out_conv", 0],
+            ["l5", "out_conv", 0, "out", 0]
+        ]
+    }
+
+    model, summary = KerasModelBuilder.build_model(graph)
+    compiled = KerasModelBuilder.compile_model(model, optimizer="adam", learning_rate=0.01)
+
+    model_dir = tmp_path / "models"
+    model_dir.mkdir(parents=True, exist_ok=True)
+    model_path = model_dir / "separate_datasets_model.keras"
+    compiled.save(str(model_path))
+
+    model_id = "sep-datasets-model-01"
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO models (
+                id, project_id, name, task_type, graph_json, summary_json,
+                weights_path, trainable_params, non_trainable_params, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            """,
+            (model_id, proj_id, "Separate Datasets 1D-CNN Model", "regression", json.dumps(graph), json.dumps(summary), str(model_path), 500, 0)
+        )
+        conn.commit()
+
+    # Test prepare_model_inputs loads from each respective dataset
+    prep = TrainingService.prepare_model_inputs(model, ds_id_a)
+    assert isinstance(prep.X, list)
+    assert len(prep.X) == 2
+    assert prep.X[0].shape == (n_samples, seq_len, 1)
+    assert prep.X[1].shape == (n_samples, seq_len, 1)
+    # Output target loaded from dataset C (mask)
+    assert prep.y.shape == (n_samples, seq_len, 1)
+
+    # Launch training
+    job = TrainingService.start_training(
+        project_id=proj_id,
+        model_id=model_id,
+        dataset_id=ds_id_a,
+        config={"epochs": 3, "batch_size": 8, "learning_rate": 0.01}
+    )
+    if job.thread is not None:
+        job.thread.join(timeout=30.0)
+
+    assert job.status == "completed"
+    assert "loss" in job.history
+    assert len(job.history["loss"]) == 3
+
+

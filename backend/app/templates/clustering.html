@@ -9,7 +9,15 @@
         <h1 class="page-title">Clustering &amp; 2D / 3D PCA Analysis</h1>
         <p class="page-desc">Advanced clustering (K-Means, DBSCAN, HDBSCAN, OPTICS, IDEC), soft cluster probabilities (q_ij), uncertainty analysis, and 3D PCA visualization</p>
     </div>
-    <div class="page-actions">
+    <div class="page-actions row gap-2 align-items-center flex-wrap">
+        <div id="clustering-extra-cols-bar" class="row gap-2 align-items-center mr-2" style="display: none;">
+            <span class="text-xs text-secondary">Main Table Columns:</span>
+            <div id="clustering-extra-cols-list" class="row gap-2 align-items-center"></div>
+        </div>
+        <label class="check text-xs text-secondary mr-2" title="Include ground truth (labels) column in exported cluster CSV">
+            <input type="checkbox" id="export-csv-include-gt">
+            <span>Include GT in CSV</span>
+        </label>
         <button type="button" class="btn btn-secondary" id="export-cluster-csv-btn" disabled onclick="downloadCurrentCSV()">
             {{ icon('download') }} <span>Export cluster CSV</span>
         </button>
@@ -146,6 +154,16 @@
             </select>
         </div>
 
+        <!-- Ground Truth & Export Control -->
+        <div class="form-group mb-3 border-t pt-3">
+            <label class="form-label">Ground Truth &amp; Export Control</label>
+            <label class="check text-sm text-secondary">
+                <input type="checkbox" id="cluster-include-gt" checked>
+                <span>Include Ground Truth (Labels)</span>
+            </label>
+            <div class="form-hint text-xs text-muted">Uncheck to completely ignore ground truth labels during clustering &amp; PCA</div>
+        </div>
+
         <hr class="mb-4">
 
         <div class="tile text-micro text-secondary">
@@ -224,7 +242,15 @@
             <span class="text-subhead">Cluster Probability &amp; Uncertainty Inspector</span>
             <span id="inspector-sample-count-badge" class="badge badge-accent mono">0 signals</span>
         </div>
-        <div class="row gap-2">
+        <div class="row gap-3 align-items-center flex-wrap">
+            <div id="inspector-extra-cols-bar" class="row gap-2 align-items-center" style="display: none;">
+                <span class="text-xs text-secondary">Main Table Columns:</span>
+                <div id="inspector-extra-cols-list" class="row gap-2 align-items-center"></div>
+            </div>
+            <label class="check text-xs text-secondary" title="Show ground truth column in probability inspector table">
+                <input type="checkbox" id="preview-show-gt-toggle" onchange="togglePreviewGroundTruth(this.checked)">
+                <span>Show Ground Truth in Preview</span>
+            </label>
             <button type="button" class="btn btn-secondary btn-sm" onclick="downloadCurrentCSV()">
                 {{ icon('download') }} <span>Export CSV</span>
             </button>
@@ -271,6 +297,7 @@
                     <th class="num">Uncertainty (Entropy)</th>
                     <th>Cluster Probability Distribution (q_ij)</th>
                     <th class="num">PCA (X, Y)</th>
+                    <th id="inspector-th-gt" class="is-hidden">Ground Truth</th>
                 </tr>
             </thead>
             <tbody id="inspector-table-body">
@@ -416,6 +443,18 @@
                 card.scrollIntoView({ behavior: "smooth" });
             }
         };
+        pcaVis.onGroundTruthToggle = (show) => {
+            const toggle = document.getElementById("preview-show-gt-toggle");
+            if (toggle) toggle.checked = show;
+            renderInspectorTable();
+        };
+
+        const exportGtCheck = document.getElementById("export-csv-include-gt");
+        if (exportGtCheck) {
+            exportGtCheck.addEventListener("change", () => {
+                exportGtCheck.setAttribute("data-user-set", "true");
+            });
+        }
 
         const algoSel = document.getElementById("cluster-algo");
         algoSel.onchange = (e) => {
@@ -424,7 +463,15 @@
         toggleAlgoParams(algoSel.value);
 
         const srcTypeSel = document.getElementById("cluster-source-type");
-        srcTypeSel.onchange = () => loadSourceOptions();
+        srcTypeSel.onchange = async () => {
+            await loadSourceOptions();
+            await updateExtraColumnsForSelectedSource();
+        };
+
+        const srcSel = document.getElementById("cluster-source-select");
+        if (srcSel) {
+            srcSel.onchange = () => updateExtraColumnsForSelectedSource();
+        }
 
         const params = new URLSearchParams(window.location.search);
         const queryFeatureId = params.get("feature_id");
@@ -433,11 +480,12 @@
         }
 
         await loadSourceOptions();
+        await updateExtraColumnsForSelectedSource();
 
         if (queryFeatureId) {
-            const srcSel = document.getElementById("cluster-source-select");
             if (srcSel && Array.from(srcSel.options).some(opt => opt.value === queryFeatureId)) {
                 srcSel.value = queryFeatureId;
+                await updateExtraColumnsForSelectedSource();
             }
         }
 
@@ -466,12 +514,95 @@
                 if (fList.length === 0) {
                     sel.innerHTML = `<option value="">No extracted features found</option>`;
                 } else {
-                    sel.innerHTML = fList.map(f => `<option value="${f.id}">Layer: ${f.layer_id} (${f.sample_count} samples)</option>`).join("");
+                    sel.innerHTML = fList.map(f => `<option value="${f.id}" data-dataset-id="${f.dataset_id || ''}">Layer: ${f.layer_id} (${f.sample_count} samples)</option>`).join("");
                 }
             }
         } catch (e) {
             console.error(e);
         }
+    }
+
+    let currentExtraColumns = [];
+
+    function renderExtraColumns(cols) {
+        currentExtraColumns = Array.isArray(cols) ? cols : [];
+        const topBar = document.getElementById("clustering-extra-cols-bar");
+        const topList = document.getElementById("clustering-extra-cols-list");
+        const inspBar = document.getElementById("inspector-extra-cols-bar");
+        const inspList = document.getElementById("inspector-extra-cols-list");
+
+        if (currentExtraColumns.length === 0) {
+            if (topBar) topBar.style.display = "none";
+            if (topList) topList.innerHTML = "";
+            if (inspBar) inspBar.style.display = "none";
+            if (inspList) inspList.innerHTML = "";
+            return;
+        }
+
+        const buildCheckboxes = () => currentExtraColumns.map(col => `
+            <label class="check text-xs text-secondary mr-1" title="Include extra column '${col}' from main table in CSV export">
+                <input type="checkbox" class="clustering-extra-col-cb" data-col="${col}" value="${col}" checked onchange="syncExtraColCheckboxes(this)">
+                <span>${col}</span>
+            </label>
+        `).join("");
+
+        if (topBar && topList) {
+            topBar.style.display = "flex";
+            topList.innerHTML = buildCheckboxes();
+        }
+        if (inspBar && inspList) {
+            inspBar.style.display = "flex";
+            inspList.innerHTML = buildCheckboxes();
+        }
+    }
+
+    function syncExtraColCheckboxes(sourceCb) {
+        const col = sourceCb.getAttribute("data-col") || sourceCb.value;
+        const allMatching = document.querySelectorAll(`.clustering-extra-col-cb[data-col="${col}"]`);
+        allMatching.forEach(cb => {
+            if (cb !== sourceCb) {
+                cb.checked = sourceCb.checked;
+            }
+        });
+    }
+
+    async function updateExtraColumnsForSelectedSource() {
+        const srcType = document.getElementById("cluster-source-type") ? document.getElementById("cluster-source-type").value : "dataset";
+        const srcSel = document.getElementById("cluster-source-select");
+        if (!srcSel || !srcSel.value) {
+            renderExtraColumns([]);
+            return;
+        }
+
+        let datasetId = srcSel.value;
+        if (srcType === "features") {
+            const opt = srcSel.selectedOptions ? srcSel.selectedOptions[0] : null;
+            datasetId = opt ? opt.getAttribute("data-dataset-id") : null;
+        }
+
+        if (!datasetId) {
+            renderExtraColumns([]);
+            return;
+        }
+
+        try {
+            const res = await fetch(`/api/data/${datasetId}/extra_columns`);
+            if (res.ok) {
+                const data = await SignalML.safeJson(res);
+                renderExtraColumns(data.extra_columns || []);
+            } else {
+                renderExtraColumns([]);
+            }
+        } catch (e) {
+            renderExtraColumns([]);
+        }
+    }
+
+    function getSelectedExtraCols() {
+        const checkboxes = document.querySelectorAll(".clustering-extra-col-cb:checked");
+        const unique = new Set();
+        checkboxes.forEach(cb => unique.add(cb.value));
+        return Array.from(unique);
     }
 
     function enableExportButton(enabled) {
@@ -493,12 +624,18 @@
             SignalML.toast("Please run clustering or load a saved run first", "warning");
             return;
         }
-        window.location.href = `/api/clustering/${currentClusteringId}/export_csv`;
+        downloadClusteringCSV(currentClusteringId);
     }
 
     function downloadClusteringCSV(clusteringId) {
         if (!clusteringId) return;
-        window.location.href = `/api/clustering/${clusteringId}/export_csv`;
+        const includeGt = document.getElementById("export-csv-include-gt") ? document.getElementById("export-csv-include-gt").checked : false;
+        const selectedCols = getSelectedExtraCols();
+        let url = `/api/clustering/${clusteringId}/export_csv?include_ground_truth=${includeGt}`;
+        if (selectedCols.length > 0) {
+            url += `&extra_cols=${encodeURIComponent(selectedCols.join(','))}`;
+        }
+        window.location.href = url;
     }
 
     async function executeClustering() {
@@ -510,12 +647,14 @@
         }
 
         const algo = document.getElementById("cluster-algo").value;
+        const includeGt = document.getElementById("cluster-include-gt") ? document.getElementById("cluster-include-gt").checked : true;
         const payload = {
             source_type: srcType,
             source_id: srcId,
             algorithm: algo,
             standardize: document.getElementById("cluster-standardize").value === "true",
-            compute_pca: true
+            compute_pca: true,
+            include_ground_truth: includeGt
         };
 
         if (algo === "kmeans") {
@@ -562,6 +701,12 @@
             currentClusteringId = data.clustering_id;
             enableExportButton(true);
 
+            if (Array.isArray(data.available_extra_columns)) {
+                renderExtraColumns(data.available_extra_columns);
+            } else {
+                await updateExtraColumnsForSelectedSource();
+            }
+
             // Update stats
             const sil = data.metrics ? data.metrics.silhouette_score : null;
             document.getElementById("metric-silhouette").textContent = (sil !== null && sil !== undefined) ? sil.toFixed(4) : "N/A";
@@ -577,6 +722,11 @@
             }
 
             pcaVis.loadData(data);
+            const hasDiscreteGT = Boolean(pcaVis.uniqueGroundTruths && pcaVis.uniqueGroundTruths.length > 0);
+            const exportGtCheck = document.getElementById("export-csv-include-gt");
+            if (exportGtCheck && !exportGtCheck.hasAttribute("data-user-set")) {
+                exportGtCheck.checked = hasDiscreteGT;
+            }
 
             // Render Cluster Selection Pills & Auto-load first cluster
             renderClusterPills(dist);
@@ -862,11 +1012,30 @@
         renderInspectorTable();
     }
 
+    function togglePreviewGroundTruth(checked) {
+        if (pcaVis) {
+            pcaVis.toggleGroundTruth(checked);
+        }
+        renderInspectorTable();
+    }
+
     function renderInspectorTable() {
         const tbody = document.getElementById("inspector-table-body");
         const total = inspectorFilteredPoints.length;
         const totalPages = Math.ceil(total / inspectorPageSize) || 1;
         if (inspectorCurrentPage > totalPages) inspectorCurrentPage = totalPages;
+
+        const showGt = Boolean(pcaVis && pcaVis.showGroundTruth);
+        const thGt = document.getElementById("inspector-th-gt");
+        if (thGt) {
+            if (showGt) {
+                thGt.classList.remove("is-hidden");
+                thGt.style.display = "";
+            } else {
+                thGt.classList.add("is-hidden");
+                thGt.style.display = "none";
+            }
+        }
 
         document.getElementById("inspector-pagination-info").textContent = `Page ${inspectorCurrentPage} / ${totalPages}`;
         document.getElementById("inspector-total-label").textContent = `total ${total} signals`;
@@ -874,7 +1043,7 @@
         document.getElementById("inspector-next-btn").disabled = inspectorCurrentPage >= totalPages;
 
         if (total === 0) {
-            tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted p-4">No matching signals found.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="${showGt ? 7 : 6}" class="text-center text-muted p-4">No matching signals found.</td></tr>`;
             return;
         }
 
@@ -920,6 +1089,9 @@
             const xStr = (p.x !== undefined) ? Number(p.x).toFixed(2) : "0.00";
             const yStr = (p.y !== undefined) ? Number(p.y).toFixed(2) : "0.00";
 
+            const gtFormatted = pcaVis ? pcaVis.formatGroundTruth(p.ground_truth) : String(p.ground_truth || "");
+            const gtCellHtml = showGt ? `<td class="mono text-xs">${gtFormatted || "—"}</td>` : "";
+
             return `
                 <tr>
                     <td>
@@ -941,6 +1113,7 @@
                     <td class="num mono text-muted">
                         (${xStr}, ${yStr})
                     </td>
+                    ${gtCellHtml}
                 </tr>
             `;
         }).join("");
@@ -1089,6 +1262,14 @@
                 stdSel.value = Boolean(p.standardize) ? "true" : "false";
             }
         }
+
+        // 5. Ground Truth & Export Settings
+        if (p.include_ground_truth !== undefined && p.include_ground_truth !== null) {
+            const gtCheck = document.getElementById("cluster-include-gt");
+            if (gtCheck) {
+                gtCheck.checked = Boolean(p.include_ground_truth);
+            }
+        }
     }
 
     async function loadClusteringRun(clusteringId, silent = false) {
@@ -1103,6 +1284,12 @@
 
             currentClusteringId = data.clustering_id;
             enableExportButton(true);
+
+            if (Array.isArray(data.available_extra_columns)) {
+                renderExtraColumns(data.available_extra_columns);
+            } else {
+                await updateExtraColumnsForSelectedSource();
+            }
 
             // Populate Clustering settings panel from saved run configuration
             const hasQueryFeature = silent && new URLSearchParams(window.location.search).has("feature_id");
@@ -1125,6 +1312,11 @@
             }
 
             pcaVis.loadData(data);
+            const hasDiscreteGT = Boolean(pcaVis.uniqueGroundTruths && pcaVis.uniqueGroundTruths.length > 0);
+            const exportGtCheck = document.getElementById("export-csv-include-gt");
+            if (exportGtCheck && !exportGtCheck.hasAttribute("data-user-set")) {
+                exportGtCheck.checked = hasDiscreteGT;
+            }
 
             // Render Waveform pills & select first cluster
             renderClusterPills(dist);

@@ -102,6 +102,9 @@
                 <select id="load-saved-model-select" class="toolbar-select" onchange="handleLoadSavedModel(this.value)">
                     <option value="">Load saved model...</option>
                 </select>
+                <select id="nn-dataset-context-select" class="toolbar-select" onchange="handleDatasetContextChange(this.value)" title="Select a dataset to inspect its columns, sequence length, and labels in Input/Output nodes">
+                    <option value="">Dataset context: Manual / Generic...</option>
+                </select>
                 <button class="btn btn-secondary toolbar-btn btn-update" id="update-saved-model-btn" onclick="handleUpdateSavedModel()" title="Save changes to the currently loaded model" hidden>
                     {{ icon('save') }} <span>Update</span>
                 </button>
@@ -317,7 +320,16 @@
 
             <!-- Step 2: Configuration Parameters -->
             <div class="section-title">2. Configure parameters</div>
-            <div class="grid-4 tile mb-4">
+            <div class="grid-auto tile mb-4">
+                <div class="form-group m-0" id="wiz-channels-group">
+                    <label class="form-label">Input channels</label>
+                    <select id="wiz-input-channels" class="form-control">
+                        <option value="raw" selected>Raw Signal (1ch)</option>
+                        <option value="raw,derivative_1,derivative_2">Raw + 1st &amp; 2nd Derivatives (3ch)</option>
+                        <option value="raw,region_mask">Raw + Regional Mask (2ch)</option>
+                        <option value="raw,derivative_1,derivative_2,region_mask,envelope_rms">Full Multi-Channel (5ch)</option>
+                    </select>
+                </div>
                 <div class="form-group m-0">
                     <label class="form-label">Sequence length</label>
                     <input type="number" id="wiz-seq-len" class="form-control mono" value="512" min="16" step="16">
@@ -824,6 +836,32 @@
         }
     }
 
+        async function populateDatasetContextDropdown() {
+        const sel = document.getElementById("nn-dataset-context-select");
+        if (!sel) return;
+        try {
+            const projectId = getActiveProjectId();
+            const res = await fetch(`/api/data/list/${projectId}`);
+            if (res.ok) {
+                const datasets = await SignalML.safeJson(res);
+                if (Array.isArray(datasets)) {
+                    if (nnEditorInstance) {
+                        nnEditorInstance.projectDatasets = datasets;
+                    }
+                    sel.innerHTML = `<option value="">Dataset context: Manual / Generic (${datasets.length})...</option>` +
+                        datasets.map(d => `<option value="${d.id}">${escapeHtml(d.name)} (${d.col_count || 0} cols)</option>`).join("");
+                }
+            }
+        } catch (e) {
+            console.error("Failed to populate dataset context dropdown", e);
+        }
+    }
+
+    async function handleDatasetContextChange(datasetId) {
+        if (!nnEditorInstance) return;
+        await nnEditorInstance.setDatasetContext(datasetId);
+    }
+
     async function populateSavedModelsDropdown() {
         const sel = document.getElementById("load-saved-model-select");
         if (!sel) return;
@@ -987,6 +1025,7 @@
 
     document.addEventListener("DOMContentLoaded", () => {
         populateSavedModelsDropdown();
+        populateDatasetContextDropdown();
         try {
             if (new URLSearchParams(window.location.search).get("expanded") === "1") {
                 toggleExpandCanvas();
@@ -1089,12 +1128,14 @@
         const latent = Number(document.getElementById("wiz-latent-dim").value) || 16;
         const act = document.getElementById("wiz-activation").value || "relu";
 
+        const channels = document.getElementById("wiz-input-channels")?.value || "raw";
         nnEditorInstance.generateArchitecture(selectedWizardTemplate, {
             seqLen: seq,
             baseFilters: base,
             latentDim: latent,
             numClasses: latent,
-            activation: act
+            activation: act,
+            inputChannels: channels
         });
 
         closeWizardModal();

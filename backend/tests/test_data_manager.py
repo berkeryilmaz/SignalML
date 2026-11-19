@@ -371,3 +371,255 @@ def test_regression_output_and_crud(tmp_path):
     assert preview_res.status_code == 404
 
 
+def test_multi_prefix_sequence_grouping_and_3d_tensor(tmp_path):
+    """
+    Verifies multi-prefix sequence grouping for multi-channel 1D-CNN (s0..s15, a_0..a_15, dvdt_0..dvdt_15).
+    - DataManager.detect_sequence_groups detects the 3 families even if interleaved.
+    - DataManager.register_dataset produces a 3D tensor X_seq of shape (N, 16, 3).
+    - DataManager.get_dataset_io_schema reports sequence_groups and channel groups.
+    """
+    n_samples = 8
+    seq_len = 16
+
+    # Create columns: interleaved s0, a_0, dvdt_0, s1, a_1, dvdt_1...
+    columns = []
+    data_dict = {}
+    for i in range(seq_len):
+        s_col = f"s{i}"
+        a_col = f"a_{i}"
+        d_col = f"dvdt_{i}"
+        columns.extend([s_col, a_col, d_col])
+        data_dict[s_col] = np.sin(np.linspace(0, 1, n_samples) + i * 0.1).astype(np.float32)
+        data_dict[a_col] = np.cos(np.linspace(0, 1, n_samples) + i * 0.1).astype(np.float32)
+        data_dict[d_col] = np.full(n_samples, float(i * 0.5), dtype=np.float32)
+
+    df = pd.DataFrame(data_dict, columns=columns)
+    csv_file = tmp_path / "multichannel_signals.csv"
+    df.to_csv(csv_file, index=False)
+
+    # 1. Verify detect_sequence_groups
+    detected_groups = DataManager.detect_sequence_groups(columns)
+    assert len(detected_groups) == 3
+
+    names = [g["name"] for g in detected_groups]
+    ch_names = [g["channel_name"] for g in detected_groups]
+    prefixes = [g["prefix"] for g in detected_groups]
+    patterns = [g["pattern"] for g in detected_groups]
+
+    assert names == ["channel_s", "channel_a", "channel_dvdt"]
+    assert ch_names == ["s", "a", "dvdt"]
+    assert prefixes == ["s", "a_", "dvdt_"]
+    assert patterns == ["s0-s15", "a_0-a_15", "dvdt_0-dvdt_15"]
+    for g in detected_groups:
+        assert g["count"] == 16
+        assert len(g["columns"]) == 16
+
+    # 2. Register dataset with schema_config containing the detected sequence groups
+    schema_config = {
+        "sequence_groups": detected_groups,
+        "sequence_stack_mode": "multichannel",
+        "sequence_normalization": "none"
+    }
+
+    proj_id = "test-proj-multichannel"
+    res = DataManager.register_dataset(
+        project_id=proj_id,
+        name="Multi-Channel 3D Dataset",
+        source_path=csv_file,
+        has_header=True,
+        schema_config=schema_config
+    )
+    assert res["id"] is not None
+    dataset_id = res["id"]
+
+    # Verify saved .npz
+    npz_data, labels, record = DataManager.load_dataset_arrays(dataset_id)
+    assert npz_data.shape == (n_samples, seq_len)  # 2D data = X_seq[:, :, 0]
+
+    dest_file = Path(record["file_path"])
+    with np.load(str(dest_file), allow_pickle=False) as npz:
+        assert "X_seq" in npz
+        X_seq = npz["X_seq"]
+        assert X_seq.ndim == 3
+        assert X_seq.shape == (n_samples, seq_len, 3)
+
+    pipeline_state = record["metadata"]["pipeline_state"]
+    assert pipeline_state["seq_len"] == seq_len
+    assert pipeline_state["seq_channels"] == 3
+    assert pipeline_state["sequence_group_names"] == ["s", "a", "dvdt"]
+
+    # 3. Verify get_dataset_io_schema
+    io_schema = DataManager.get_dataset_io_schema(dataset_id)
+    assert io_schema["seq_len"] == seq_len
+    assert io_schema["raw_channels"] == 3
+    assert len(io_schema["sequence_groups"]) == 3
+    assert [sg["channel_name"] for sg in io_schema["sequence_groups"]] == ["s", "a", "dvdt"]
+
+    avail_channel_ids = [ch["id"] for ch in io_schema["available_signal_channels"]]
+    assert "group:s" in avail_channel_ids
+    assert "group:a" in avail_channel_ids
+    assert "group:dvdt" in avail_channel_ids
+
+
+def test_dataset_row_counts_and_num_rows_consistency(tmp_path):
+    """
+    Verifies that row counts (num_rows, row_count, total_rows) are strictly
+    consistent across registration, retrieval, updating, preview, and listing.
+    """
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    client = TestClient(app)
+    csv_file = tmp_path / "row_counts_test.csv"
+    n_rows = 12
+    n_cols = 5
+    arr = np.arange(n_rows * n_cols, dtype=np.float32).reshape(n_rows, n_cols)
+    pd.DataFrame(arr, columns=[f"s_{i}" for i in range(n_cols)]).to_csv(csv_file, index=False)
+
+    proj_id = "test-proj-rowcounts"
+
+    # 1. Register dataset
+    res = DataManager.register_dataset(
+        project_id=proj_id,
+        name="Row Counts Dataset",
+        source_path=csv_file,
+        has_header=True
+    )
+    dataset_id = res["id"]
+    assert res["row_count"] == n_rows
+    assert res["num_rows"] == n_rows
+    assert res["total_rows"] == n_rows
+    assert res["col_count"] == n_cols
+    assert res["num_cols"] == n_cols
+
+    # 2. Get dataset record
+    rec = DataManager.get_dataset(dataset_id)
+    assert rec["row_count"] == n_rows
+    assert rec["num_rows"] == n_rows
+    assert rec["total_rows"] == n_rows
+    assert rec["col_count"] == n_cols
+    assert rec["num_cols"] == n_cols
+
+    # 3. Get preview
+    preview = DataManager.get_preview(dataset_id, max_rows=5)
+    assert preview["row_count"] == n_rows
+    assert preview["num_rows"] == n_rows
+    assert preview["total_rows"] == n_rows
+    assert preview["col_count"] == n_cols
+    assert preview["num_cols"] == n_cols
+    assert len(preview["preview_rows"]) == 5
+
+    # 4. Preview raw file
+    raw_prev = DataManager.preview_raw_file(csv_file, has_header=True)
+    assert raw_prev["row_count"] == n_rows
+    assert raw_prev["num_rows"] == n_rows
+    assert raw_prev["total_rows"] == n_rows
+    assert raw_prev["col_count"] == n_cols
+    assert raw_prev["num_cols"] == n_cols
+
+    # 5. Update dataset row count
+    updated = DataManager.update_dataset(dataset_id, row_count=20, col_count=n_cols)
+    assert updated["row_count"] == 20
+    assert updated["num_rows"] == 20
+    assert updated["total_rows"] == 20
+
+    # 6. List project datasets via API
+    list_res = client.get(f"/api/data/list/{proj_id}")
+    assert list_res.status_code == 200
+    datasets = list_res.json()
+    assert len(datasets) >= 1
+    ds_entry = next(d for d in datasets if d["id"] == dataset_id)
+    assert ds_entry["row_count"] == 20
+    assert ds_entry["num_rows"] == 20
+    assert ds_entry["total_rows"] == 20
+    assert ds_entry["col_count"] == n_cols
+    assert ds_entry["num_cols"] == n_cols
+
+
+def test_missing_value_strategy_and_split_config(tmp_path):
+    """
+    Verifies that missing value strategy (e.g. drop) updates row counts properly,
+    and train-test-val split configuration is stored in dataset metadata.
+    """
+    csv_file = tmp_path / "missing_and_split.csv"
+    data = [
+        [1.0, 2.0, 3.0],
+        [4.0, float("nan"), 6.0],  # NaN row
+        [7.0, 8.0, 9.0],
+        [float("nan"), 11.0, 12.0],  # NaN row
+        [13.0, 14.0, 15.0],
+        [16.0, 17.0, 18.0],
+    ]
+    pd.DataFrame(data, columns=["ch1", "ch2", "ch3"]).to_csv(csv_file, index=False)
+
+    proj_id = "test-proj-missing"
+    res = DataManager.register_dataset(
+        project_id=proj_id,
+        name="Missing Dropped Dataset",
+        source_path=csv_file,
+        has_header=True,
+        missing_strategy="drop",
+        split_config="70_15_15"
+    )
+
+    # 2 rows with NaN were dropped: 6 -> 4 rows
+    assert res["row_count"] == 4
+    assert res["num_rows"] == 4
+    assert res["total_rows"] == 4
+    assert res["metadata"]["missing_strategy"] == "drop"
+    assert res["metadata"]["split_config"] == {"train": 0.70, "val": 0.15, "test": 0.15}
+
+    rec = DataManager.get_dataset(res["id"])
+    assert rec["row_count"] == 4
+    assert rec["num_rows"] == 4
+
+
+def test_raw_signal_preservation_without_scaling(tmp_path):
+    """
+    Verifies that Data Manager keeps raw signal amplitudes intact when registered
+    with default normalization='none' and scaler='none' (no accidental scaling).
+    """
+    csv_file = tmp_path / "raw_signals.csv"
+    raw_amplitudes = np.array([
+        [100.5, 250.0, 500.25],
+        [-50.2, 0.0, 120.8]
+    ], dtype=np.float32)
+    pd.DataFrame(raw_amplitudes, columns=["s0", "s1", "s2"]).to_csv(csv_file, index=False)
+
+    schema_config = {
+        "sequence_groups": [
+            {
+                "name": "channel_s",
+                "pattern": "s0-s2",
+                "normalization": "none"
+            }
+        ],
+        "columns": {
+            "s0": {"role": "input", "type": "sequence", "scaler": "none"},
+            "s1": {"role": "input", "type": "sequence", "scaler": "none"},
+            "s2": {"role": "input", "type": "sequence", "scaler": "none"},
+        },
+        "sequence_normalization": "none",
+        "default_numeric_scaler": "none",
+        "default_categorical_encoder": "none"
+    }
+
+    proj_id = "test-proj-raw-amp"
+    res = DataManager.register_dataset(
+        project_id=proj_id,
+        name="Raw Amplitudes",
+        source_path=csv_file,
+        has_header=True,
+        schema_config=schema_config
+    )
+
+    data, labels, record = DataManager.load_dataset_arrays(res["id"])
+    # Exact raw amplitudes should be preserved
+    assert np.allclose(data, raw_amplitudes, atol=1e-5)
+    assert np.isclose(data[0, 0], 100.5)
+    assert np.isclose(data[0, 2], 500.25)
+    assert np.isclose(data[1, 0], -50.2)
+
+
+
+

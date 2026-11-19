@@ -18,10 +18,12 @@
         <div class="form-group">
             <label class="form-label" for="feat-model-select">Trained Keras Model</label>
             <select id="feat-model-select" class="form-control"></select>
+            <div id="feat-model-info" class="text-micro text-secondary mt-1"></div>
         </div>
         <div class="form-group">
             <label class="form-label" for="feat-dataset-select">Target Dataset</label>
             <select id="feat-dataset-select" class="form-control"></select>
+            <div id="feat-dataset-info" class="text-micro text-secondary mt-1"></div>
         </div>
         <div class="form-group">
             <label class="form-label" for="feat-layer-select">Select Intermediate Layer</label>
@@ -29,7 +31,11 @@
         </div>
         <div class="form-group">
             <label class="form-label" for="feat-batch-size">Batch Size</label>
-            <input type="number" id="feat-batch-size" class="form-control mono" value="32">
+            <input type="number" id="feat-batch-size" class="form-control mono" value="32" min="1">
+        </div>
+        <div class="form-group">
+            <label class="form-label" for="feat-sample-limit">Max Samples (optional)</label>
+            <input type="number" id="feat-sample-limit" class="form-control mono" placeholder="All samples" min="1">
         </div>
         <button type="button" class="btn btn-primary btn-block justify-center" id="extract-features-btn">
             {{ icon('zap') }} <span>Run batch feature extraction</span>
@@ -41,7 +47,11 @@
         <div class="card is-hidden" id="feat-result-card">
             <div class="card-title">
                 <span>Extracted Feature Matrix Summary</span>
-                <span id="feat-shape-badge" class="badge badge-accent mono"></span>
+                <div class="cluster gap-2">
+                    <span id="feat-ds-badge" class="badge badge-subtle mono"></span>
+                    <span id="feat-layer-badge" class="badge badge-subtle mono"></span>
+                    <span id="feat-shape-badge" class="badge badge-accent mono"></span>
+                </div>
             </div>
             <div class="stat-grid mb-4">
                 <div class="stat">
@@ -53,10 +63,17 @@
                     <div class="stat-value num" id="feat-stat-dims">0</div>
                 </div>
             </div>
+            <div id="feat-result-extra-cols-container" class="mb-3 is-hidden">
+                <span class="text-xs font-semibold mr-2">Include Main Table Columns in CSV Export:</span>
+                <span id="feat-result-extra-cols-list" class="cluster gap-2 inline-flex"></span>
+            </div>
             <div class="cluster">
                 <a id="feat-to-clustering-btn" href="/clustering" class="btn btn-primary">
                     {{ icon('orbit') }} <span>Analyze with Clustering &amp; PCA</span> {{ icon('arrow-right', 'icon-xs') }}
                 </a>
+                <button type="button" id="feat-save-dataset-btn" class="btn btn-secondary">
+                    {{ icon('database') }} <span>Save as Dataset</span>
+                </button>
                 <a id="feat-export-csv-btn" href="#" class="btn btn-secondary">
                     {{ icon('download') }} <span>Download CSV (with input IDs)</span>
                 </a>
@@ -89,6 +106,7 @@
                     <thead>
                         <tr>
                             <th>Feature ID / Layer</th>
+                            <th>Source Dataset</th>
                             <th class="num">Samples</th>
                             <th class="num">Dimensions</th>
                             <th class="mono">Shape</th>
@@ -97,7 +115,7 @@
                         </tr>
                     </thead>
                     <tbody id="saved-features-tbody">
-                        <tr><td colspan="6" class="text-center text-muted">Loading saved features...</td></tr>
+                        <tr><td colspan="7" class="text-center text-muted">Loading saved features...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -108,6 +126,88 @@
 
 {% block scripts %}
 <script>
+    let loadedDatasets = [];
+    let loadedModels = [];
+    let latestExtractedFeatureId = null;
+
+    function escapeHtml(str) {
+        if (str === null || str === undefined) return "";
+        return String(str)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+
+    function resetResultCard() {
+        const resultCard = document.getElementById("feat-result-card");
+        if (resultCard) {
+            resultCard.classList.add("is-hidden");
+            resultCard.style.display = "none";
+        }
+        const extraContainer = document.getElementById("feat-result-extra-cols-container");
+        if (extraContainer) {
+            extraContainer.classList.add("is-hidden");
+            const list = document.getElementById("feat-result-extra-cols-list");
+            if (list) list.innerHTML = "";
+        }
+        latestExtractedFeatureId = null;
+    }
+
+    function downloadFeatureCsv(featureId) {
+        const checked = Array.from(document.querySelectorAll(`.feat-tbl-col-${featureId}:checked`)).map(cb => cb.value);
+        let url = `/api/features/${featureId}/export_csv`;
+        if (checked.length > 0) {
+            url += `?extra_cols=${encodeURIComponent(checked.join(','))}`;
+        }
+        window.location.href = url;
+    }
+
+    function downloadLatestFeatureCsv() {
+        if (!latestExtractedFeatureId) return;
+        const checked = Array.from(document.querySelectorAll(".feat-res-extra-col:checked")).map(cb => cb.value);
+        let url = `/api/features/${latestExtractedFeatureId}/export_csv`;
+        if (checked.length > 0) {
+            url += `?extra_cols=${encodeURIComponent(checked.join(','))}`;
+        }
+        window.location.href = url;
+    }
+
+    function updateDatasetInfoBadge() {
+        const dSel = document.getElementById("feat-dataset-select");
+        const infoEl = document.getElementById("feat-dataset-info");
+        if (!dSel || !infoEl) return;
+
+        const dsId = dSel.value;
+        const ds = loadedDatasets.find(d => d.id === dsId);
+        if (ds) {
+            const rows = Number(ds.row_count ?? ds.num_rows ?? 0);
+            const cols = Number(ds.col_count ?? ds.num_cols ?? 0);
+            infoEl.innerHTML = `Selected dataset: <strong>${escapeHtml(ds.name)}</strong> &bull; <span class="mono">${rows.toLocaleString()} rows &times; ${cols} cols</span>`;
+        } else {
+            infoEl.innerHTML = "";
+        }
+    }
+
+    function updateModelInfoBadge() {
+        const mSel = document.getElementById("feat-model-select");
+        const infoEl = document.getElementById("feat-model-info");
+        if (!mSel || !infoEl) return;
+
+        const mId = mSel.value;
+        const m = loadedModels.find(item => item.id === mId);
+        if (m) {
+            const params = Number(m.trainable_params || 0).toLocaleString();
+            const trainedDsInfo = m.last_dataset_name
+                ? ` &bull; Trained on: <strong>${escapeHtml(m.last_dataset_name)}</strong> (<span class="mono">${Number(m.last_dataset_row_count || 0).toLocaleString()} rows</span>)`
+                : "";
+            infoEl.innerHTML = `Selected model: <strong>${escapeHtml(m.name)}</strong> &bull; <span class="mono">${params} params</span>${trainedDsInfo}`;
+        } else {
+            infoEl.innerHTML = "";
+        }
+    }
+
     async function loadSavedFeatureExtractions() {
         const tbody = document.getElementById("saved-features-tbody");
         if (!tbody) return;
@@ -116,36 +216,60 @@
             if (res.ok) {
                 const feats = await SignalML.safeJson(res);
                 if (Array.isArray(feats) && feats.length > 0) {
-                    tbody.innerHTML = feats.map(f => `
-                        <tr>
-                            <td>
-                                <strong class="mono">${f.layer_id || f.id.substring(0, 8)}</strong>
-                                <div class="mono text-micro text-muted">${f.id}</div>
-                            </td>
-                            <td class="num">${f.sample_count}</td>
-                            <td class="num">${f.feature_dim}</td>
-                            <td class="mono text-sm">${JSON.stringify(f.shape)}</td>
-                            <td class="text-sm text-secondary">${f.created_at ? new Date(f.created_at).toLocaleString() : '-'}</td>
-                            <td class="text-right">
-                                <div class="cluster justify-end">
-                                    <a href="/api/features/${f.id}/export_csv" class="btn btn-secondary btn-sm" title="Download CSV">
-                                        ${SignalML.icon('download')} <span>CSV</span>
-                                    </a>
-                                    <a href="/clustering?feature_id=${f.id}" class="btn btn-primary btn-sm" title="Cluster Analysis">
-                                        ${SignalML.icon('orbit')} <span>Cluster</span>
-                                    </a>
-                                    <button type="button" class="btn btn-secondary btn-sm" onclick="promptRenameFeature('${f.id}', '${f.layer_id || ''}')" title="Rename feature">
-                                        ${SignalML.icon('pencil')} <span>Rename</span>
-                                    </button>
-                                    <button type="button" class="btn btn-danger btn-sm" onclick="deleteFeatureExtraction('${f.id}')" title="Delete feature">
-                                        ${SignalML.icon('trash')} <span>Delete</span>
-                                    </button>
-                                </div>
-                            </td>
-                        </tr>
-                    `).join("");
+                    tbody.innerHTML = feats.map(f => {
+                        const dsName = f.dataset_name || (loadedDatasets.find(d => d.id === f.dataset_id) || {}).name || f.dataset_id;
+                        const dsRows = f.dataset_row_count !== undefined && f.dataset_row_count !== null ? `${f.dataset_row_count} rows` : `${f.sample_count} rows`;
+                        const extraCols = Array.isArray(f.available_extra_columns) ? f.available_extra_columns : [];
+                        const extraColsHtml = extraCols.length > 0 ? `
+                            <div class="mt-1 text-micro text-secondary">
+                                <span>Include:</span>
+                                ${extraCols.map(col => `
+                                    <label class="inline-flex items-center gap-1 ml-1 cursor-pointer">
+                                        <input type="checkbox" class="feat-tbl-col-${f.id}" value="${escapeHtml(col)}" checked>
+                                        <span>${escapeHtml(col)}</span>
+                                    </label>
+                                `).join("")}
+                            </div>
+                        ` : '';
+                        return `
+                            <tr>
+                                <td>
+                                    <strong class="mono">${escapeHtml(f.layer_id || f.id.substring(0, 8))}</strong>
+                                    <div class="mono text-micro text-muted">${escapeHtml(f.id)}</div>
+                                </td>
+                                <td>
+                                    <div class="text-sm font-medium">${escapeHtml(dsName)}</div>
+                                    <div class="mono text-micro text-secondary">${escapeHtml(dsRows)}</div>
+                                </td>
+                                <td class="num font-medium">${Number(f.sample_count).toLocaleString()}</td>
+                                <td class="num">${Number(f.feature_dim).toLocaleString()}</td>
+                                <td class="mono text-sm">${escapeHtml(JSON.stringify(f.shape))}</td>
+                                <td class="text-sm text-secondary">${f.created_at ? new Date(f.created_at).toLocaleString() : '-'}</td>
+                                <td class="text-right">
+                                    <div class="cluster justify-end gap-1">
+                                        <button type="button" class="btn btn-secondary btn-sm" onclick="saveFeatureAsDataset('${f.id}', '${escapeHtml(f.layer_id || '')}')" title="Save as project dataset for training">
+                                            ${SignalML.icon('database')} <span>Dataset</span>
+                                        </button>
+                                        <button type="button" class="btn btn-secondary btn-sm" onclick="downloadFeatureCsv('${f.id}')" title="Download CSV">
+                                            ${SignalML.icon('download')} <span>CSV</span>
+                                        </button>
+                                        <a href="/clustering?feature_id=${f.id}" class="btn btn-primary btn-sm" title="Cluster Analysis">
+                                            ${SignalML.icon('orbit')} <span>Cluster</span>
+                                        </a>
+                                        <button type="button" class="btn btn-secondary btn-sm" onclick="promptRenameFeature('${f.id}', '${escapeHtml(f.layer_id || '')}')" title="Rename feature">
+                                            ${SignalML.icon('pencil')}
+                                        </button>
+                                        <button type="button" class="btn btn-danger btn-sm" onclick="deleteFeatureExtraction('${f.id}')" title="Delete feature">
+                                            ${SignalML.icon('trash')}
+                                        </button>
+                                    </div>
+                                    ${extraColsHtml}
+                                </td>
+                            </tr>
+                        `;
+                    }).join("");
                 } else {
-                    tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted">No saved feature extractions found. Run an extraction using the panel on the left.</td></tr>`;
+                    tbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted">No saved feature extractions found. Run an extraction using the panel on the left.</td></tr>`;
                 }
             }
         } catch (e) {
@@ -176,6 +300,34 @@
         }
     }
 
+    async function saveFeatureAsDataset(featureId, defaultLayer) {
+        const defaultName = `Features_${(defaultLayer || 'layer').replace(/[^a-zA-Z0-9_-]/g, '_')}_${featureId.substring(0, 6)}`;
+        const dsName = prompt("Enter dataset name for these extracted features:", defaultName);
+        if (!dsName || !dsName.trim()) return;
+
+        try {
+            SignalML.toast("Saving features as project dataset...", "info");
+            const res = await fetch(`/api/features/${featureId}/save_dataset`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name: dsName.trim() })
+            });
+
+            if (!res.ok) {
+                const err = await SignalML.safeJson(res);
+                throw new Error(err.detail || "Failed to save dataset");
+            }
+
+            const data = await SignalML.safeJson(res);
+            SignalML.toast(`Saved new dataset '${data.name}' (${data.row_count} rows, ${data.col_count} cols)!`, "success");
+
+            // Refresh dataset list so the new dataset is immediately available
+            await loadModelsAndDatasets(data.dataset_id);
+        } catch (e) {
+            SignalML.toast(`Error saving dataset: ${e.message}`, "error");
+        }
+    }
+
     async function deleteFeatureExtraction(featureId) {
         if (!confirm("Delete this saved feature extraction?")) return;
 
@@ -196,7 +348,7 @@
         }
     }
 
-    async function loadModelsAndDatasets() {
+    async function loadModelsAndDatasets(preserveDatasetId = null) {
         try {
             const [mRes, dRes] = await Promise.all([
                 fetch(`/api/models/list/${SignalML.currentProjectId}`),
@@ -205,88 +357,189 @@
             const models = await SignalML.safeJson(mRes);
             const datasets = await SignalML.safeJson(dRes);
 
+            loadedModels = Array.isArray(models) ? models : [];
+            loadedDatasets = Array.isArray(datasets) ? datasets : [];
+
+            const urlParams = new URLSearchParams(window.location.search);
+            const queryModelId = urlParams.get("model_id");
+            const queryDatasetId = preserveDatasetId || urlParams.get("dataset_id");
+
             const mSel = document.getElementById("feat-model-select");
-            mSel.innerHTML = (Array.isArray(models) ? models : []).map(m => `<option value="${m.id}">${m.name}</option>`).join("");
+            const currentSelectedModel = mSel.value || queryModelId || (loadedModels[0] && loadedModels[0].id) || "";
+            mSel.innerHTML = loadedModels.length > 0
+                ? loadedModels.map(m => `<option value="${m.id}" ${m.id === currentSelectedModel ? 'selected' : ''}>${escapeHtml(m.name)}</option>`).join("")
+                : `<option value="">No trained models found</option>`;
+
+            const activeModelObj = loadedModels.find(m => m.id === mSel.value) || loadedModels[0] || null;
+            const modelDefaultDatasetId = activeModelObj && activeModelObj.last_dataset_id ? activeModelObj.last_dataset_id : null;
 
             const dSel = document.getElementById("feat-dataset-select");
-            dSel.innerHTML = (Array.isArray(datasets) ? datasets : []).map(d => `<option value="${d.id}">${d.name} (${d.row_count} rows)</option>`).join("");
+            const currentSelectedDataset = queryDatasetId || dSel.value || modelDefaultDatasetId || (loadedDatasets[0] && loadedDatasets[0].id) || "";
+            dSel.innerHTML = loadedDatasets.length > 0
+                ? loadedDatasets.map(d => {
+                    const rowCount = d.row_count ?? d.num_rows ?? 0;
+                    const colCount = d.col_count ?? d.num_cols ?? 0;
+                    const isSelected = d.id === currentSelectedDataset;
+                    return `<option value="${d.id}" ${isSelected ? 'selected' : ''}>${escapeHtml(d.name)} (${rowCount} rows, ${colCount} cols)</option>`;
+                }).join("")
+                : `<option value="">No datasets found</option>`;
 
-            if (Array.isArray(models) && models.length > 0) loadModelLayers(models[0].id);
+            updateDatasetInfoBadge();
+            updateModelInfoBadge();
 
-            mSel.onchange = (e) => loadModelLayers(e.target.value);
+            // When dataset selection changes, update badge and clear stale previous results
+            dSel.onchange = () => {
+                updateDatasetInfoBadge();
+                resetResultCard();
+            };
+
+            // When model selection changes, sync dataset to model's latest trained dataset if available, reload layers, and clear stale results
+            mSel.onchange = (e) => {
+                const chosenModel = loadedModels.find(item => item.id === e.target.value);
+                if (chosenModel && chosenModel.last_dataset_id && loadedDatasets.some(d => d.id === chosenModel.last_dataset_id)) {
+                    dSel.value = chosenModel.last_dataset_id;
+                    updateDatasetInfoBadge();
+                }
+                updateModelInfoBadge();
+                resetResultCard();
+                if (e.target.value) loadModelLayers(e.target.value);
+            };
+
+            const activeModelId = mSel.value;
+            if (activeModelId) {
+                loadModelLayers(activeModelId);
+            }
+
             loadSavedFeatureExtractions();
         } catch (e) {
-            console.error(e);
+            console.error("loadModelsAndDatasets error:", e);
         }
     }
 
     async function loadModelLayers(modelId) {
+        if (!modelId) return;
         try {
             const res = await fetch(`/api/features/layers/${modelId}`);
             if (res.ok) {
                 const data = await SignalML.safeJson(res);
                 const lSel = document.getElementById("feat-layer-select");
                 const layers = data.layers || [];
-                lSel.innerHTML = layers.map(l => {
-                    const displayName = l.custom_name || l.name;
-                    return `<option value="${l.name}">${displayName} (${l.class_name}) &rarr; ${JSON.stringify(l.output_shape)}</option>`;
-                }).join("");
+
+                lSel.innerHTML = layers.length > 0
+                    ? layers.map(l => {
+                        const displayName = l.custom_name || l.name;
+                        return `<option value="${l.name}">${escapeHtml(displayName)} (${escapeHtml(l.class_name)}) &rarr; ${escapeHtml(JSON.stringify(l.output_shape))}</option>`;
+                    }).join("")
+                    : `<option value="">No layers found in model</option>`;
 
                 const tbody = document.getElementById("feat-layers-tbody");
-                tbody.innerHTML = layers.map(l => {
-                    const displayName = l.custom_name || l.name;
-                    return `
-                        <tr>
-                            <td class="num">${l.index}</td>
-                            <td><strong>${displayName}</strong> ${l.custom_name ? `<span class="text-micro text-accent ml-1">(${l.name})</span>` : ''}</td>
-                            <td><span class="badge badge-accent">${l.class_name}</span></td>
-                            <td class="mono">${JSON.stringify(l.output_shape)}</td>
-                        </tr>
-                    `;
-                }).join("");
+                tbody.innerHTML = layers.length > 0
+                    ? layers.map(l => {
+                        const displayName = l.custom_name || l.name;
+                        return `
+                            <tr>
+                                <td class="num">${l.index}</td>
+                                <td><strong>${escapeHtml(displayName)}</strong> ${l.custom_name && l.custom_name !== l.name ? `<span class="text-micro text-accent ml-1">(${escapeHtml(l.name)})</span>` : ''}</td>
+                                <td><span class="badge badge-accent">${escapeHtml(l.class_name)}</span></td>
+                                <td class="mono">${escapeHtml(JSON.stringify(l.output_shape))}</td>
+                            </tr>
+                        `;
+                    }).join("")
+                    : `<tr><td colspan="4" class="text-center text-muted">No layers found in model.</td></tr>`;
             }
         } catch (e) {
-            console.error(e);
+            console.error("loadModelLayers error:", e);
         }
     }
 
     document.getElementById("extract-features-btn").onclick = async () => {
+        const btn = document.getElementById("extract-features-btn");
         const modelId = document.getElementById("feat-model-select").value;
         const datasetId = document.getElementById("feat-dataset-select").value;
         const layerName = document.getElementById("feat-layer-select").value;
-        const batchSize = Number(document.getElementById("feat-batch-size").value);
+        const batchSize = Number(document.getElementById("feat-batch-size").value) || 32;
+        const sampleLimitVal = document.getElementById("feat-sample-limit").value;
+        const sampleLimit = sampleLimitVal ? parseInt(sampleLimitVal, 10) : null;
 
         if (!modelId || !datasetId || !layerName) {
             SignalML.toast("Please select model, dataset, and layer", "error");
             return;
         }
 
-        SignalML.toast("Extracting tensor activations from Keras submodel...", "info");
+        const selectedDs = loadedDatasets.find(d => d.id === datasetId);
+        const dsName = selectedDs ? selectedDs.name : "Dataset";
+
+        btn.disabled = true;
+        const originalBtnHtml = btn.innerHTML;
+        btn.innerHTML = `${SignalML.icon('loader-2', 'spin')} <span>Extracting features...</span>`;
+        SignalML.toast(`Extracting tensor activations from '${layerName}' for dataset '${dsName}'...`, "info");
 
         try {
+            const bodyPayload = {
+                model_id: modelId,
+                dataset_id: datasetId,
+                layer_name: layerName,
+                batch_size: batchSize
+            };
+            if (sampleLimit && sampleLimit > 0) {
+                bodyPayload.sample_limit = sampleLimit;
+            }
+
             const res = await fetch("/api/features/extract", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    model_id: modelId,
-                    dataset_id: datasetId,
-                    layer_name: layerName,
-                    batch_size: batchSize
-                })
+                body: JSON.stringify(bodyPayload)
             });
 
             if (res.ok) {
                 const data = await SignalML.safeJson(res);
-                SignalML.toast("Feature extraction completed successfully", "success");
+                latestExtractedFeatureId = data.feature_id;
+
+                SignalML.toast(`Extraction completed: ${data.sample_count} samples processed!`, "success");
+
                 const resultCard = document.getElementById("feat-result-card");
                 resultCard.classList.remove("is-hidden");
                 resultCard.style.display = "block";
+
                 document.getElementById("feat-shape-badge").textContent = `Shape: ${JSON.stringify(data.shape)}`;
-                document.getElementById("feat-stat-samples").textContent = data.sample_count;
-                document.getElementById("feat-stat-dims").textContent = data.feature_dim;
+                document.getElementById("feat-ds-badge").textContent = `Dataset: ${dsName}`;
+                document.getElementById("feat-layer-badge").textContent = `Layer: ${data.layer_name}`;
+                document.getElementById("feat-stat-samples").textContent = Number(data.sample_count).toLocaleString();
+                document.getElementById("feat-stat-dims").textContent = Number(data.feature_dim).toLocaleString();
+
                 document.getElementById("feat-to-clustering-btn").href = `/clustering?feature_id=${data.feature_id}`;
+
+                const extraCols = Array.isArray(data.available_extra_columns) ? data.available_extra_columns : [];
+                const extraColsContainer = document.getElementById("feat-result-extra-cols-container");
+                const extraColsList = document.getElementById("feat-result-extra-cols-list");
+                if (extraColsContainer && extraColsList) {
+                    if (extraCols.length > 0) {
+                        extraColsList.innerHTML = extraCols.map(col => `
+                            <label class="inline-flex items-center gap-1 text-xs cursor-pointer">
+                                <input type="checkbox" class="feat-res-extra-col" value="${escapeHtml(col)}" checked>
+                                <span>${escapeHtml(col)}</span>
+                            </label>
+                        `).join("");
+                        extraColsContainer.classList.remove("is-hidden");
+                    } else {
+                        extraColsContainer.classList.add("is-hidden");
+                        extraColsList.innerHTML = "";
+                    }
+                }
+
                 const exportCsvBtn = document.getElementById("feat-export-csv-btn");
-                if (exportCsvBtn) exportCsvBtn.href = `/api/features/${data.feature_id}/export_csv`;
+                if (exportCsvBtn) {
+                    exportCsvBtn.onclick = (e) => {
+                        e.preventDefault();
+                        downloadLatestFeatureCsv();
+                    };
+                }
+
+                const saveDsBtn = document.getElementById("feat-save-dataset-btn");
+                if (saveDsBtn) {
+                    saveDsBtn.onclick = () => saveFeatureAsDataset(data.feature_id, `${dsName}_${data.layer_name}`);
+                }
+
                 loadSavedFeatureExtractions();
             } else {
                 const err = await SignalML.safeJson(res);
@@ -294,9 +547,12 @@
             }
         } catch (e) {
             SignalML.toast(`Network Error: ${e.message}`, "error");
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = originalBtnHtml;
         }
     };
 
-    document.addEventListener("DOMContentLoaded", loadModelsAndDatasets);
+    document.addEventListener("DOMContentLoaded", () => loadModelsAndDatasets());
 </script>
 {% endblock %}

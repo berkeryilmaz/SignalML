@@ -91,7 +91,26 @@ NODE_CATALOG: Dict[str, Dict[str, Any]] = {
         "inputs": [{"name": "signals", "type": PortType.SIGNAL}],
         "outputs": [{"name": "signals", "type": PortType.SIGNAL}],
         "parameters": {
-            "method": {"type": "select", "options": ["zscore", "minmax", "median", "mode", "gaussian_peak", "scale_min", "scale_max"], "default": "zscore"},
+            "method": {
+                "type": "select",
+                "options": [
+                    "zscore",
+                    "minmax",
+                    "mean",
+                    "median",
+                    "first_n_median",
+                    "first_n_mean",
+                    "last_n_median",
+                    "mode",
+                    "gaussian_peak",
+                    "linear_baseline",
+                    "polynomial_baseline",
+                    "rolling_baseline",
+                    "scale_min",
+                    "scale_max"
+                ],
+                "default": "zscore"
+            },
             "per_signal": {"type": "boolean", "default": True}
         }
     },
@@ -158,6 +177,84 @@ NODE_CATALOG: Dict[str, Dict[str, Any]] = {
             "bins": {"type": "int", "default": 100, "min": 16},
             "fit_window_bins": {"type": "int", "default": 5, "min": 2},
             "per_signal": {"type": "boolean", "default": True}
+        }
+    },
+    "subtract_mean": {
+        "display_name": "Mean (DC) Baseline Subtraction",
+        "category": "Signal Preprocessing",
+        "description": "Subtracts signal arithmetic mean (DC offset) so baseline is centered at 0",
+        "inputs": [{"name": "signals", "type": PortType.SIGNAL}],
+        "outputs": [{"name": "signals", "type": PortType.SIGNAL}],
+        "parameters": {
+            "per_signal": {"type": "boolean", "default": True}
+        }
+    },
+    "subtract_first_n_median": {
+        "display_name": "First N Median Baseline",
+        "category": "Signal Preprocessing",
+        "description": "Subtracts the median of the first N pre-trigger samples from the full signal",
+        "inputs": [{"name": "signals", "type": PortType.SIGNAL}],
+        "outputs": [{"name": "signals", "type": PortType.SIGNAL}],
+        "parameters": {
+            "n": {"type": "int", "default": 50, "min": 1},
+            "per_signal": {"type": "boolean", "default": True}
+        }
+    },
+    "subtract_first_n_mean": {
+        "display_name": "First N Mean Baseline",
+        "category": "Signal Preprocessing",
+        "description": "Subtracts the mean of the first N pre-trigger samples from the full signal",
+        "inputs": [{"name": "signals", "type": PortType.SIGNAL}],
+        "outputs": [{"name": "signals", "type": PortType.SIGNAL}],
+        "parameters": {
+            "n": {"type": "int", "default": 50, "min": 1},
+            "per_signal": {"type": "boolean", "default": True}
+        }
+    },
+    "subtract_last_n_median": {
+        "display_name": "Last N Tail Baseline",
+        "category": "Signal Preprocessing",
+        "description": "Subtracts the median or mean of the last N tail samples from the full signal",
+        "inputs": [{"name": "signals", "type": PortType.SIGNAL}],
+        "outputs": [{"name": "signals", "type": PortType.SIGNAL}],
+        "parameters": {
+            "n": {"type": "int", "default": 50, "min": 1},
+            "stat": {"type": "select", "options": ["median", "mean"], "default": "median"},
+            "per_signal": {"type": "boolean", "default": True}
+        }
+    },
+    "subtract_linear_baseline": {
+        "display_name": "Linear Baseline Detrend",
+        "category": "Signal Preprocessing",
+        "description": "Subtracts a linear baseline ramp connecting start/end edges or OLS fit",
+        "inputs": [{"name": "signals", "type": PortType.SIGNAL}],
+        "outputs": [{"name": "signals", "type": PortType.SIGNAL}],
+        "parameters": {
+            "mode": {"type": "select", "options": ["edge", "ols"], "default": "edge"},
+            "n_edge": {"type": "int", "default": 50, "min": 1},
+            "stat": {"type": "select", "options": ["median", "mean"], "default": "median"}
+        }
+    },
+    "subtract_polynomial_baseline": {
+        "display_name": "Polynomial Baseline Fit",
+        "category": "Signal Preprocessing",
+        "description": "Fits and subtracts a polynomial curve with automatic pulse peak exclusion",
+        "inputs": [{"name": "signals", "type": PortType.SIGNAL}],
+        "outputs": [{"name": "signals", "type": PortType.SIGNAL}],
+        "parameters": {
+            "degree": {"type": "int", "default": 2, "min": 1, "max": 8},
+            "exclude_peak_sigma": {"type": "float", "default": 2.0, "min": 0.0}
+        }
+    },
+    "subtract_rolling_baseline": {
+        "display_name": "Rolling Baseline Removal",
+        "category": "Signal Preprocessing",
+        "description": "Subtracts a local sliding-window median, mean, or morphological opening baseline",
+        "inputs": [{"name": "signals", "type": PortType.SIGNAL}],
+        "outputs": [{"name": "signals", "type": PortType.SIGNAL}],
+        "parameters": {
+            "window_size": {"type": "int", "default": 101, "min": 3},
+            "method": {"type": "select", "options": ["median", "mean", "min_opening"], "default": "median"}
         }
     },
     # Neural Networks & Features

@@ -36,6 +36,13 @@ from app.services.signal_processing import (
     subtract_median,
     subtract_mode,
     subtract_gaussian_peak,
+    subtract_mean,
+    subtract_first_n_median,
+    subtract_first_n_mean,
+    subtract_last_n_median,
+    subtract_linear_baseline,
+    subtract_polynomial_baseline,
+    subtract_rolling_baseline,
     reverse_signals,
     scale_min,
     scale_max,
@@ -185,12 +192,26 @@ class WorkflowEngine:
 
                     if method == "minmax":
                         processed = normalize_minmax(signals, per_signal=per_sig)
+                    elif method in ("mean", "subtract_mean", "dc_offset"):
+                        processed = subtract_mean(signals, per_signal=per_sig)
                     elif method in ("median", "subtract_median"):
                         processed = subtract_median(signals, per_signal=per_sig)
+                    elif method in ("first_n_median", "subtract_first_n_median"):
+                        processed = subtract_first_n_median(signals, n=int(props.get("n", 50)), per_signal=per_sig)
+                    elif method in ("first_n_mean", "subtract_first_n_mean"):
+                        processed = subtract_first_n_mean(signals, n=int(props.get("n", 50)), per_signal=per_sig)
+                    elif method in ("last_n_median", "subtract_last_n_median"):
+                        processed = subtract_last_n_median(signals, n=int(props.get("n", 50)), stat=str(props.get("stat", "median")), per_signal=per_sig)
                     elif method in ("mode", "subtract_mode"):
                         processed = subtract_mode(signals, per_signal=per_sig)
                     elif method in ("gaussian_peak", "subtract_gaussian_peak", "gaussian"):
                         processed = subtract_gaussian_peak(signals, per_signal=per_sig)
+                    elif method in ("linear_baseline", "subtract_linear_baseline"):
+                        processed = subtract_linear_baseline(signals, mode=str(props.get("mode", "edge")), n_edge=int(props.get("n_edge", 50)), stat=str(props.get("stat", "median")))
+                    elif method in ("polynomial_baseline", "subtract_polynomial_baseline"):
+                        processed = subtract_polynomial_baseline(signals, degree=int(props.get("degree", 2)), exclude_peak_sigma=float(props.get("exclude_peak_sigma", 2.0)))
+                    elif method in ("rolling_baseline", "subtract_rolling_baseline"):
+                        processed = subtract_rolling_baseline(signals, window_size=int(props.get("window_size", 101)), method=str(props.get("method", "median")))
                     elif method in ("scale_min", "min_scaler"):
                         processed = scale_min(signals, per_signal=per_sig)
                     elif method in ("scale_max", "max_scaler"):
@@ -263,6 +284,81 @@ class WorkflowEngine:
                     processed = subtract_gaussian_peak(signals, bins=bins, fit_window_bins=fit_win, per_signal=per_sig)
                     runtime_outputs[nid][0] = processed
                     status_entry["preview"] = f"Gaussian peak baseline subtracted {processed.shape} (bins={bins}, per_waveform={per_sig})"
+
+                elif ntype in ("subtract_mean", "baseline_mean"):
+                    signals = get_input(0)
+                    if signals is None:
+                        raise ValueError("Mean Baseline Subtraction requires input signals.")
+                    per_sig_raw = props.get("per_signal", True)
+                    per_sig = per_sig_raw.lower() in ("true", "1", "yes") if isinstance(per_sig_raw, str) else bool(per_sig_raw)
+                    processed = subtract_mean(signals, per_signal=per_sig)
+                    runtime_outputs[nid][0] = processed
+                    status_entry["preview"] = f"Mean baseline subtracted {processed.shape} (per_waveform={per_sig})"
+
+                elif ntype in ("subtract_first_n_median", "first_n_median", "baseline_first_n_median"):
+                    signals = get_input(0)
+                    if signals is None:
+                        raise ValueError("First N Median Baseline requires input signals.")
+                    n_val = int(props.get("n", 50))
+                    per_sig_raw = props.get("per_signal", True)
+                    per_sig = per_sig_raw.lower() in ("true", "1", "yes") if isinstance(per_sig_raw, str) else bool(per_sig_raw)
+                    processed = subtract_first_n_median(signals, n=n_val, per_signal=per_sig)
+                    runtime_outputs[nid][0] = processed
+                    status_entry["preview"] = f"First N median baseline subtracted {processed.shape} (n={n_val}, per_waveform={per_sig})"
+
+                elif ntype in ("subtract_first_n_mean", "first_n_mean", "baseline_first_n_mean"):
+                    signals = get_input(0)
+                    if signals is None:
+                        raise ValueError("First N Mean Baseline requires input signals.")
+                    n_val = int(props.get("n", 50))
+                    per_sig_raw = props.get("per_signal", True)
+                    per_sig = per_sig_raw.lower() in ("true", "1", "yes") if isinstance(per_sig_raw, str) else bool(per_sig_raw)
+                    processed = subtract_first_n_mean(signals, n=n_val, per_signal=per_sig)
+                    runtime_outputs[nid][0] = processed
+                    status_entry["preview"] = f"First N mean baseline subtracted {processed.shape} (n={n_val}, per_waveform={per_sig})"
+
+                elif ntype in ("subtract_last_n_median", "last_n_median", "baseline_last_n_median"):
+                    signals = get_input(0)
+                    if signals is None:
+                        raise ValueError("Last N Tail Baseline requires input signals.")
+                    n_val = int(props.get("n", 50))
+                    stat = str(props.get("stat", "median"))
+                    per_sig_raw = props.get("per_signal", True)
+                    per_sig = per_sig_raw.lower() in ("true", "1", "yes") if isinstance(per_sig_raw, str) else bool(per_sig_raw)
+                    processed = subtract_last_n_median(signals, n=n_val, stat=stat, per_signal=per_sig)
+                    runtime_outputs[nid][0] = processed
+                    status_entry["preview"] = f"Last N tail baseline subtracted {processed.shape} (n={n_val}, stat={stat}, per_waveform={per_sig})"
+
+                elif ntype in ("subtract_linear_baseline", "linear_baseline", "baseline_linear"):
+                    signals = get_input(0)
+                    if signals is None:
+                        raise ValueError("Linear Baseline Detrend requires input signals.")
+                    mode = str(props.get("mode", "edge"))
+                    n_edge = int(props.get("n_edge", 50))
+                    stat = str(props.get("stat", "median"))
+                    processed = subtract_linear_baseline(signals, mode=mode, n_edge=n_edge, stat=stat)
+                    runtime_outputs[nid][0] = processed
+                    status_entry["preview"] = f"Linear baseline detrended {processed.shape} (mode={mode}, n_edge={n_edge}, stat={stat})"
+
+                elif ntype in ("subtract_polynomial_baseline", "polynomial_baseline", "baseline_polynomial"):
+                    signals = get_input(0)
+                    if signals is None:
+                        raise ValueError("Polynomial Baseline Fit requires input signals.")
+                    degree = int(props.get("degree", 2))
+                    exclude_peak_sigma = float(props.get("exclude_peak_sigma", 2.0))
+                    processed = subtract_polynomial_baseline(signals, degree=degree, exclude_peak_sigma=exclude_peak_sigma)
+                    runtime_outputs[nid][0] = processed
+                    status_entry["preview"] = f"Polynomial baseline subtracted {processed.shape} (degree={degree}, exclude_sigma={exclude_peak_sigma})"
+
+                elif ntype in ("subtract_rolling_baseline", "rolling_baseline", "baseline_rolling"):
+                    signals = get_input(0)
+                    if signals is None:
+                        raise ValueError("Rolling Baseline Removal requires input signals.")
+                    win_size = int(props.get("window_size", 101))
+                    method = str(props.get("method", "median"))
+                    processed = subtract_rolling_baseline(signals, window_size=win_size, method=method)
+                    runtime_outputs[nid][0] = processed
+                    status_entry["preview"] = f"Rolling baseline subtracted {processed.shape} (window_size={win_size}, method={method})"
 
                 # 4. Feature Extractor Node
                 elif ntype in ("feature_extractor", "FeatureExtractor"):

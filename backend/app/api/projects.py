@@ -166,14 +166,14 @@ def duplicate_project(project_id: str):
                 """
                 INSERT INTO datasets (
                     id, project_id, name, file_path, file_format, row_count, col_count,
-                    columns_json, label_column, sampling_rate, metadata_json, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    has_header, label_col, created_at, metadata_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     new_ds_id, new_proj_id, dd["name"], str(new_p) if new_p.exists() else new_fp,
                     dd["file_format"], dd["row_count"], dd["col_count"],
-                    dd["columns_json"], dd["label_column"], dd["sampling_rate"],
-                    dd["metadata_json"], now
+                    dd.get("has_header", 0), dd.get("label_col"),
+                    now, dd.get("metadata_json") or "{}"
                 )
             )
 

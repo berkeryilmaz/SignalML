@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Query, Response
 from app.core.config import resolve_storage_path
 from app.core.database import get_db_connection
 from app.services.training_service import TrainingService, TrainingJob
+from app.services.data_manager import DataManager
 from app.services.keras_model_builder import ClusteringLayer
 from app.schemas.training import TrainingConfig, TrainingJobStatus
 
@@ -142,12 +143,17 @@ def delete_training_run(run_id: str):
 
 
 @router.get("/predict_csv/{model_id}/{dataset_id}")
-def export_predictions_csv(model_id: str, dataset_id: str):
+@router.get("/predict_batch_csv/{model_id}/{dataset_id}")
+def export_predictions_csv(
+    model_id: str,
+    dataset_id: str,
+    extra_cols: Optional[str] = Query(default=None, description="Comma-separated list of extra columns from main table to include in CSV")
+):
     """
     Runs batch inference on the target dataset using the specified model,
     and returns a downloadable CSV containing input_id (from sample_ids),
-    predicted labels/values, class probabilities (for classification),
-    and ground truth labels (if available in dataset).
+    optional extra columns from the main table, predicted labels/values,
+    class probabilities (for classification), and ground truth labels (if available in dataset).
     """
     with get_db_connection() as conn:
         model_row = conn.execute("SELECT * FROM models WHERE id = ?", (model_id,)).fetchone()
@@ -165,14 +171,33 @@ def export_predictions_csv(model_id: str, dataset_id: str):
         raise HTTPException(status_code=500, detail=f"Failed to load model: {str(e)}")
 
     try:
-        X, y, dataset_record = TrainingService.prepare_model_inputs(model, dataset_id)
+        X, y, dataset_record = TrainingService.prepare_model_inputs(model, dataset_id, model_record=model_record)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to prepare dataset inputs: {str(e)}")
 
-    sample_ids = dataset_record.get("sample_ids")
     n_samples = len(X[0]) if isinstance(X, list) else len(X)
+    sample_ids = dataset_record.get("sample_ids")
+    if not sample_ids or len(sample_ids) != n_samples or DataManager._is_default_zero_indexed(list(sample_ids)):
+        try:
+            loaded_ids = DataManager.load_sample_ids(dataset_id, expected_count=n_samples)
+            if loaded_ids and len(loaded_ids) == n_samples:
+                sample_ids = loaded_ids
+        except Exception:
+            pass
+
     if not sample_ids or len(sample_ids) != n_samples:
-        sample_ids = [f"sample_{i}" for i in range(n_samples)]
+        sample_ids = [str(i) for i in range(n_samples)]
+
+    selected_extra_cols = [c.strip() for c in extra_cols.split(",") if c.strip()] if extra_cols else None
+    extra_dict = {}
+    extra_cols_to_use = []
+    if selected_extra_cols:
+        try:
+            extra_dict = DataManager.load_extra_columns(dataset_id, selected_columns=selected_extra_cols, expected_count=n_samples)
+            extra_cols_to_use = [c for c in selected_extra_cols if c in extra_dict]
+        except Exception:
+            extra_dict = {}
+            extra_cols_to_use = []
 
     try:
         preds = model.predict(X, verbose=0)
@@ -213,7 +238,7 @@ def export_predictions_csv(model_id: str, dataset_id: str):
         pred_clusters = np.argmax(q_preds, axis=1)
         confidences = np.max(q_preds, axis=1)
 
-        header = ["input_id", "predicted_cluster", "confidence"]
+        header = ["input_id"] + extra_cols_to_use + ["predicted_cluster", "confidence"]
         if y is not None:
             header.append("ground_truth")
         for c in range(n_clusters):
@@ -222,7 +247,8 @@ def export_predictions_csv(model_id: str, dataset_id: str):
 
         y_flat = y.flatten() if y is not None else None
         for i in range(n_samples):
-            row = [sample_ids[i], int(pred_clusters[i]), float(round(confidences[i], 4))]
+            extra_vals = [str(extra_dict[c][i]) if i < len(extra_dict[c]) else "" for c in extra_cols_to_use]
+            row = [sample_ids[i]] + extra_vals + [int(pred_clusters[i]), float(round(confidences[i], 4))]
             if y is not None:
                 row.append(int(y_flat[i]) if (y_flat is not None and i < len(y_flat)) else "")
             for c in range(n_clusters):
@@ -233,7 +259,7 @@ def export_predictions_csv(model_id: str, dataset_id: str):
         p_arr = preds[0] if isinstance(preds, list) else preds
         if p_arr.ndim > 1 and p_arr.shape[1] > 1:
             n_classes = p_arr.shape[1]
-            header = ["input_id", "predicted_class"]
+            header = ["input_id"] + extra_cols_to_use + ["predicted_class"]
             if y is not None:
                 header.append("ground_truth")
             for c in range(n_classes):
@@ -244,7 +270,8 @@ def export_predictions_csv(model_id: str, dataset_id: str):
             y_flat = y.flatten() if (y is not None and y.ndim == 1) else (np.argmax(y, axis=1) if (y is not None and y.ndim > 1 and y.shape[1] > 1) else y)
 
             for i in range(n_samples):
-                row = [sample_ids[i], int(pred_classes[i])]
+                extra_vals = [str(extra_dict[c][i]) if i < len(extra_dict[c]) else "" for c in extra_cols_to_use]
+                row = [sample_ids[i]] + extra_vals + [int(pred_classes[i])]
                 if y is not None:
                     row.append(int(y_flat[i]) if (y_flat is not None and i < len(y_flat)) else "")
                 for c in range(n_classes):
@@ -255,14 +282,15 @@ def export_predictions_csv(model_id: str, dataset_id: str):
             pred_classes = (preds_flat >= 0.5).astype(int)
             y_flat = y.flatten() if y is not None else None
 
-            header = ["input_id", "predicted_class"]
+            header = ["input_id"] + extra_cols_to_use + ["predicted_class"]
             if y is not None:
                 header.append("ground_truth")
             header.append("probability")
             writer.writerow(header)
 
             for i in range(n_samples):
-                row = [sample_ids[i], int(pred_classes[i])]
+                extra_vals = [str(extra_dict[c][i]) if i < len(extra_dict[c]) else "" for c in extra_cols_to_use]
+                row = [sample_ids[i]] + extra_vals + [int(pred_classes[i])]
                 if y is not None:
                     row.append(int(y_flat[i]) if (y_flat is not None and i < len(y_flat)) else "")
                 row.append(float(round(preds_flat[i], 6)))
@@ -273,7 +301,7 @@ def export_predictions_csv(model_id: str, dataset_id: str):
         y_flat = y.reshape(n_samples, -1) if y is not None else None
         n_out = preds_flat.shape[1]
 
-        header = ["input_id"]
+        header = ["input_id"] + extra_cols_to_use
         for c in range(n_out):
             header.append(f"pred_{c}" if n_out > 1 else "prediction")
         if y is not None:
@@ -282,7 +310,8 @@ def export_predictions_csv(model_id: str, dataset_id: str):
         writer.writerow(header)
 
         for i in range(n_samples):
-            row = [sample_ids[i]]
+            extra_vals = [str(extra_dict[c][i]) if i < len(extra_dict[c]) else "" for c in extra_cols_to_use]
+            row = [sample_ids[i]] + extra_vals
             for c in range(n_out):
                 row.append(float(round(preds_flat[i, c], 6)))
             if y is not None and y_flat is not None:
@@ -298,4 +327,8 @@ def export_predictions_csv(model_id: str, dataset_id: str):
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'}
     )
+
+
+# Alias for batch inference CSV export
+predict_batch_csv = export_predictions_csv
 

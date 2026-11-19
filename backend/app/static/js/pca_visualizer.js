@@ -20,31 +20,48 @@ class PCAVisualizer {
         this.hoveredPoint = null;
         this.projectedPoints = [];
 
+        // Ground Truth control & view mode
+        this.showGroundTruth = false; // Default false so messy ground truth never clutters view
+        this.colorBy = "cluster"; // "cluster" or "ground_truth"
+        this.uniqueGroundTruths = [];
+        this.onGroundTruthToggle = null;
+        this.onColorModeChange = null;
+
         this.init();
 
-        window.addEventListener("signalml:themechange", () => {
-            if (this.mode === "3d") {
-                this.render3D();
-            } else if (this.chart2d) {
-                this.render2D();
-            }
-        });
+        if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+            window.addEventListener("signalml:themechange", () => {
+                if (this.mode === "3d") {
+                    this.render3D();
+                } else if (this.chart2d) {
+                    this.render2D();
+                }
+            });
 
-        window.addEventListener("resize", () => {
-            if (this.mode === "3d") {
-                this.resize3DCanvas();
-                this.render3D();
-            }
-        });
+            window.addEventListener("resize", () => {
+                if (this.mode === "3d") {
+                    this.resize3DCanvas();
+                    this.render3D();
+                }
+            });
+        }
     }
 
     init() {
         if (!this.container) return;
         const icon2d = typeof SignalML !== "undefined" ? SignalML.icon("circle-dot", "icon-xs") : "";
         const icon3d = typeof SignalML !== "undefined" ? SignalML.icon("box", "icon-xs") : "";
+        const iconEye = typeof SignalML !== "undefined" ? SignalML.icon("eye", "icon-xs") : "";
+        const iconPalette = typeof SignalML !== "undefined" ? SignalML.icon("palette", "icon-xs") : "";
 
         this.container.innerHTML = `
             <div class="cluster" style="position: absolute; top: 12px; right: 12px; z-index: 10;">
+                <button type="button" class="btn btn-secondary btn-sm" id="pca-toggle-gt" title="Toggle ground truth preview in chart & tooltips">
+                    ${iconEye} <span>GT Preview: Off</span>
+                </button>
+                <button type="button" class="btn btn-secondary btn-sm is-hidden" id="pca-color-mode-btn" title="Toggle color-coding between Clusters and Ground Truth">
+                    ${iconPalette} <span>Color: Cluster</span>
+                </button>
                 <button type="button" class="btn btn-primary btn-sm" id="pca-toggle-2d">
                     ${icon2d} <span>2D Projection</span>
                 </button>
@@ -59,6 +76,14 @@ class PCAVisualizer {
 
         document.getElementById("pca-toggle-2d").addEventListener("click", () => this.setMode("2d"));
         document.getElementById("pca-toggle-3d").addEventListener("click", () => this.setMode("3d"));
+        const btnToggleGt = document.getElementById("pca-toggle-gt");
+        if (btnToggleGt) {
+            btnToggleGt.addEventListener("click", () => this.toggleGroundTruth());
+        }
+        const btnColorMode = document.getElementById("pca-color-mode-btn");
+        if (btnColorMode) {
+            btnColorMode.addEventListener("click", () => this.toggleColorMode());
+        }
 
         this.setup3DCanvas();
         try {
@@ -109,11 +134,120 @@ class PCAVisualizer {
         this.variance3d = data.explained_variance_3d || [];
         this.distribution = data.cluster_distribution || {};
 
+        this.updateGroundTruthMetadata();
+
         if (this.mode === "2d") {
             this.render2D();
         } else {
             this.render3D();
         }
+    }
+
+    formatGroundTruth(val) {
+        if (val === undefined || val === null || val === "") return "";
+        if (Array.isArray(val)) {
+            if (val.length === 1) return this.formatGroundTruth(val[0]);
+            return `[${val.length} dims]`;
+        }
+        if (typeof val === "object") return "[object]";
+        const str = String(val).trim();
+        if (str.startsWith("[") && str.endsWith("]")) {
+            try {
+                const parsed = JSON.parse(str);
+                if (Array.isArray(parsed)) {
+                    if (parsed.length === 1) return this.formatGroundTruth(parsed[0]);
+                    return `[${parsed.length} dims]`;
+                }
+            } catch (e) {
+                return "[array]";
+            }
+        }
+        if (str.length > 24) {
+            return str.slice(0, 21) + "...";
+        }
+        return str;
+    }
+
+    isValidScalarGroundTruth(val) {
+        if (val === undefined || val === null || val === "") return false;
+        if (Array.isArray(val) || typeof val === "object") return false;
+        const str = String(val).trim();
+        if (str.startsWith("[") || str.startsWith("{") || str.length > 24) return false;
+        return true;
+    }
+
+    updateGroundTruthMetadata() {
+        const unique = new Set();
+        let hasAnyScalar = false;
+        for (const pt of (this.points || [])) {
+            if (this.isValidScalarGroundTruth(pt.ground_truth)) {
+                hasAnyScalar = true;
+                unique.add(String(pt.ground_truth));
+            }
+        }
+        this.uniqueGroundTruths = Array.from(unique).sort();
+
+        const colorBtn = document.getElementById("pca-color-mode-btn");
+        if (colorBtn) {
+            if (hasAnyScalar && this.uniqueGroundTruths.length >= 1 && this.uniqueGroundTruths.length <= 30) {
+                colorBtn.classList.remove("is-hidden");
+                colorBtn.style.display = "inline-flex";
+            } else {
+                colorBtn.classList.add("is-hidden");
+                colorBtn.style.display = "none";
+                if (this.colorBy === "ground_truth") {
+                    this.colorBy = "cluster";
+                }
+            }
+        }
+    }
+
+    toggleGroundTruth(show = null) {
+        this.showGroundTruth = show !== null ? Boolean(show) : !this.showGroundTruth;
+        const btn = document.getElementById("pca-toggle-gt");
+        if (btn) {
+            btn.className = this.showGroundTruth ? "btn btn-primary btn-sm" : "btn btn-secondary btn-sm";
+            const iconEye = typeof SignalML !== "undefined" ? SignalML.icon("eye", "icon-xs") : "";
+            btn.innerHTML = `${iconEye} <span>GT Preview: ${this.showGroundTruth ? "On" : "Off"}</span>`;
+        }
+        if (this.mode === "2d") {
+            this.render2D();
+        } else {
+            this.render3D();
+        }
+        if (typeof this.onGroundTruthToggle === "function") {
+            this.onGroundTruthToggle(this.showGroundTruth);
+        }
+    }
+
+    toggleColorMode() {
+        this.colorBy = this.colorBy === "cluster" ? "ground_truth" : "cluster";
+        const btn = document.getElementById("pca-color-mode-btn");
+        if (btn) {
+            btn.className = this.colorBy === "ground_truth" ? "btn btn-accent btn-sm" : "btn btn-secondary btn-sm";
+            const iconPalette = typeof SignalML !== "undefined" ? SignalML.icon("palette", "icon-xs") : "";
+            btn.innerHTML = `${iconPalette} <span>Color: ${this.colorBy === "ground_truth" ? "Ground Truth" : "Cluster"}</span>`;
+        }
+        if (this.mode === "2d") {
+            this.render2D();
+        } else {
+            this.render3D();
+        }
+        if (typeof this.onColorModeChange === "function") {
+            this.onColorModeChange(this.colorBy);
+        }
+    }
+
+    getGroundTruthColor(gtValue) {
+        const valStr = String(gtValue);
+        const idx = this.uniqueGroundTruths.indexOf(valStr);
+        const colors = [
+            "#30a46c", "#0090ff", "#ffc53d", "#e5484d",
+            "#8e4ec6", "#00b8d9", "#f76b15", "#3e63dd",
+            "#a0a7b4", "#12b886", "#e64980", "#be4bdb"
+        ];
+        if (idx === -1) return "#777b84";
+        return colors[idx % colors.length];
     }
 
     getClusterColor(clusterId) {
@@ -131,38 +265,59 @@ class PCAVisualizer {
     render2D() {
         if (!this.points || this.points.length === 0) return;
 
-        // Group points by cluster
-        const clustersMap = {};
-        for (let pt of this.points) {
-            const cid = pt.cluster;
-            if (!clustersMap[cid]) clustersMap[cid] = [];
-            clustersMap[cid].push({
-                x: pt.x,
-                y: pt.y,
-                sample_id: pt.sample_id,
-                input_id: pt.input_id,
-                ground_truth: pt.ground_truth
+        const self = this;
+        let seriesList = [];
+
+        if (this.colorBy === "ground_truth" && this.uniqueGroundTruths.length > 0) {
+            // Group points by ground truth class
+            const gtMap = {};
+            for (let pt of this.points) {
+                const gtVal = this.isValidScalarGroundTruth(pt.ground_truth) ? String(pt.ground_truth) : "Unlabeled";
+                if (!gtMap[gtVal]) gtMap[gtVal] = [];
+                gtMap[gtVal].push({
+                    x: pt.x,
+                    y: pt.y,
+                    sample_id: pt.sample_id,
+                    input_id: pt.input_id,
+                    cluster: pt.cluster,
+                    ground_truth: pt.ground_truth
+                });
+            }
+
+            seriesList = Object.keys(gtMap).sort().map(gtKey => ({
+                name: `GT: ${gtKey} (${gtMap[gtKey].length})`,
+                color: this.getGroundTruthColor(gtKey),
+                gtKey: gtKey,
+                data: gtMap[gtKey]
+            }));
+        } else {
+            // Group points by cluster
+            const clustersMap = {};
+            for (let pt of this.points) {
+                const cid = pt.cluster;
+                if (!clustersMap[cid]) clustersMap[cid] = [];
+                clustersMap[cid].push({
+                    x: pt.x,
+                    y: pt.y,
+                    sample_id: pt.sample_id,
+                    input_id: pt.input_id,
+                    cluster: pt.cluster,
+                    ground_truth: pt.ground_truth
+                });
+            }
+
+            seriesList = Object.keys(clustersMap).map(cid => {
+                const clusterNum = Number(cid);
+                const name = clusterNum === -1 ? "Noise (Outliers)" : `Cluster ${clusterNum}`;
+                return {
+                    name: `${name} (${clustersMap[cid].length})`,
+                    color: this.getClusterColor(clusterNum),
+                    clusterId: clusterNum,
+                    data: clustersMap[cid]
+                };
             });
         }
 
-        const seriesList = Object.keys(clustersMap).map(cid => {
-            const clusterNum = Number(cid);
-            const name = clusterNum === -1 ? "Noise (Outliers)" : `Cluster ${clusterNum}`;
-            return {
-                name: `${name} (${clustersMap[cid].length})`,
-                color: this.getClusterColor(clusterNum),
-                clusterId: clusterNum,
-                data: clustersMap[cid].map(p => ({
-                    x: p.x,
-                    y: p.y,
-                    sample_id: p.sample_id,
-                    input_id: p.input_id,
-                    ground_truth: p.ground_truth
-                }))
-            };
-        });
-
-        const self = this;
         this.chart2d = Highcharts.chart("pca-2d-canvas", {
             chart: {
                 type: "scatter",
@@ -186,10 +341,13 @@ class PCAVisualizer {
                 formatter: function() {
                     const idLabel = this.point.input_id ? `ID: ${this.point.input_id} (#${this.point.sample_id})` : `Sample #${this.point.sample_id}`;
                     let s = `<b>${idLabel}</b><br/>`;
-                    s += `Cluster: ${this.series.userOptions.clusterId}<br/>`;
+                    const clusterVal = this.point.cluster !== undefined ? this.point.cluster : this.series.userOptions.clusterId;
+                    if (clusterVal !== undefined) {
+                        s += `Cluster: ${clusterVal === -1 ? 'Noise' : clusterVal}<br/>`;
+                    }
                     s += `PC1: ${this.x.toFixed(3)}, PC2: ${this.y.toFixed(3)}<br/>`;
-                    if (this.point.ground_truth !== undefined) {
-                        s += `Ground Truth: ${this.point.ground_truth}<br/>`;
+                    if (self.showGroundTruth && self.isValidScalarGroundTruth(this.point.ground_truth)) {
+                        s += `Ground Truth: ${self.formatGroundTruth(this.point.ground_truth)}<br/>`;
                     }
                     s += `<span style="color: var(--accent); font-size: 10px;">Click to view group waveforms</span>`;
                     return s;
@@ -250,13 +408,15 @@ class PCAVisualizer {
             this.canvas3d.style.cursor = "grabbing";
         });
 
-        window.addEventListener("mouseup", (e) => {
-            if (this.isDragging && !dragMoved && e.target === this.canvas3d) {
-                this.handle3DClick(e);
-            }
-            this.isDragging = false;
-            if (this.canvas3d) this.canvas3d.style.cursor = "grab";
-        });
+        if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+            window.addEventListener("mouseup", (e) => {
+                if (this.isDragging && !dragMoved && e.target === this.canvas3d) {
+                    this.handle3DClick(e);
+                }
+                this.isDragging = false;
+                if (this.canvas3d) this.canvas3d.style.cursor = "grab";
+            });
+        }
 
         this.canvas3d.addEventListener("mousemove", (e) => {
             if (this.isDragging) {
@@ -458,28 +618,48 @@ class PCAVisualizer {
             const radius = Math.max(3.5, Math.min(6.0, 4.5 + p.depth * 1.0));
             ctx.beginPath();
             ctx.arc(p.sx, p.sy, radius, 0, Math.PI * 2);
-            ctx.fillStyle = this.getClusterColor(p.pt.cluster);
+            const ptColor = (this.colorBy === "ground_truth" && this.uniqueGroundTruths.length > 0)
+                ? this.getGroundTruthColor(p.pt.ground_truth)
+                : this.getClusterColor(p.pt.cluster);
+            ctx.fillStyle = ptColor;
             ctx.fill();
             ctx.lineWidth = 1;
             ctx.strokeStyle = strokeColor;
             ctx.stroke();
         }
 
-        // 4. Draw compact cluster legend in top-left corner
-        const clusterKeys = Object.keys(clusterCounts).sort((a, b) => Number(a) - Number(b));
+        // 4. Draw compact legend in top-left corner
         ctx.save();
         ctx.font = '500 11px "Inter", sans-serif';
         let legendY = 22;
-        for (const cidKey of clusterKeys) {
-            const cid = Number(cidKey);
-            const label = cid === -1 ? `Noise (${clusterCounts[cidKey]})` : `Cluster ${cid} (${clusterCounts[cidKey]})`;
-            ctx.beginPath();
-            ctx.arc(20, legendY - 4, 4.5, 0, Math.PI * 2);
-            ctx.fillStyle = this.getClusterColor(cid);
-            ctx.fill();
-            ctx.fillStyle = palette ? palette.textSecondary : "#b0b4ba";
-            ctx.fillText(label, 30, legendY);
-            legendY += 18;
+        if (this.colorBy === "ground_truth" && this.uniqueGroundTruths.length > 0) {
+            const gtCounts = {};
+            for (let pt of this.points) {
+                const k = this.isValidScalarGroundTruth(pt.ground_truth) ? String(pt.ground_truth) : "Unlabeled";
+                gtCounts[k] = (gtCounts[k] || 0) + 1;
+            }
+            for (const gtKey of Object.keys(gtCounts).sort()) {
+                ctx.beginPath();
+                ctx.arc(20, legendY - 4, 4.5, 0, Math.PI * 2);
+                ctx.fillStyle = this.getGroundTruthColor(gtKey);
+                ctx.fill();
+                ctx.fillStyle = palette ? palette.textSecondary : "#b0b4ba";
+                ctx.fillText(`GT: ${gtKey} (${gtCounts[gtKey]})`, 30, legendY);
+                legendY += 18;
+            }
+        } else {
+            const clusterKeys = Object.keys(clusterCounts).sort((a, b) => Number(a) - Number(b));
+            for (const cidKey of clusterKeys) {
+                const cid = Number(cidKey);
+                const label = cid === -1 ? `Noise (${clusterCounts[cidKey]})` : `Cluster ${cid} (${clusterCounts[cidKey]})`;
+                ctx.beginPath();
+                ctx.arc(20, legendY - 4, 4.5, 0, Math.PI * 2);
+                ctx.fillStyle = this.getClusterColor(cid);
+                ctx.fill();
+                ctx.fillStyle = palette ? palette.textSecondary : "#b0b4ba";
+                ctx.fillText(label, 30, legendY);
+                legendY += 18;
+            }
         }
         ctx.restore();
 
@@ -524,11 +704,14 @@ class PCAVisualizer {
             tooltip.style.top = `${Math.max(10, my + 10)}px`;
             const idLabel = hit.pt.input_id ? `ID: ${hit.pt.input_id} (#${hit.pt.sample_id})` : `Sample #${hit.pt.sample_id}`;
             const zVal = hit.pt.z !== undefined ? Number(hit.pt.z).toFixed(2) : "0.00";
+            const gtHtml = (this.showGroundTruth && this.isValidScalarGroundTruth(hit.pt.ground_truth))
+                ? `<div class="text-secondary text-micro">Ground Truth: ${this.formatGroundTruth(hit.pt.ground_truth)}</div>`
+                : '';
             tooltip.innerHTML = `
                 <div class="fw-600">${idLabel}</div>
                 <div class="text-secondary">Cluster: ${hit.pt.cluster === -1 ? 'Noise' : hit.pt.cluster}</div>
                 <div class="mono text-micro text-muted">PC1: ${Number(hit.pt.x).toFixed(2)}, PC2: ${Number(hit.pt.y).toFixed(2)}, PC3: ${zVal}</div>
-                ${hit.pt.ground_truth !== undefined ? `<div class="text-secondary text-micro">Ground Truth: ${hit.pt.ground_truth}</div>` : ''}
+                ${gtHtml}
                 <div class="text-accent text-micro mt-1">Click to inspect cluster waveforms</div>
             `;
         } else if (tooltip) {

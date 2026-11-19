@@ -801,3 +801,525 @@ def test_clustering_with_custom_sample_ids():
     assert exported_ids == custom_ids
 
 
+def test_autoencoder_feature_extraction_does_not_pollute_ground_truth(tmp_path):
+    """
+    Verifies that feature extraction on an Autoencoder does NOT save 3D reconstruction
+    targets as ground truth labels, and clustering safely treats it as having no ground truth.
+    """
+    from app.core.config import MODELS_DIR, FEATURES_DIR, DATASETS_DIR
+    from app.services.feature_extraction import FeatureExtractor
+    import keras
+
+    proj = ensure_default_project()
+    proj_id = proj["id"]
+
+    # 1. Create an Autoencoder dataset without labels (only signal data)
+    n_samples = 20
+    seq_len = 16
+    X = np.sin(np.linspace(0, 2 * np.pi, seq_len))[np.newaxis, :] + np.random.randn(n_samples, seq_len) * 0.05
+    X_seq = np.expand_dims(X.astype(np.float32), axis=-1)
+
+    ds_dir = DATASETS_DIR / proj_id
+    ds_dir.mkdir(parents=True, exist_ok=True)
+    dataset_id = str(uuid.uuid4())
+    ds_path = ds_dir / f"{dataset_id}.npz"
+    np.savez_compressed(str(ds_path), data=X.astype(np.float32), X_seq=X_seq)
+
+    now = datetime.now(timezone.utc).isoformat()
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO datasets (id, project_id, name, file_path, file_format, row_count, col_count, created_at, metadata_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (dataset_id, proj_id, "Autoencoder Test Dataset", str(ds_path), "npz", n_samples, seq_len, now, json.dumps({
+                "pipeline_state": {"seq_len": seq_len, "task_type": "unsupervised"}
+            }))
+        )
+        conn.commit()
+
+    # 2. Build a simple Autoencoder model
+    inp = keras.layers.Input(shape=(seq_len, 1), name="signal_input")
+    flat = keras.layers.Flatten()(inp)
+    latent = keras.layers.Dense(8, activation="relu", name="latent_layer")(flat)
+    out_dense = keras.layers.Dense(seq_len, activation="linear")(latent)
+    out = keras.layers.Reshape((seq_len, 1), name="reconstruction_output")(out_dense)
+    model = keras.Model(inputs=inp, outputs=out)
+    model.compile(optimizer="adam", loss="mse")
+
+    models_dir = MODELS_DIR / proj_id
+    models_dir.mkdir(parents=True, exist_ok=True)
+    model_id = str(uuid.uuid4())
+    weights_path = models_dir / f"{model_id}.keras"
+    model.save(str(weights_path))
+
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO models (id, project_id, name, graph_json, weights_path, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (model_id, proj_id, "AE Model", "{}", str(weights_path), now, now)
+        )
+        conn.commit()
+
+    # 3. Extract features from latent_layer
+    feat_res = FeatureExtractor.extract_features(
+        project_id=proj_id,
+        model_id=model_id,
+        dataset_id=dataset_id,
+        layer_name="latent_layer"
+    )
+    feature_id = feat_res["feature_id"]
+
+    # Verify features file does NOT have 3D reconstruction labels
+    feat_file = FEATURES_DIR / proj_id / f"{feature_id}.npz"
+    with np.load(str(feat_file), allow_pickle=False) as npz:
+        assert "features" in npz
+        # "labels" should not be in npz because the dataset had no 1D labels
+        assert "labels" not in npz
+
+    # 4. Run Clustering on the extracted features
+    clust_res = ClusteringService.run_clustering(
+        project_id=proj_id,
+        source_type="features",
+        source_id=feature_id,
+        algorithm="kmeans",
+        n_clusters=2
+    )
+
+    assert clust_res["has_ground_truth"] is False
+    assert clust_res["ground_truth_unique_count"] == 0
+    assert clust_res["is_discrete_ground_truth"] is False
+
+    # Check detail
+    detail = ClusteringService.get_clustering_detail(clust_res["clustering_id"])
+    assert detail["has_ground_truth"] is False
+    assert detail["ground_truth_unique_count"] == 0
+    assert detail["is_discrete_ground_truth"] is False
+
+    for pt in clust_res["points"]:
+        # Ground truth should either not be in pt, or be None / not an array
+        gt = pt.get("ground_truth")
+        assert not isinstance(gt, (np.ndarray, list))
+
+
+def test_export_clustering_csv_ground_truth_control_and_options(tmp_path):
+    """
+    Verifies that export_clustering_csv properly respects:
+    - include_ground_truth=False omits the ground_truth column completely.
+    - include_ground_truth=True includes clean scalar ground truth.
+    - include_probabilities=False omits prob_cluster_* columns.
+    - include_pca=False omits pca_x, pca_y, pca_z columns.
+    - FastAPI endpoint /api/clustering/{id}/export_csv passes query parameters properly.
+    """
+    from app.core.config import DATASETS_DIR
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    proj = ensure_default_project()
+    proj_id = proj["id"]
+
+    X = np.array([
+        [1.0, 2.0],
+        [1.1, 2.1],
+        [8.0, 9.0],
+        [8.1, 9.1]
+    ], dtype=np.float32)
+    labels = np.array([0, 0, 1, 1], dtype=np.int32)
+    sample_ids = ["s0", "s1", "s2", "s3"]
+
+    dest_dir = DATASETS_DIR / proj_id
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dataset_id = str(uuid.uuid4())
+    npz_path = dest_dir / f"{dataset_id}.npz"
+    np.savez_compressed(str(npz_path), data=X, labels=labels, sample_ids=np.array(sample_ids))
+
+    now = datetime.now(timezone.utc).isoformat()
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO datasets (id, project_id, name, file_path, file_format, row_count, col_count, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (dataset_id, proj_id, "GT Test Dataset", str(npz_path), "npz", 4, 2, now)
+        )
+        conn.commit()
+
+    # Run clustering with include_ground_truth=True
+    res = ClusteringService.run_clustering(
+        project_id=proj_id,
+        source_type="dataset",
+        source_id=dataset_id,
+        algorithm="kmeans",
+        n_clusters=2,
+        include_ground_truth=True
+    )
+
+    clustering_id = res["clustering_id"]
+    assert res["has_ground_truth"] is True
+    assert res["ground_truth_unique_count"] == 2
+    assert res["is_discrete_ground_truth"] is True
+    assert res["points"][0]["ground_truth"] == 0
+
+    # 1. Export CSV with include_ground_truth=False -> ground_truth column must be omitted
+    csv_no_gt = ClusteringService.export_clustering_csv(clustering_id, include_ground_truth=False)
+    lines_no_gt = [line.split(",") for line in csv_no_gt.strip().splitlines()]
+    header_no_gt = lines_no_gt[0]
+    assert "ground_truth" not in header_no_gt
+    for r in lines_no_gt[1:]:
+        assert len(r) == len(header_no_gt)
+
+    # 2. Export CSV with include_ground_truth=True -> ground_truth column must be included with scalar values
+    csv_gt = ClusteringService.export_clustering_csv(clustering_id, include_ground_truth=True)
+    lines_gt = [line.split(",") for line in csv_gt.strip().splitlines()]
+    header_gt = lines_gt[0]
+    assert header_gt[-1] == "ground_truth"
+    gt_vals = [r[-1] for r in lines_gt[1:]]
+    assert gt_vals == ["0", "0", "1", "1"]
+
+    # 3. Export CSV with include_probabilities=False
+    csv_no_prob = ClusteringService.export_clustering_csv(clustering_id, include_probabilities=False)
+    lines_no_prob = [line.split(",") for line in csv_no_prob.strip().splitlines()]
+    header_no_prob = lines_no_prob[0]
+    assert not any("prob_cluster" in h for h in header_no_prob)
+
+    # 4. Export CSV with include_pca=False
+    csv_no_pca = ClusteringService.export_clustering_csv(clustering_id, include_pca=False)
+    lines_no_pca = [line.split(",") for line in csv_no_pca.strip().splitlines()]
+    header_no_pca = lines_no_pca[0]
+    assert "pca_x" not in header_no_pca
+    assert "pca_y" not in header_no_pca
+    assert "pca_z" not in header_no_pca
+
+    # 5. Test via API endpoint
+    client = TestClient(app)
+    resp = client.get(f"/api/clustering/{clustering_id}/export_csv?include_ground_truth=false")
+    assert resp.status_code == 200
+    assert "ground_truth" not in resp.text.splitlines()[0]
+
+    resp_gt = client.get(f"/api/clustering/{clustering_id}/export_csv?include_ground_truth=true")
+    assert resp_gt.status_code == 200
+    assert "ground_truth" in resp_gt.text.splitlines()[0]
+
+
+def test_idec_clustering_with_4_channel_conv1d_model(tmp_path):
+    """
+    Regression test for 4-channel Conv1D IDEC clustering:
+    Ensures that when a model expects input shape (None, 368, 4) (e.g., 'Encoder_Conv1'),
+    ClusteringService.run_clustering(algorithm='idec') and /api/models/{model_id}/idec_probabilities/{dataset_id}
+    properly load X_seq / derived channels and align axis -1 to 4 instead of failing with
+    'expected axis -1 of input shape to have value 4, but received input with shape (32, 368, 1)'.
+    """
+    from app.core.config import MODELS_DIR, DATASETS_DIR
+    from app.services.keras_model_builder import ClusteringLayer
+    from fastapi.testclient import TestClient
+    from app.main import app
+    import keras
+
+    proj = ensure_default_project()
+    proj_id = proj["id"]
+
+    n_samples = 32
+    seq_len = 368
+    n_channels = 4
+    n_clusters = 3
+
+    np.random.seed(42)
+    X_2d = np.random.randn(n_samples, seq_len).astype(np.float32)
+    X_seq_4ch = np.random.randn(n_samples, seq_len, n_channels).astype(np.float32)
+
+    ds_dir = DATASETS_DIR / proj_id
+    ds_dir.mkdir(parents=True, exist_ok=True)
+
+    # Dataset A: Multi-channel X_seq (32, 368, 4) alongside 2D data (32, 368)
+    ds_4ch_id = str(uuid.uuid4())
+    ds_4ch_path = ds_dir / f"{ds_4ch_id}.npz"
+    np.savez_compressed(str(ds_4ch_path), data=X_2d, X_seq=X_seq_4ch)
+
+    # Dataset B: Single-channel 2D data (32, 368) only
+    ds_1ch_id = str(uuid.uuid4())
+    ds_1ch_path = ds_dir / f"{ds_1ch_id}.npz"
+    np.savez_compressed(str(ds_1ch_path), data=X_2d)
+
+    now = datetime.now(timezone.utc).isoformat()
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO datasets (id, project_id, name, file_path, file_format, row_count, col_count, created_at, metadata_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (ds_4ch_id, proj_id, "4Ch X_seq Dataset", str(ds_4ch_path), "npz", n_samples, seq_len, now, json.dumps({
+                "pipeline_state": {"seq_len": seq_len, "n_channels": n_channels}
+            }))
+        )
+        conn.execute(
+            """
+            INSERT INTO datasets (id, project_id, name, file_path, file_format, row_count, col_count, created_at, metadata_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (ds_1ch_id, proj_id, "1Ch Data Dataset", str(ds_1ch_path), "npz", n_samples, seq_len, now, json.dumps({
+                "pipeline_state": {"seq_len": seq_len}
+            }))
+        )
+        conn.commit()
+
+    # Build a 4-channel Conv1D IDEC model with 'Encoder_Conv1' expecting (None, 368, 4)
+    inp = keras.layers.Input(shape=(seq_len, n_channels), name="Input_Signal")
+    conv1 = keras.layers.Conv1D(8, kernel_size=3, padding="same", activation="relu", name="Encoder_Conv1")(inp)
+    pool = keras.layers.GlobalAveragePooling1D(name="Latent_Pool")(conv1)
+    latent = keras.layers.Dense(6, activation="relu", name="latent_space")(pool)
+    clust_out = ClusteringLayer(n_clusters=n_clusters, name="clustering")(latent)
+    dec_dense = keras.layers.Dense(seq_len * n_channels, activation="linear")(latent)
+    recon_out = keras.layers.Reshape((seq_len, n_channels), name="Decoder_Output")(dec_dense)
+
+    idec_model = keras.Model(inputs=inp, outputs=[clust_out, recon_out])
+    idec_model.compile(optimizer="adam", loss=["kld", "mse"])
+
+    models_dir = MODELS_DIR / proj_id
+    models_dir.mkdir(parents=True, exist_ok=True)
+    model_id = str(uuid.uuid4())
+    weights_path = models_dir / f"{model_id}.keras"
+    idec_model.save(str(weights_path))
+
+    graph_json = json.dumps({
+        "nodes": [
+            {
+                "id": 1,
+                "type": "keras/input",
+                "title": "Input",
+                "properties": {
+                    "shape": f"{seq_len}, {n_channels}",
+                    "channels": ["raw", "grad1", "grad2", "region_labels"]
+                }
+            }
+        ],
+        "links": []
+    })
+
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO models (id, project_id, name, graph_json, weights_path, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (model_id, proj_id, "4Ch Conv1D IDEC", graph_json, str(weights_path), now, now)
+        )
+        conn.commit()
+
+    # Case 1: Run IDEC clustering on the 4-channel X_seq dataset
+    res_4ch = ClusteringService.run_clustering(
+        project_id=proj_id,
+        source_type="dataset",
+        source_id=ds_4ch_id,
+        algorithm="idec",
+        n_clusters=n_clusters,
+        model_id=model_id,
+        latent_layer="latent_space",
+        pretrain_epochs=1,
+        max_iter=2,
+        update_interval=1,
+        batch_size=16
+    )
+    assert res_4ch["algorithm"] == "idec"
+    assert res_4ch["num_samples"] == n_samples
+    assert len(res_4ch["points"]) == n_samples
+
+    # Case 2: Run IDEC clustering on the 1-channel dataset (tests automatic channel expansion via input_configs / tiling)
+    res_1ch = ClusteringService.run_clustering(
+        project_id=proj_id,
+        source_type="dataset",
+        source_id=ds_1ch_id,
+        algorithm="idec",
+        n_clusters=n_clusters,
+        model_id=model_id,
+        latent_layer="latent_space",
+        pretrain_epochs=1,
+        max_iter=2,
+        update_interval=1,
+        batch_size=16
+    )
+    assert res_1ch["algorithm"] == "idec"
+    assert res_1ch["num_samples"] == n_samples
+
+    # Case 3: Verify /api/models/{model_id}/idec_probabilities/{dataset_id} endpoint
+    client = TestClient(app)
+    prob_resp = client.get(f"/api/models/{model_id}/idec_probabilities/{ds_4ch_id}")
+    assert prob_resp.status_code == 200
+    prob_data = prob_resp.json()
+    assert prob_data["n_clusters"] == n_clusters
+    assert prob_data["total_samples"] == n_samples
+
+
+def test_clustering_on_processed_dataset_and_features_preserves_sample_ids_and_extra_columns(tmp_path):
+    """
+    Verifies that:
+    1. Clustering on a (Processed) dataset derived from a root dataset with 1-based sample IDs
+       and an extra column ('Source') preserves real IDs (1, 2, 3, ...) and never defaults to 0.
+    2. Clustering on extracted neural network features derived from such a dataset also preserves
+       the real 1-based sample IDs and available extra columns.
+    3. Exporting CSV via service or API with extra_cols=Source prepends Source right after input_id,
+       and input_id contains real non-zero IDs (1..N).
+    4. Model batch prediction CSV export also preserves 1-based IDs and includes extra columns.
+    """
+    import csv
+    import io
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.schemas.signal import SignalProcessRequest, PipelineStep
+    from app.api.signals import apply_and_save_pipeline
+    from app.services.feature_extraction import FeatureExtractor
+    from app.services.keras_model_builder import KerasModelBuilder
+
+    client = TestClient(app)
+    proj = ensure_default_project()
+    proj_id = proj["id"]
+
+    # 1. Create root CSV with 1-based sample IDs and extra column 'Source'
+    csv_path = tmp_path / "pulse_merged_test.csv"
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["id", "Source", "sig_0", "sig_1", "sig_2", "sig_3"])
+        writer.writerow(["1", "sensor_A", 0.1, 0.2, 0.3, 0.4])
+        writer.writerow(["2", "sensor_B", 0.5, 0.6, 0.7, 0.8])
+        writer.writerow(["3", "sensor_A", 0.9, 1.0, 1.1, 1.2])
+        writer.writerow(["4", "sensor_C", 1.3, 1.4, 1.5, 1.6])
+        writer.writerow(["5", "sensor_B", 1.7, 1.8, 1.9, 2.0])
+        writer.writerow(["6", "sensor_C", 2.1, 2.2, 2.3, 2.4])
+
+    root_ds = DataManager.register_dataset(
+        project_id=proj_id,
+        name="Root Pulse Dataset",
+        source_path=csv_path,
+        has_header=True
+    )
+    assert DataManager.load_sample_ids(root_ds["id"]) == ["1", "2", "3", "4", "5", "6"]
+    assert "Source" in DataManager.get_available_extra_columns(root_ds["id"])
+
+    # 2. Derive a (Processed) signal dataset via pipeline
+    proc_res = apply_and_save_pipeline(SignalProcessRequest(
+        dataset_id=root_ds["id"],
+        pipeline=[PipelineStep(name="to_fixed_length", params={"target_length": 4})],
+        save_as_new_dataset=True,
+        new_dataset_name="Pulse (Processed)"
+    ))
+    proc_ds_id = proc_res["new_dataset_id"]
+    assert DataManager.load_sample_ids(proc_ds_id) == ["1", "2", "3", "4", "5", "6"]
+    assert "Source" in DataManager.get_available_extra_columns(proc_ds_id)
+
+    # 3. Test Clustering on (Processed) dataset
+    res_proc = ClusteringService.run_clustering(
+        project_id=proj_id,
+        source_type="dataset",
+        source_id=proc_ds_id,
+        algorithm="kmeans",
+        n_clusters=2
+    )
+    assert res_proc["num_samples"] == 6
+    assert [p["input_id"] for p in res_proc["points"]] == ["1", "2", "3", "4", "5", "6"]
+    assert "Source" in res_proc["available_extra_columns"]
+
+    # Verify detail reload preserves 1-based sample IDs and available_extra_columns
+    detail = ClusteringService.get_clustering_detail(res_proc["clustering_id"])
+    assert [p["input_id"] for p in detail["points"]] == ["1", "2", "3", "4", "5", "6"]
+    assert "Source" in detail["available_extra_columns"]
+
+    # Verify CSV export with extra_cols="Source"
+    csv_direct = ClusteringService.export_clustering_csv(res_proc["clustering_id"], extra_columns=["Source"])
+    df_direct = pd.read_csv(io.StringIO(csv_direct))
+    assert list(df_direct.columns[:2]) == ["input_id", "Source"]
+    assert [str(v) for v in df_direct["input_id"].tolist()] == ["1", "2", "3", "4", "5", "6"]
+    assert df_direct["Source"].tolist() == ["sensor_A", "sensor_B", "sensor_A", "sensor_C", "sensor_B", "sensor_C"]
+
+    # Verify API export endpoint
+    api_resp = client.get(f"/api/clustering/{res_proc['clustering_id']}/export_csv?extra_cols=Source")
+    assert api_resp.status_code == 200
+    df_api = pd.read_csv(io.StringIO(api_resp.text))
+    assert list(df_api.columns[:2]) == ["input_id", "Source"]
+    assert [str(v) for v in df_api["input_id"].tolist()] == ["1", "2", "3", "4", "5", "6"]
+    assert df_api["Source"].tolist() == ["sensor_A", "sensor_B", "sensor_A", "sensor_C", "sensor_B", "sensor_C"]
+
+    # Verify API export endpoint without extra_cols
+    api_resp_no_extra = client.get(f"/api/clustering/{res_proc['clustering_id']}/export_csv")
+    assert api_resp_no_extra.status_code == 200
+    df_api_no_extra = pd.read_csv(io.StringIO(api_resp_no_extra.text))
+    assert df_api_no_extra.columns[0] == "input_id"
+    assert "Source" not in df_api_no_extra.columns
+    assert [str(v) for v in df_api_no_extra["input_id"].tolist()] == ["1", "2", "3", "4", "5", "6"]
+
+    # 4. Extract features from the (Processed) dataset and test Clustering on Features
+    graph = {
+        "nodes": [
+            {"id": "in1", "type": "input", "properties": {"shape": "4"}},
+            {"id": "dense_enc", "type": "dense", "properties": {"units": 4, "custom_name": "Encoder"}},
+            {"id": "out1", "type": "dense", "properties": {"units": 2}}
+        ],
+        "links": [
+            ["l1", "in1", 0, "dense_enc", 0],
+            ["l2", "dense_enc", 0, "out1", 0]
+        ]
+    }
+    model, summary = KerasModelBuilder.build_model(graph)
+    model_path = tmp_path / "model_clustering_test.keras"
+    model.save(str(model_path))
+    model_id = f"model-clust-{uuid.uuid4().hex[:8]}"
+    now = datetime.now(timezone.utc).isoformat()
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO models (id, project_id, name, task_type, graph_json, summary_json, weights_path, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (model_id, proj_id, "Test Model", "classification", json.dumps(graph), json.dumps(summary), str(model_path), now, now)
+        )
+        conn.commit()
+
+    feat_res = FeatureExtractor.extract_features(
+        project_id=proj_id,
+        model_id=model_id,
+        dataset_id=proc_ds_id,
+        layer_name=model.layers[1].name
+    )
+    feat_id = feat_res["feature_id"]
+    assert "Source" in feat_res["available_extra_columns"]
+
+    # Run clustering on features
+    res_feat = ClusteringService.run_clustering(
+        project_id=proj_id,
+        source_type="features",
+        source_id=feat_id,
+        algorithm="kmeans",
+        n_clusters=2
+    )
+    assert res_feat["num_samples"] == 6
+    assert [p["input_id"] for p in res_feat["points"]] == ["1", "2", "3", "4", "5", "6"]
+    assert "Source" in res_feat["available_extra_columns"]
+
+    # Export features clustering CSV via API
+    api_resp_feat = client.get(f"/api/clustering/{res_feat['clustering_id']}/export_csv?extra_cols=Source")
+    assert api_resp_feat.status_code == 200
+    df_feat_csv = pd.read_csv(io.StringIO(api_resp_feat.text))
+    assert list(df_feat_csv.columns[:2]) == ["input_id", "Source"]
+    assert [str(v) for v in df_feat_csv["input_id"].tolist()] == ["1", "2", "3", "4", "5", "6"]
+    assert df_feat_csv["Source"].tolist() == ["sensor_A", "sensor_B", "sensor_A", "sensor_C", "sensor_B", "sensor_C"]
+
+    # 5. Also verify Batch Predict CSV export on the (Processed) dataset preserves 1-based IDs and Source column
+    pred_resp = client.get(f"/api/training/predict_csv/{model_id}/{proc_ds_id}?extra_cols=Source")
+    assert pred_resp.status_code == 200
+    df_pred = pd.read_csv(io.StringIO(pred_resp.text))
+    assert list(df_pred.columns[:2]) == ["input_id", "Source"]
+    assert [str(v) for v in df_pred["input_id"].tolist()] == ["1", "2", "3", "4", "5", "6"]
+    assert df_pred["Source"].tolist() == ["sensor_A", "sensor_B", "sensor_A", "sensor_C", "sensor_B", "sensor_C"]
+
+    # 6. Verify IDEC probabilities CSV export on the (Processed) dataset preserves 1-based IDs and Source column
+    idec_resp = client.get(f"/api/models/{model_id}/idec_probabilities/{proc_ds_id}/export_csv?extra_cols=Source")
+    assert idec_resp.status_code == 200
+    df_idec = pd.read_csv(io.StringIO(idec_resp.text))
+    assert list(df_idec.columns[:2]) == ["Input_ID", "Source"]
+    assert [str(v) for v in df_idec["Input_ID"].tolist()] == ["1", "2", "3", "4", "5", "6"]
+    assert df_idec["Source"].tolist() == ["sensor_A", "sensor_B", "sensor_A", "sensor_C", "sensor_B", "sensor_C"]
+
+
+
+
+

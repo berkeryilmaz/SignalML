@@ -1,9 +1,10 @@
 from typing import Dict, Any, List, Optional
-from fastapi import APIRouter, HTTPException, Body
+from fastapi import APIRouter, HTTPException, Body, Query
 from app.services.feature_extraction import FeatureExtractor, FeatureExtractionError
 from app.schemas.clustering import FeatureExtractionRequest
 from app.core.database import get_db_connection
 from app.core.config import resolve_storage_path
+from app.services.data_manager import DataManager
 
 router = APIRouter(prefix="/api/features", tags=["Feature Extraction"])
 
@@ -37,6 +38,10 @@ def extract_features(payload: FeatureExtractionRequest):
             raise HTTPException(status_code=404, detail="Model not found")
         project_id = row["project_id"]
 
+        ds_row = conn.execute("SELECT id, row_count FROM datasets WHERE id = ?", (payload.dataset_id,)).fetchone()
+        if not ds_row:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+
     try:
         res = FeatureExtractor.extract_features(
             project_id=project_id,
@@ -55,20 +60,50 @@ def extract_features(payload: FeatureExtractionRequest):
 
 @router.get("/list/{project_id}")
 def list_extracted_features(project_id: str):
-    """Lists all saved feature sets in the project."""
+    """Lists all saved feature sets in the project with source dataset and model metadata."""
     with get_db_connection() as conn:
-        rows = conn.execute("SELECT * FROM features WHERE project_id = ? ORDER BY created_at DESC", (project_id,)).fetchall()
+        rows = conn.execute(
+            """
+            SELECT f.*, d.name AS dataset_name, d.row_count AS dataset_row_count, m.name AS model_name
+            FROM features f
+            LEFT JOIN datasets d ON f.dataset_id = d.id
+            LEFT JOIN models m ON f.model_id = m.id
+            WHERE f.project_id = ?
+            ORDER BY f.created_at DESC
+            """,
+            (project_id,)
+        ).fetchall()
         import json
         res = []
         for r in rows:
             d = dict(r)
             d["shape"] = json.loads(d.get("shape_json", "[]"))
+            d["available_extra_columns"] = DataManager.get_available_extra_columns(d["dataset_id"]) if d.get("dataset_id") else []
             res.append(d)
         return res
 
 
+@router.post("/{feature_id}/save_dataset")
+def save_features_as_dataset(feature_id: str, payload: Dict[str, Any] = Body(default={})):
+    """
+    Saves an extracted feature matrix as a persistent project dataset for training or analysis.
+    Ensures row_count and col_count match extracted feature dimensions.
+    """
+    try:
+        custom_name = payload.get("name") or payload.get("custom_name")
+        res = FeatureExtractor.save_as_dataset(feature_id, custom_name=custom_name)
+        return res
+    except FeatureExtractionError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save features as dataset: {str(e)}")
+
+
 @router.get("/{feature_id}/export_csv")
-def export_features_csv(feature_id: str):
+def export_features_csv(
+    feature_id: str,
+    extra_cols: Optional[str] = Query(default=None, description="Comma-separated extra columns from main table to include")
+):
     """Exports extracted feature matrix as a CSV file download (with Input ID column and custom layer name)."""
     try:
         features, labels, record = FeatureExtractor.load_feature_matrix(feature_id)
@@ -81,9 +116,9 @@ def export_features_csv(feature_id: str):
     from fastapi.responses import StreamingResponse
 
     num_samples, dim = features.shape
-    sample_ids = [str(i) for i in range(num_samples)]
+    sample_ids = None
 
-    # Try loading sample_ids from feature .npz or parent dataset .npz
+    # Try loading sample_ids from feature .npz
     try:
         fp = resolve_storage_path(record.get("file_path"))
         if fp and fp.exists():
@@ -92,32 +127,53 @@ def export_features_csv(feature_id: str):
                     s_ids = [s.decode("utf-8") if isinstance(s, bytes) else str(s) for s in fnpz["sample_ids"]]
                     if len(s_ids) == num_samples:
                         sample_ids = s_ids
-        if sample_ids == [str(i) for i in range(num_samples)] and record.get("dataset_id"):
-            with get_db_connection() as conn:
-                ds_row = conn.execute("SELECT file_path FROM datasets WHERE id = ?", (record["dataset_id"],)).fetchone()
-                if ds_row and ds_row["file_path"]:
-                    dsp = resolve_storage_path(ds_row["file_path"])
-                    if dsp and dsp.exists():
-                        with np.load(str(dsp), allow_pickle=False) as dnpz:
-                            if "sample_ids" in dnpz:
-                                s_ids = [s.decode("utf-8") if isinstance(s, bytes) else str(s) for s in dnpz["sample_ids"]]
-                                if len(s_ids) >= num_samples:
-                                    sample_ids = s_ids[:num_samples]
     except Exception:
         pass
+
+    # If missing or default zero-indexed fallback, resolve via DataManager.load_sample_ids
+    if sample_ids is None or DataManager._is_default_zero_indexed(sample_ids):
+        if record.get("dataset_id"):
+            try:
+                resolved_sids = DataManager.load_sample_ids(record["dataset_id"], expected_count=num_samples)
+                if resolved_sids and len(resolved_sids) == num_samples:
+                    sample_ids = resolved_sids
+            except Exception:
+                pass
+
+    if sample_ids is None or len(sample_ids) != num_samples:
+        sample_ids = [str(i) for i in range(num_samples)]
+
+    extra_dict: Dict[str, List[str]] = {}
+    selected_extra_cols: List[str] = []
+    if extra_cols and record.get("dataset_id"):
+        requested_cols = [c.strip() for c in extra_cols.split(",") if c.strip()]
+        if requested_cols:
+            try:
+                extra_dict = DataManager.load_extra_columns(
+                    record["dataset_id"],
+                    selected_columns=requested_cols,
+                    expected_count=num_samples
+                )
+                selected_extra_cols = [c for c in requested_cols if c in extra_dict]
+            except Exception:
+                extra_dict = {}
+                selected_extra_cols = []
 
     layer_prefix = (record.get("layer_id") or "feat").replace(" ", "_")
 
     output = io.StringIO()
     writer = csv.writer(output)
 
-    header = ["input_id"] + [f"{layer_prefix}_{i}" for i in range(dim)]
+    header = ["input_id"] + selected_extra_cols + [f"{layer_prefix}_{i}" for i in range(dim)]
     if labels is not None:
         header.append("label")
     writer.writerow(header)
 
     for i in range(num_samples):
-        row = [sample_ids[i]] + [float(val) for val in features[i]]
+        row = [sample_ids[i]]
+        for col in selected_extra_cols:
+            row.append(extra_dict[col][i])
+        row.extend([float(val) for val in features[i]])
         if labels is not None:
             try:
                 row.append(float(labels[i]))
