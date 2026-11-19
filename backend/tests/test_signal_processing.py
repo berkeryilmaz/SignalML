@@ -220,3 +220,151 @@ def test_exact_n_signals_export():
     npy_bytes, _, _ = export_signals(signals, output_format="npy", target_length=target_N)
     loaded_npy = np.load(io.BytesIO(npy_bytes))
     assert loaded_npy.shape == (8, target_N)
+
+
+def test_export_signals_with_ids_and_extra_columns():
+    """
+    Tests export_signals service directly when include_id=True and extra_columns_dict is provided.
+    """
+    signals = np.array([
+        [1.0, 2.0, 3.0, 4.0],
+        [5.0, 6.0, 7.0, 8.0],
+        [9.0, 10.0, 11.0, 12.0]
+    ], dtype=np.float32)
+    labels = np.array([0, 1, 0])
+    sample_ids = ["101", "102", "103"]
+    extra_cols = {"Source": ["alpha", "beta", "gamma"], "Batch": ["B1", "B2", "B1"]}
+
+    # 1. Export with include_id and extra_columns
+    csv_bytes, mime, verif = export_signals(
+        signals=signals,
+        labels=labels,
+        output_format="csv",
+        include_id=True,
+        sample_ids=sample_ids,
+        extra_columns_dict=extra_cols
+    )
+    assert mime == "text/csv"
+    assert verif["include_id"] is True
+    assert verif["extra_columns"] == ["Source", "Batch"]
+
+    df = pd.read_csv(io.BytesIO(csv_bytes))
+    # Expected columns: id, Source, Batch, s0, s1, s2, s3, label
+    assert list(df.columns) == ["id", "Source", "Batch", "s0", "s1", "s2", "s3", "label"]
+    assert [str(v) for v in df["id"].tolist()] == ["101", "102", "103"]
+    assert df["Source"].tolist() == ["alpha", "beta", "gamma"]
+    assert df["Batch"].tolist() == ["B1", "B2", "B1"]
+    assert df["s0"].tolist() == [1.0, 5.0, 9.0]
+    assert df["label"].tolist() == [0, 1, 0]
+
+    # 2. Export with only include_id (no extra columns)
+    csv_id_only, _, _ = export_signals(
+        signals=signals,
+        labels=labels,
+        output_format="csv",
+        include_id=True,
+        sample_ids=sample_ids
+    )
+    df_id_only = pd.read_csv(io.BytesIO(csv_id_only))
+    assert list(df_id_only.columns) == ["id", "s0", "s1", "s2", "s3", "label"]
+    assert [str(v) for v in df_id_only["id"].tolist()] == ["101", "102", "103"]
+
+
+def test_signal_processing_pipeline_and_api_export_with_non_zero_ids(tmp_path):
+    """
+    Verifies that:
+    1. A dataset with real non-zero IDs (e.g. 1, 2, 3, 4, 5) and extra column 'Source'
+       retains its real sample IDs (dtype=str, not object) and extra columns after apply_and_save_pipeline.
+    2. POST /api/signals/export with include_id=True and extra_columns=['Source'] exports CSV
+       starting at '1' (not '0'), with header: id, Source, s0, s1, ...
+    3. POST /api/signals/export without include_id exports pure signal columns with no header.
+    """
+    import csv
+    import json
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.core.database import ensure_default_project, get_db_connection
+    from app.services.data_manager import DataManager
+    from app.schemas.signal import SignalProcessRequest, PipelineStep
+    from app.api.signals import apply_and_save_pipeline
+
+    client = TestClient(app)
+    proj = ensure_default_project()
+    proj_id = proj["id"]
+
+    # 1. Create dataset CSV with non-zero IDs starting at 1, extra column Source, and signals
+    csv_file = tmp_path / "signals_with_meta.csv"
+    with open(csv_file, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["id", "Source", "sig_0", "sig_1", "sig_2", "sig_3"])
+        writer.writerow(["1", "SensorA", 10.0, 20.0, 30.0, 40.0])
+        writer.writerow(["2", "SensorB", 15.0, 25.0, 35.0, 45.0])
+        writer.writerow(["3", "SensorA", 12.0, 22.0, 32.0, 42.0])
+        writer.writerow(["4", "SensorC", 18.0, 28.0, 38.0, 48.0])
+        writer.writerow(["5", "SensorB", 14.0, 24.0, 34.0, 44.0])
+
+    ds = DataManager.register_dataset(
+        project_id=proj_id,
+        name="Source Signal DS",
+        source_path=csv_file,
+        has_header=True
+    )
+    ds_id = ds["id"]
+
+    # Verify DataManager extracts real IDs starting at 1
+    sids = DataManager.load_sample_ids(ds_id)
+    assert sids == ["1", "2", "3", "4", "5"]
+    assert DataManager.get_available_extra_columns(ds_id) == ["Source"]
+
+    # 2. apply_and_save_pipeline
+    req = SignalProcessRequest(
+        dataset_id=ds_id,
+        pipeline=[PipelineStep(name="to_fixed_length", params={"target_length": 6})],
+        save_as_new_dataset=True,
+        new_dataset_name="Processed Signal DS"
+    )
+    save_res = apply_and_save_pipeline(req)
+    new_ds_id = save_res["new_dataset_id"]
+
+    # Check new dataset in DB and .npz
+    new_rec = DataManager.get_dataset(new_ds_id)
+    assert new_rec is not None
+    with np.load(new_rec["file_path"], allow_pickle=False) as npz:
+        assert "sample_ids" in npz
+        proc_sids = [s.decode("utf-8") if isinstance(s, bytes) else str(s) for s in npz["sample_ids"]]
+        # sample_ids MUST start at 1, NOT 0!
+        assert proc_sids == ["1", "2", "3", "4", "5"]
+        assert npz["sample_ids"].dtype.kind in ("U", "S")  # string, NEVER object!
+        assert "extra_columns_json" in npz
+        extra_parsed = json.loads(str(npz["extra_columns_json"].item()))
+        assert extra_parsed["Source"] == ["SensorA", "SensorB", "SensorA", "SensorC", "SensorB"]
+
+    # Verify lineage resolution via DataManager
+    assert DataManager.load_sample_ids(new_ds_id) == ["1", "2", "3", "4", "5"]
+    assert DataManager.get_available_extra_columns(new_ds_id) == ["Source"]
+
+    # 3. Test POST /api/signals/export with include_id=True and extra_columns=["Source"]
+    resp_export = client.post("/api/signals/export", json={
+        "dataset_id": new_ds_id,
+        "target_length": 6,
+        "output_format": "csv",
+        "include_id": True,
+        "extra_columns": ["Source"]
+    })
+    assert resp_export.status_code == 200
+    df_exported = pd.read_csv(io.StringIO(resp_export.text))
+    assert list(df_exported.columns) == ["id", "Source", "s0", "s1", "s2", "s3", "s4", "s5"]
+    assert [str(v) for v in df_exported["id"].tolist()] == ["1", "2", "3", "4", "5"]
+    assert df_exported["Source"].tolist() == ["SensorA", "SensorB", "SensorA", "SensorC", "SensorB"]
+
+    # 4. Test POST /api/signals/export without include_id or extra_columns (backward compatibility)
+    resp_compat = client.post("/api/signals/export", json={
+        "dataset_id": new_ds_id,
+        "target_length": 6,
+        "output_format": "csv"
+    })
+    assert resp_compat.status_code == 200
+    df_compat = pd.read_csv(io.StringIO(resp_compat.text), header=None)
+    assert df_compat.shape == (5, 6)
+    # Check that there is no header text row
+    assert isinstance(df_compat.iloc[0, 0], (float, np.floating))

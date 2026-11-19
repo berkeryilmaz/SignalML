@@ -49,3 +49,6 @@ class ClusteringRequest(BaseModel):
     
     # PCA
     compute_pca: bool = Field(default=True)
+    
+    # Ground Truth Control
+    include_ground_truth: bool = Field(default=True)

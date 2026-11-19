@@ -26,3 +26,5 @@ class SignalExportRequest(BaseModel):
     output_format: str = "csv"  # csv, txt, npy, npz
     separate_labels: bool = False
     pipeline: Optional[List[PipelineStep]] = None
+    include_id: bool = False
+    extra_columns: Optional[List[str]] = None

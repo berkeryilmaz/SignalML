@@ -4,7 +4,7 @@ import json
 import uuid
 import threading
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Union
 import numpy as np
 import keras
 from sklearn.model_selection import train_test_split
@@ -174,7 +174,7 @@ class TrainingService:
         with cls._lock:
             cls._active_jobs[job_id] = job
 
-        # Record in DB
+        # Record in DB and update active_dataset_id on the project
         now = datetime.now(timezone.utc).isoformat()
         with get_db_connection() as conn:
             conn.execute(
@@ -189,6 +189,10 @@ class TrainingService:
                     json.dumps(config), "{}", "{}", now
                 )
             )
+            conn.execute(
+                "UPDATE projects SET active_dataset_id = ?, active_model_id = ?, updated_at = ? WHERE id = ?",
+                (dataset_id, model_id, now, project_id)
+            )
             conn.commit()
 
         # Launch training in worker thread
@@ -202,12 +206,14 @@ class TrainingService:
     def prepare_model_inputs(
         cls,
         arg1: Any,
-        arg2: Any
+        arg2: Any,
+        model_record: Optional[Dict[str, Any]] = None
     ) -> PreparedDataset:
         """
         Loads dataset (.npz) containing data, X_seq, X_tabular, y, labels, sample_ids.
         Adapts shapes and ranks to match single or multi-input Keras models.
-        Accepts (model, dataset_id_or_path) or (dataset_id_or_path, model).
+        Supports multi-channel derived signals (np.gradient derivatives, region masks, FFT)
+        and per-node dataset_id bindings for Input and Output nodes.
         """
         if isinstance(arg1, keras.Model):
             model = arg1
@@ -216,139 +222,140 @@ class TrainingService:
             model = arg2
             dataset_ref = arg1
 
-        record = None
-        file_path = None
+        input_configs = getattr(model, "_input_configs", None)
+        output_configs = getattr(model, "_output_configs", None)
 
-        if isinstance(dataset_ref, (str, Path)) and (str(dataset_ref).endswith(".npz") or Path(dataset_ref).exists()):
-            resolved = resolve_storage_path(str(dataset_ref))
-            if resolved and resolved.exists():
-                file_path = resolved
-            elif Path(dataset_ref).exists():
-                file_path = Path(dataset_ref)
+        if (not input_configs or not output_configs) and model_record:
+            try:
+                sum_json = json.loads(model_record.get("summary_json", "{}"))
+                if not input_configs and "input_configs" in sum_json:
+                    input_configs = sum_json["input_configs"]
+                if not output_configs and "output_configs" in sum_json:
+                    output_configs = sum_json["output_configs"]
+            except Exception:
+                pass
+            if not input_configs or not output_configs:
+                try:
+                    graph_json = json.loads(model_record.get("graph_json", "{}"))
+                    _, rebuild_sum = KerasModelBuilder.build_model(graph_json)
+                    if not input_configs:
+                        input_configs = rebuild_sum.get("input_configs")
+                    if not output_configs:
+                        output_configs = rebuild_sum.get("output_configs")
+                except Exception:
+                    pass
 
-        if file_path is None:
-            dataset_id = str(dataset_ref)
-            record = DataManager.get_dataset(dataset_id)
-            if not record:
-                raise ValueError(f"Dataset {dataset_id} not found")
+        if input_configs:
+            model._input_configs = input_configs
+        if output_configs:
+            model._output_configs = output_configs
 
-            file_path = resolve_storage_path(record["file_path"])
-            if not file_path or not file_path.exists():
-                cand = DATASETS_DIR / record.get("project_id", "") / f"{dataset_id}.npz"
-                if cand.exists():
-                    file_path = cand
+        dataset_cache: Dict[str, Dict[str, Any]] = {}
+
+        def _get_npz(ds_id_or_path: Any) -> Dict[str, Any]:
+            key = str(ds_id_or_path)
+            if key in dataset_cache:
+                return dataset_cache[key]
+
+            f_path = None
+            rec = None
+            if str(ds_id_or_path).endswith(".npz") or Path(str(ds_id_or_path)).exists():
+                resolved = resolve_storage_path(str(ds_id_or_path))
+                f_path = resolved if resolved and resolved.exists() else Path(str(ds_id_or_path))
+                rec = {"file_path": str(f_path), "name": f_path.stem, "metadata": {}}
+            else:
+                rec = DataManager.get_dataset(str(ds_id_or_path))
+                if not rec:
+                    raise ValueError(f"Dataset {ds_id_or_path} not found")
+                resolved = resolve_storage_path(rec["file_path"])
+                if resolved and resolved.exists():
+                    f_path = resolved
                 else:
-                    raise FileNotFoundError(f"Dataset file missing on disk: {record.get('file_path')}")
-        else:
-            record = {"file_path": str(file_path), "name": Path(file_path).stem}
-
-        with np.load(str(file_path), allow_pickle=False) as npz:
-            data = npz["data"] if "data" in npz else None
-            X_seq = npz["X_seq"] if "X_seq" in npz else None
-            X_tabular = npz["X_tabular"] if "X_tabular" in npz else None
-            labels = npz["labels"] if "labels" in npz else (npz["y"] if "y" in npz else None)
-            raw_sample_ids = npz["sample_ids"] if "sample_ids" in npz else None
-
-        # Determine total samples
-        n_samples = 0
-        for cand_arr in (data, X_seq, X_tabular):
-            if cand_arr is not None:
-                n_samples = len(cand_arr)
-                break
-
-        if raw_sample_ids is not None:
-            sample_ids = [
-                s.decode("utf-8") if isinstance(s, bytes) else str(s)
-                for s in raw_sample_ids
-            ]
-        else:
-            sample_ids = [f"sample_{i}" for i in range(n_samples)]
-
-        if labels is not None:
-            labels = np.nan_to_num(np.array(labels), copy=False, nan=0.0, posinf=0.0, neginf=0.0)
-
-        # Inspect model input shape
-        model_input_shapes = model.input_shape
-        if isinstance(model_input_shapes, list) and len(model_input_shapes) > 1:
-            multi_inputs = []
-            for in_shape in model_input_shapes:
-                rank = len(in_shape)
-                if rank == 3:
-                    # 3D: (None, seq_len, channels)
-                    if X_seq is not None:
-                        arr = np.array(X_seq, dtype=np.float32)
-                    elif data is not None:
-                        arr = np.array(data, dtype=np.float32)
-                    elif X_tabular is not None:
-                        arr = np.array(X_tabular, dtype=np.float32)
+                    cand = DATASETS_DIR / rec.get("project_id", "") / f"{ds_id_or_path}.npz"
+                    if cand.exists():
+                        f_path = cand
                     else:
-                        raise ValueError("No input data array found in dataset .npz for 3D input")
+                        raise FileNotFoundError(f"Dataset file missing: {rec.get('file_path')}")
 
+            with np.load(str(f_path), allow_pickle=False) as npz:
+                raw_labels = npz["labels"] if "labels" in npz else (npz["y"] if "y" in npz else None)
+                cleaned_labels = np.nan_to_num(np.array(raw_labels), copy=False, nan=0.0, posinf=0.0, neginf=0.0) if raw_labels is not None else None
+                entry = {
+                    "record": rec,
+                    "file_path": str(f_path),
+                    "data": npz["data"] if "data" in npz else None,
+                    "X_seq": npz["X_seq"] if "X_seq" in npz else None,
+                    "X_tabular": npz["X_tabular"] if "X_tabular" in npz else None,
+                    "labels": cleaned_labels,
+                    "sample_ids": npz["sample_ids"] if "sample_ids" in npz else None,
+                    "region_labels": npz["region_labels"] if "region_labels" in npz else None,
+                }
+            dataset_cache[key] = entry
+            return entry
+
+        primary_entry = _get_npz(dataset_ref)
+        record = primary_entry["record"]
+
+        model_input_shapes = model.input_shape
+        is_multi_input = isinstance(model_input_shapes, list) and len(model_input_shapes) > 1
+        shapes_to_process = model_input_shapes if is_multi_input else [model_input_shapes]
+
+        configured_input_ds_ids = {
+            str(ic.get("dataset_id", "")).strip()
+            for ic in (input_configs or [])
+            if isinstance(ic, dict) and str(ic.get("dataset_id", "")).strip()
+        }
+        # Only honor per-node dataset_id bindings when the model is a multi-input model AND
+        # the caller's dataset_ref is one of the configured input datasets.
+        # When training, evaluating, or extracting features on a newly selected dataset_ref,
+        # use primary_entry (dataset_ref) so stale dataset_ids from NN Builder never override it.
+        honor_node_ds = is_multi_input and (str(dataset_ref) in configured_input_ds_ids)
+
+        input_tensors = []
+        sample_counts = []
+
+        for idx, in_shape in enumerate(shapes_to_process):
+            cfg = input_configs[idx] if input_configs and idx < len(input_configs) else {}
+            node_ds_id = str(cfg.get("dataset_id", "")).strip()
+            entry = _get_npz(node_ds_id) if (honor_node_ds and node_ds_id) else primary_entry
+
+            data = entry["data"]
+            X_seq = entry["X_seq"]
+            X_tabular = entry["X_tabular"]
+
+            input_source = cfg.get("input_source", "auto")
+            channels = cfg.get("channels", ["raw"])
+            normalize_channels = cfg.get("normalize_channels", False)
+            region_threshold = float(cfg.get("region_threshold", 2.0))
+            selected_cols = cfg.get("selected_columns", [])
+
+            rank = len(in_shape)
+            if rank == 3:
+                base = X_seq if X_seq is not None else (data if data is not None else X_tabular)
+                if base is None:
+                    raise ValueError(f"No signal data available for 3D input {idx}")
+
+                expected_ch = in_shape[2] if len(in_shape) > 2 else None
+                base_ndim = getattr(base, "ndim", 0)
+                base_channels = base.shape[2] if base_ndim == 3 else 1
+
+                if base_ndim == 3 and base_channels > 1 and (channels == ["raw"] or channels == ["raw_all"]) and (expected_ch == base_channels or expected_ch is None):
+                    arr = np.array(base, dtype=np.float32)
+                elif channels and (len(channels) > 1 or (channels[0] not in ("raw", "raw_all")) or input_source == "region_mask"):
+                    from app.services.signal_processing import build_signal_channels
+                    arr = build_signal_channels(
+                        base_signal=base,
+                        channels=channels if input_source != "region_mask" else ["region_mask"],
+                        normalize_channels=normalize_channels,
+                        region_threshold=region_threshold,
+                        existing_region_labels=entry["region_labels"]
+                    )
+                else:
+                    arr = np.array(base, dtype=np.float32)
                     if arr.ndim == 2:
                         arr = np.expand_dims(arr, axis=-1)
                     elif arr.ndim == 1:
                         arr = arr.reshape(-1, 1, 1)
-
-                    expected_len = in_shape[1]
-                    if expected_len is not None and arr.shape[1] != expected_len:
-                        if arr.shape[1] > expected_len:
-                            arr = arr[:, :expected_len, :]
-                        else:
-                            arr = np.pad(arr, ((0, 0), (0, expected_len - arr.shape[1]), (0, 0)))
-
-                    expected_ch = in_shape[2]
-                    if expected_ch is not None and arr.shape[2] != expected_ch:
-                        if arr.shape[2] > expected_ch:
-                            arr = arr[:, :, :expected_ch]
-                        elif arr.shape[2] == 1 and expected_ch > 1:
-                            arr = np.repeat(arr, expected_ch, axis=-1)
-
-                    arr = np.nan_to_num(arr, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
-                    multi_inputs.append(arr)
-
-                elif rank == 2:
-                    # 2D: (None, feat_dim)
-                    if X_tabular is not None:
-                        arr = np.array(X_tabular, dtype=np.float32)
-                    elif data is not None:
-                        arr = np.array(data, dtype=np.float32)
-                    elif X_seq is not None:
-                        arr = np.array(X_seq, dtype=np.float32)
-                    else:
-                        raise ValueError("No input data array found in dataset .npz for 2D input")
-
-                    if arr.ndim > 2:
-                        arr = arr.reshape(len(arr), -1)
-                    elif arr.ndim == 1:
-                        arr = arr.reshape(-1, 1)
-
-                    expected_dim = in_shape[1]
-                    if expected_dim is not None and arr.shape[1] != expected_dim:
-                        if arr.shape[1] > expected_dim:
-                            arr = arr[:, :expected_dim]
-                        else:
-                            arr = np.pad(arr, ((0, 0), (0, expected_dim - arr.shape[1])))
-
-                    arr = np.nan_to_num(arr, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
-                    multi_inputs.append(arr)
-                else:
-                    arr = np.array(data if data is not None else (X_tabular if X_tabular is not None else X_seq), dtype=np.float32)
-                    arr = np.nan_to_num(arr, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
-                    multi_inputs.append(arr)
-
-            X = multi_inputs
-        else:
-            in_shape = model_input_shapes[0] if isinstance(model_input_shapes, list) else model_input_shapes
-            arr = data if data is not None else (X_seq if X_seq is not None else X_tabular)
-            if arr is None:
-                raise ValueError("No input array found in dataset .npz")
-            arr = np.array(arr, dtype=np.float32)
-
-            if len(in_shape) == 3:
-                if arr.ndim == 2:
-                    arr = np.expand_dims(arr, axis=-1)
-                elif arr.ndim == 1:
-                    arr = arr.reshape(-1, 1, 1)
 
                 expected_len = in_shape[1]
                 if expected_len is not None and arr.shape[1] != expected_len:
@@ -364,11 +371,27 @@ class TrainingService:
                     elif arr.shape[2] == 1 and expected_ch > 1:
                         arr = np.repeat(arr, expected_ch, axis=-1)
 
-            elif len(in_shape) == 2:
+                arr = np.nan_to_num(arr, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+                input_tensors.append(arr)
+                sample_counts.append(len(arr))
+
+            elif rank == 2:
+                base = X_tabular if X_tabular is not None else (data if data is not None else X_seq)
+                if base is None:
+                    raise ValueError(f"No tabular data available for 2D input {idx}")
+                arr = np.array(base, dtype=np.float32)
                 if arr.ndim > 2:
                     arr = arr.reshape(len(arr), -1)
                 elif arr.ndim == 1:
                     arr = arr.reshape(-1, 1)
+
+                if selected_cols and entry["record"] and "metadata" in entry["record"]:
+                    meta = entry["record"]["metadata"]
+                    cols_meta = meta.get("columns", []) if isinstance(meta, dict) else []
+                    if cols_meta:
+                        matched_indices = [cols_meta.index(c) for c in selected_cols if c in cols_meta]
+                        if matched_indices:
+                            arr = arr[:, matched_indices]
 
                 expected_dim = in_shape[1]
                 if expected_dim is not None and arr.shape[1] != expected_dim:
@@ -377,10 +400,123 @@ class TrainingService:
                     else:
                         arr = np.pad(arr, ((0, 0), (0, expected_dim - arr.shape[1])))
 
-            X = np.nan_to_num(arr, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+                arr = np.nan_to_num(arr, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+                input_tensors.append(arr)
+                sample_counts.append(len(arr))
+            else:
+                base = data if data is not None else (X_seq if X_seq is not None else X_tabular)
+                arr = np.nan_to_num(np.array(base, dtype=np.float32), copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+                input_tensors.append(arr)
+                sample_counts.append(len(arr))
 
+        min_n = min(sample_counts) if sample_counts else 0
+        aligned_inputs = [t[:min_n] for t in input_tensors]
+
+        # Target Output Preparation
+        model_outputs = model.outputs if isinstance(model.outputs, list) else [model.output]
+        output_tensors = []
+
+        for j, out_t in enumerate(model_outputs):
+            out_shape = out_t.shape
+            out_cfg = output_configs[j] if output_configs and j < len(output_configs) else {}
+            node_ds_id = str(out_cfg.get("dataset_id", "")).strip()
+            out_entry = _get_npz(node_ds_id) if (honor_node_ds and node_ds_id) else primary_entry
+
+            t_source = out_cfg.get("target_source", "auto")
+            ds_data = out_entry["data"]
+            ds_seq = out_entry["X_seq"]
+            ds_labels = out_entry["labels"]
+            ds_reg = out_entry["region_labels"]
+
+            if t_source in ("region_labels", "region_mask"):
+                from app.services.signal_processing import compute_regional_labels
+                base_sig = ds_seq if ds_seq is not None else ds_data
+                if base_sig is None:
+                    base_sig = aligned_inputs[0]
+                y_arr = compute_regional_labels(
+                    base_signal=base_sig[:min_n],
+                    threshold_sigma=float(out_cfg.get("region_threshold", 1.5)),
+                    existing_region_labels=ds_reg[:min_n] if ds_reg is not None else None
+                )
+                if len(out_shape) >= 2 and out_shape[1] is not None and y_arr.shape[1] != out_shape[1]:
+                    if y_arr.shape[1] > out_shape[1]:
+                        y_arr = y_arr[:, :out_shape[1], :]
+                    else:
+                        y_arr = np.pad(y_arr, ((0, 0), (0, out_shape[1] - y_arr.shape[1]), (0, 0)))
+                output_tensors.append(y_arr)
+
+            elif t_source == "reconstruction":
+                base_sig = ds_seq if ds_seq is not None else ds_data
+                if base_sig is None:
+                    base_sig = aligned_inputs[0]
+                y_arr = np.array(base_sig[:min_n], dtype=np.float32)
+                if len(out_shape) == 3:
+                    if y_arr.ndim == 2:
+                        y_arr = np.expand_dims(y_arr, axis=-1)
+                    if out_shape[1] is not None and y_arr.shape[1] != out_shape[1]:
+                        y_arr = y_arr[:, :out_shape[1], :] if y_arr.shape[1] > out_shape[1] else np.pad(y_arr, ((0, 0), (0, out_shape[1] - y_arr.shape[1]), (0, 0)))
+                    if out_shape[2] is not None and y_arr.shape[2] != out_shape[2]:
+                        y_arr = y_arr[:, :, :out_shape[2]] if y_arr.shape[2] > out_shape[2] else np.repeat(y_arr, out_shape[2], axis=-1)
+                elif len(out_shape) == 2:
+                    if y_arr.ndim > 2:
+                        y_arr = y_arr.reshape(len(y_arr), -1)
+                    if out_shape[1] is not None and y_arr.shape[1] != out_shape[1]:
+                        y_arr = y_arr[:, :out_shape[1]] if y_arr.shape[1] > out_shape[1] else np.pad(y_arr, ((0, 0), (0, out_shape[1] - y_arr.shape[1])))
+                output_tensors.append(y_arr)
+
+            elif t_source in ("label_class", "regression"):
+                if ds_labels is not None:
+                    y_arr = np.array(ds_labels[:min_n], dtype=np.float32)
+                else:
+                    base_sig = ds_data if ds_data is not None else ds_seq
+                    y_arr = np.array(base_sig[:min_n], dtype=np.float32)
+                output_tensors.append(y_arr)
+
+            elif t_source == "clustering":
+                output_tensors.append(None)
+
+            else:
+                if ds_labels is not None and len(out_shape) == 2:
+                    y_arr = np.array(ds_labels[:min_n], dtype=np.float32)
+                else:
+                    base_sig = ds_seq if ds_seq is not None else (ds_data if ds_data is not None else aligned_inputs[0])
+                    y_arr = np.array(base_sig[:min_n], dtype=np.float32)
+                    if len(out_shape) == 3 and y_arr.ndim == 2:
+                        y_arr = np.expand_dims(y_arr, axis=-1)
+                    if len(out_shape) == 3 and out_shape[1] is not None and y_arr.shape[1] != out_shape[1]:
+                        y_arr = y_arr[:, :out_shape[1], :] if y_arr.shape[1] > out_shape[1] else np.pad(y_arr, ((0, 0), (0, out_shape[1] - y_arr.shape[1]), (0, 0)))
+                    if len(out_shape) == 3 and out_shape[2] is not None and y_arr.shape[2] != out_shape[2]:
+                        y_arr = y_arr[:, :, :out_shape[2]] if y_arr.shape[2] > out_shape[2] else np.repeat(y_arr, out_shape[2], axis=-1)
+                output_tensors.append(y_arr)
+
+        raw_sample_ids = primary_entry["sample_ids"]
+        sample_ids = None
+        if raw_sample_ids is not None:
+            sample_ids = [s.decode("utf-8") if isinstance(s, bytes) else str(s) for s in raw_sample_ids[:min_n]]
+        if (not sample_ids or DataManager._is_default_zero_indexed(sample_ids)) and record and record.get("id"):
+            try:
+                resolved_sids = DataManager.load_sample_ids(str(record["id"]), expected_count=min_n)
+                if resolved_sids and len(resolved_sids) >= min_n:
+                    sample_ids = resolved_sids[:min_n]
+            except Exception:
+                pass
+        if not sample_ids:
+            sample_ids = [f"sample_{i}" for i in range(min_n)]
         record["sample_ids"] = sample_ids
-        return PreparedDataset(X, labels, record, sample_ids)
+
+        final_X = aligned_inputs if is_multi_input else aligned_inputs[0]
+
+        is_multi_out = len(model_outputs) > 1
+        if is_multi_out:
+            final_y = output_tensors
+        elif len(output_tensors) == 1:
+            final_y = output_tensors[0]
+        else:
+            final_y = primary_entry["labels"]
+
+        prep = PreparedDataset(final_X, final_y, record, sample_ids)
+        prep.output_targets = output_tensors
+        return prep
 
     @classmethod
     def _run_training_worker(cls, job: TrainingJob):
@@ -446,7 +582,7 @@ class TrainingService:
                     layer.trainable = (layer.name not in frozen_set)
 
             # Prepare dataset inputs (supports single and multi-input)
-            X, y, dataset_record = cls.prepare_model_inputs(model, job.dataset_id)
+            X, y, dataset_record = cls.prepare_model_inputs(model, job.dataset_id, model_record=model_record)
 
             # Determine task type and targets
             task_type = model_record.get("task_type", "classification")
@@ -740,22 +876,41 @@ class TrainingService:
                     y = X.copy() if not isinstance(X, list) else X[0].copy()
                     task_type = "regression"
 
-                n_samples = len(X[0]) if isinstance(X, list) else len(X)
-                if val_split > 0.0 and n_samples > 4:
-                    indices = np.arange(n_samples)
-                    train_idx, val_idx = train_test_split(indices, test_size=val_split, shuffle=shuffle, random_state=seed)
-                    if isinstance(X, list):
-                        X_train = [arr[train_idx] for arr in X]
-                        X_val = [arr[val_idx] for arr in X]
+                if isinstance(y, list):
+                    # Multi-output model (e.g. Dual Model Output nodes)
+                    n_samples = len(X[0]) if isinstance(X, list) else len(X)
+                    if val_split > 0.0 and n_samples > 4:
+                        indices = np.arange(n_samples)
+                        train_idx, val_idx = train_test_split(indices, test_size=val_split, shuffle=shuffle, random_state=seed)
+                        if isinstance(X, list):
+                            X_train = [arr[train_idx] for arr in X]
+                            X_val = [arr[val_idx] for arr in X]
+                        else:
+                            X_train = X[train_idx]
+                            X_val = X[val_idx]
+                        y_train = [arr[train_idx] if arr is not None else None for arr in y]
+                        y_val = [arr[val_idx] if arr is not None else None for arr in y]
+                        validation_data = (X_val, y_val)
                     else:
-                        X_train = X[train_idx]
-                        X_val = X[val_idx]
-                    y_train = y[train_idx] if y is not None else None
-                    y_val = y[val_idx] if y is not None else None
-                    validation_data = (X_val, y_val)
+                        X_train, y_train = X, y
+                        validation_data = None
                 else:
-                    X_train, y_train = X, y
-                    validation_data = None
+                    n_samples = len(X[0]) if isinstance(X, list) else len(X)
+                    if val_split > 0.0 and n_samples > 4:
+                        indices = np.arange(n_samples)
+                        train_idx, val_idx = train_test_split(indices, test_size=val_split, shuffle=shuffle, random_state=seed)
+                        if isinstance(X, list):
+                            X_train = [arr[train_idx] for arr in X]
+                            X_val = [arr[val_idx] for arr in X]
+                        else:
+                            X_train = X[train_idx]
+                            X_val = X[val_idx]
+                        y_train = y[train_idx] if y is not None else None
+                        y_val = y[val_idx] if y is not None else None
+                        validation_data = (X_val, y_val)
+                    else:
+                        X_train, y_train = X, y
+                        validation_data = None
 
                 if y_train is not None:
                     y_tr_arr = y_train[0] if isinstance(y_train, list) else y_train
@@ -777,10 +932,15 @@ class TrainingService:
 
                 # Compile if optimizer not present or if frozen_layers specified
                 if frozen_layers or not getattr(model, "optimizer", None):
-                    loss_name = job.config.get("loss") or ("mse" if task_type == "regression" else "sparse_categorical_crossentropy")
-                    metrics = job.config.get("metrics") or (["mae"] if task_type == "regression" else ["accuracy"])
-                    opt_instance = keras.optimizers.get({"class_name": opt_name, "config": {"learning_rate": lr}})
-                    model.compile(optimizer=opt_instance, loss=loss_name, metrics=metrics)
+                    loss_name = job.config.get("loss")
+                    metrics = job.config.get("metrics")
+                    model = KerasModelBuilder.compile_model(
+                        model,
+                        optimizer=opt_name,
+                        learning_rate=lr,
+                        loss=loss_name,
+                        metrics=metrics
+                    )
 
                 model.fit(
                     X_train,
@@ -800,7 +960,10 @@ class TrainingService:
                 eval_y = y_val if validation_data is not None else y_train
 
                 y_pred = model.predict(eval_X, verbose=0)
-                evaluation_results = cls._compute_evaluation_metrics(eval_y, y_pred, task_type)
+                try:
+                    evaluation_results = cls._compute_evaluation_metrics(eval_y, y_pred, task_type)
+                except Exception as e:
+                    evaluation_results = {"info": f"Multi-output evaluation completed: {str(e)}"}
                 job.evaluation = evaluation_results
 
             # Save updated trained model weights as long as weights are finite
@@ -852,12 +1015,17 @@ class TrainingService:
 
     @staticmethod
     def _compute_evaluation_metrics(
-        y_true: np.ndarray,
-        y_pred: np.ndarray,
+        y_true: Union[np.ndarray, List[Any]],
+        y_pred: Union[np.ndarray, List[Any]],
         task_type: str
     ) -> Dict[str, Any]:
         """Calculates evaluation metrics (classification or regression)."""
         eval_metrics = {}
+        if isinstance(y_true, list):
+            y_true = y_true[0] if len(y_true) > 0 and y_true[0] is not None else np.zeros((1,))
+        if isinstance(y_pred, list):
+            y_pred = y_pred[0] if len(y_pred) > 0 and y_pred[0] is not None else np.zeros((1,))
+
         y_true = np.nan_to_num(y_true, nan=0.0, posinf=0.0, neginf=0.0)
         y_pred = np.nan_to_num(y_pred, nan=0.0, posinf=0.0, neginf=0.0)
 

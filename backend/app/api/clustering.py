@@ -5,6 +5,7 @@ from app.core.responses import SafeJSONResponse, sanitize_for_json
 from app.services.clustering_service import ClusteringService
 from app.schemas.clustering import ClusteringRequest
 from app.core.database import get_db_connection
+from app.services.data_manager import DataManager
 
 router = APIRouter(prefix="/api/clustering", tags=["Clustering & PCA"], default_response_class=SafeJSONResponse)
 
@@ -46,6 +47,7 @@ def run_clustering(payload: ClusteringRequest):
             standardize=payload.standardize,
             random_state=payload.random_state,
             compute_pca=payload.compute_pca,
+            include_ground_truth=payload.include_ground_truth,
             model_id=payload.model_id,
             epochs=payload.epochs,
             pretrain_epochs=payload.pretrain_epochs,
@@ -75,12 +77,25 @@ def get_clustering_detail(clustering_id: str):
 
 
 @router.get("/{clustering_id}/export_csv")
-def export_clustering_csv(clustering_id: str):
+def export_clustering_csv(
+    clustering_id: str,
+    include_ground_truth: bool = Query(default=True),
+    include_probabilities: bool = Query(default=True),
+    include_pca: bool = Query(default=True),
+    extra_cols: Optional[str] = Query(default=None, description="Comma-separated list of extra columns from the main table to include in CSV")
+):
     """
-    Exports a CSV file with input_id,cluster_label,confidence,uncertainty,prob_cluster_0,...,pca_x,pca_y,pca_z,ground_truth
+    Exports a CSV file with input_id,[extra_cols...],cluster_label,confidence,uncertainty,prob_cluster_0,...,pca_x,pca_y,pca_z,ground_truth
     """
     try:
-        csv_content = ClusteringService.export_clustering_csv(clustering_id)
+        extra_columns = [c.strip() for c in extra_cols.split(",") if c.strip()] if extra_cols else None
+        csv_content = ClusteringService.export_clustering_csv(
+            clustering_id=clustering_id,
+            include_ground_truth=include_ground_truth,
+            include_probabilities=include_probabilities,
+            include_pca=include_pca,
+            extra_columns=extra_columns
+        )
         return Response(
             content=csv_content,
             media_type="text/csv",
@@ -128,6 +143,8 @@ def list_clusterings(project_id: str):
                 d["metrics"] = sanitize_for_json(json.loads(d.get("metrics_json", "{}")))
             except Exception:
                 d["metrics"] = {}
+            ds_id = ClusteringService._resolve_dataset_id(d.get("source_type"), d.get("source_id"))
+            d["available_extra_columns"] = DataManager.get_available_extra_columns(ds_id) if ds_id else []
             out.append(d)
         return out
 

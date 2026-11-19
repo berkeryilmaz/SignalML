@@ -11,11 +11,13 @@ class DatasetCreateConfig(BaseModel):
     numeric_cols: Optional[List[str]] = None
     exclude_cols: Optional[List[str]] = None
     schema_config: Optional[Union[str, Dict[str, Any]]] = None
+    missing_strategy: Optional[str] = "zero"
+    split_config: Optional[Dict[str, Any]] = None
 
 
 class ColumnSchemaItem(BaseModel):
     name: str
-    inferred_type: str = "numeric"  # numeric | categorical | sequence
+    inferred_type: str = "numeric"  # numeric | sequence
     inferred_role: str = "input"    # id | input | output | ignore
     unique_count: int = 0
     sample_values: List[Any] = []
@@ -26,20 +28,29 @@ class SequenceGroupSuggestion(BaseModel):
     pattern: str
     columns: List[str]
     count: int
+    channel_name: Optional[str] = None
+    prefix: Optional[str] = None
 
 
 class DatasetUpdateConfig(BaseModel):
     name: Optional[str] = None
     schema_config: Optional[Union[str, Dict[str, Any]]] = None
     metadata: Optional[Dict[str, Any]] = None
+    row_count: Optional[int] = None
+    num_rows: Optional[int] = None
+    col_count: Optional[int] = None
+    num_cols: Optional[int] = None
 
 
 class DatasetPreview(BaseModel):
-
     dataset_id: str
     name: str
     row_count: int
+    num_rows: Optional[int] = None
+    total_rows: Optional[int] = None
     col_count: int
+    num_cols: Optional[int] = None
+    total_cols: Optional[int] = None
     columns: List[str]
     preview_rows: List[List[Any]]
     summary_stats: Dict[str, Any]

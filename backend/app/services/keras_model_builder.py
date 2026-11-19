@@ -306,7 +306,21 @@ class KerasModelBuilder:
         # 1. Core Layers
         if t in ("input", "inputlayer"):
             shape_str = str(props.get("shape", props.get("input_shape", "512, 1")))
-            shape = tuple(int(s.strip()) for s in shape_str.split(",") if s.strip())
+            channels_prop = props.get("channels")
+            channels_list = []
+            if isinstance(channels_prop, str):
+                channels_list = [c.strip() for c in channels_prop.split(",") if c.strip()]
+            elif isinstance(channels_prop, list):
+                channels_list = [str(c).strip() for c in channels_prop if str(c).strip()]
+
+            shape_parts = [int(s.strip()) for s in shape_str.split(",") if s.strip()]
+            if len(channels_list) > 1:
+                if len(shape_parts) == 2 and shape_parts[1] == 1:
+                    shape_parts[1] = len(channels_list)
+                elif len(shape_parts) == 1:
+                    shape_parts.append(len(channels_list))
+
+            shape = tuple(shape_parts)
             return layers.Input(shape=shape, name=name)
 
         elif t == "dense":
@@ -611,9 +625,42 @@ class KerasModelBuilder:
             if clean_ntype in ("input", "inputlayer"):
                 try:
                     tensor = cls._create_keras_layer(ntype, props, nid, name=layer_name)
-                    input_source = props.get("input_source", "auto")
+                    input_source = str(props.get("input_source", "auto")).strip()
+                    channels_prop = props.get("channels")
+                    if isinstance(channels_prop, str):
+                        channels_list = [c.strip() for c in channels_prop.split(",") if c.strip()]
+                    elif isinstance(channels_prop, list):
+                        channels_list = [str(c).strip() for c in channels_prop if str(c).strip()]
+                    else:
+                        channels_list = ["raw"]
+
+                    selected_cols_raw = props.get("selected_columns", [])
+                    if isinstance(selected_cols_raw, str):
+                        selected_cols = [c.strip() for c in selected_cols_raw.split(",") if c.strip()]
+                    elif isinstance(selected_cols_raw, list):
+                        selected_cols = [str(c).strip() for c in selected_cols_raw if str(c).strip()]
+                    else:
+                        selected_cols = []
+
+                    node_dataset_id = str(props.get("dataset_id", "")).strip()
+                    node_dataset_name = str(props.get("dataset_name", "")).strip()
+                    normalize_channels = cls.coerce_bool(props.get("normalize_channels", False), False)
+                    region_threshold = float(props.get("region_threshold", 2.0))
+
+                    input_config = {
+                        "node_id": nid,
+                        "dataset_id": node_dataset_id,
+                        "dataset_name": node_dataset_name,
+                        "input_source": input_source,
+                        "channels": channels_list,
+                        "selected_columns": selected_cols,
+                        "normalize_channels": normalize_channels,
+                        "region_threshold": region_threshold,
+                        "shape": list(tensor.shape[1:])
+                    }
                     try:
                         tensor._input_source = input_source
+                        tensor._input_config = input_config
                     except Exception:
                         pass
                     tensor_outputs[nid] = tensor
@@ -625,7 +672,10 @@ class KerasModelBuilder:
                         "trainable": False,
                         "output_shape": list(tensor.shape),
                         "params": 0,
-                        "input_source": input_source
+                        "input_source": input_source,
+                        "dataset_id": node_dataset_id,
+                        "channels": channels_list,
+                        "input_config": input_config
                     })
                 except Exception as e:
                     raise KerasGraphError(f"Error configuring Input node {nid}: {str(e)}")
@@ -702,9 +752,36 @@ class KerasModelBuilder:
 
                 tensor_outputs[nid] = out_tensor
 
+                output_config = None
+                if clean_ntype in ("output", "modeloutput"):
+                    target_source = str(props.get("target_source", "auto")).strip()
+                    target_channels = props.get("target_channels", "all")
+                    target_column = props.get("target_column")
+                    loss_prop = props.get("loss", "auto")
+                    loss_weight = float(props.get("loss_weight", 1.0))
+                    node_dataset_id = str(props.get("dataset_id", "")).strip()
+                    node_dataset_name = str(props.get("dataset_name", "")).strip()
+
+                    output_config = {
+                        "node_id": nid,
+                        "dataset_id": node_dataset_id,
+                        "dataset_name": node_dataset_name,
+                        "target_source": target_source,
+                        "target_channels": target_channels,
+                        "target_column": target_column,
+                        "loss": loss_prop,
+                        "loss_weight": loss_weight,
+                        "activation": props.get("activation", "linear"),
+                        "shape": [dim if dim is not None else -1 for dim in list(out_tensor.shape[1:])]
+                    }
+                    try:
+                        out_tensor._output_config = output_config
+                    except Exception:
+                        pass
+
                 # Extract shape and parameter count
                 out_shape = [dim if dim is not None else -1 for dim in list(out_tensor.shape)]
-                layer_summary.append({
+                layer_entry = {
                     "node_id": nid,
                     "layer_type": ntype,
                     "layer_name": layer_obj.name,
@@ -712,7 +789,12 @@ class KerasModelBuilder:
                     "trainable": getattr(layer_obj, "trainable", True),
                     "output_shape": out_shape,
                     "params": layer_obj.count_params() if hasattr(layer_obj, "count_params") else 0
-                })
+                }
+                if output_config:
+                    layer_entry["output_config"] = output_config
+                    layer_entry["dataset_id"] = output_config["dataset_id"]
+                    layer_entry["target_source"] = output_config["target_source"]
+                layer_summary.append(layer_entry)
 
             except Exception as e:
                 raise KerasGraphError(f"Failed to build layer '{ntype}' (id: {nid}): {str(e)}")
@@ -751,13 +833,53 @@ class KerasModelBuilder:
         trainable_params = int(sum(np.prod(p.shape) for p in model.trainable_weights))
         non_trainable_params = total_params - trainable_params
 
+        input_configs = []
+        for idx, inp in enumerate(model_inputs if isinstance(model_inputs, list) else [model_inputs]):
+            cfg = getattr(inp, "_input_config", None)
+            if not cfg:
+                cfg = {
+                    "node_id": str(idx),
+                    "dataset_id": "",
+                    "dataset_name": "",
+                    "input_source": "auto",
+                    "channels": ["raw"],
+                    "selected_columns": [],
+                    "normalize_channels": False,
+                    "region_threshold": 2.0,
+                    "shape": list(inp.shape[1:])
+                }
+            input_configs.append(cfg)
+
+        output_configs = []
+        for idx, outp in enumerate(model_outputs if isinstance(model_outputs, list) else [model_outputs]):
+            cfg = getattr(outp, "_output_config", None)
+            if not cfg:
+                cfg = {
+                    "node_id": str(idx),
+                    "dataset_id": "",
+                    "dataset_name": "",
+                    "target_source": "auto",
+                    "target_channels": "all",
+                    "target_column": None,
+                    "loss": "auto",
+                    "loss_weight": 1.0,
+                    "activation": "linear",
+                    "shape": list(outp.shape[1:])
+                }
+            output_configs.append(cfg)
+
+        model._input_configs = input_configs
+        model._output_configs = output_configs
+
         summary = {
             "total_params": total_params,
             "trainable_params": trainable_params,
             "non_trainable_params": non_trainable_params,
             "layers": layer_summary,
             "input_shapes": [list(t.shape) for t in (model_inputs if isinstance(model_inputs, list) else [model_inputs])],
-            "output_shapes": [list(t.shape) for t in (model_outputs if isinstance(model_outputs, list) else [model_outputs])]
+            "output_shapes": [list(t.shape) for t in (model_outputs if isinstance(model_outputs, list) else [model_outputs])],
+            "input_configs": input_configs,
+            "output_configs": output_configs
         }
 
         return model, summary
@@ -787,6 +909,56 @@ class KerasModelBuilder:
 
         # Detect multi-output models (e.g. IDEC with ClusteringLayer and Reconstruction)
         is_multi_output = isinstance(model.output, list) or (isinstance(model.output_shape, list) and len(model.output_shape) > 1)
+
+        # Check custom target configurations on model._output_configs
+        output_configs = getattr(model, "_output_configs", None)
+        has_explicit_cfg = False
+        if (loss is None or loss == "auto") and output_configs:
+            inferred_losses = []
+            inferred_loss_weights = []
+            for cfg in output_configs:
+                l_prop = cfg.get("loss", "auto")
+                ts = cfg.get("target_source", "auto")
+                lw = float(cfg.get("loss_weight", 1.0))
+                inferred_loss_weights.append(lw)
+
+                if l_prop and l_prop != "auto":
+                    inferred_losses.append(l_prop)
+                    has_explicit_cfg = True
+                elif ts in ("region_labels", "region_mask"):
+                    inferred_losses.append("binary_crossentropy")
+                    has_explicit_cfg = True
+                elif ts == "reconstruction":
+                    inferred_losses.append("mse")
+                    has_explicit_cfg = True
+                elif ts == "label_class":
+                    out_shp = cfg.get("shape", [])
+                    if out_shp and out_shp[-1] == 1:
+                        inferred_losses.append("binary_crossentropy")
+                    else:
+                        inferred_losses.append("sparse_categorical_crossentropy")
+                    has_explicit_cfg = True
+                elif ts == "regression":
+                    inferred_losses.append("mse")
+                    has_explicit_cfg = True
+                elif ts == "clustering":
+                    inferred_losses.append("kld")
+                    has_explicit_cfg = True
+                else:
+                    out_shp = cfg.get("shape", [])
+                    if len(out_shp) == 1 and out_shp[-1] > 1:
+                        inferred_losses.append("sparse_categorical_crossentropy")
+                    elif len(out_shp) == 1 and out_shp[-1] == 1:
+                        inferred_losses.append("binary_crossentropy")
+                    else:
+                        inferred_losses.append("mse")
+
+            if has_explicit_cfg:
+                loss = inferred_losses if is_multi_output else inferred_losses[0]
+                if loss_weights is None and is_multi_output:
+                    loss_weights = inferred_loss_weights
+        elif loss == "auto":
+            loss = None
 
         if is_multi_output:
             outputs = model.outputs if isinstance(model.outputs, list) else [model.output]
@@ -843,10 +1015,10 @@ class KerasModelBuilder:
                     loss = [loss] * len(outputs)
 
             if metrics is None:
-                if is_idec:
+                if is_idec and not has_explicit_cfg:
                     metrics = [["accuracy"], ["mae"]] if clustering_idx == 0 else [["mae"], ["accuracy"]]
                 else:
-                    metrics = [["mae"]] * len(outputs)
+                    metrics = [["accuracy"] if ("cross" in str(l) or "kld" in str(l)) else ["mae"] for l in (loss if isinstance(loss, list) else [loss])]
 
             compile_kwargs = {"optimizer": opt, "loss": loss, "metrics": metrics}
             if loss_weights is not None:
@@ -984,8 +1156,22 @@ class KerasModelBuilder:
             # Case 1: Input Layer
             if clean_ntype in ("input", "inputlayer"):
                 shape_str = str(props.get("shape", props.get("input_shape", "512, 1")))
-                shape_tuple = tuple(int(s.strip()) for s in shape_str.split(",") if s.strip())
-                layer_lines.append(f"    # Input Node {nid}")
+                channels_prop = props.get("channels")
+                channels_list = []
+                if isinstance(channels_prop, str):
+                    channels_list = [c.strip() for c in channels_prop.split(",") if c.strip()]
+                elif isinstance(channels_prop, list):
+                    channels_list = [str(c).strip() for c in channels_prop if str(c).strip()]
+                shape_parts = [int(s.strip()) for s in shape_str.split(",") if s.strip()]
+                if len(channels_list) > 1:
+                    if len(shape_parts) == 2 and shape_parts[1] == 1:
+                        shape_parts[1] = len(channels_list)
+                    elif len(shape_parts) == 1:
+                        shape_parts.append(len(channels_list))
+                shape_tuple = tuple(shape_parts)
+                ds_comment = f" (bound to dataset '{props.get('dataset_id')}')" if props.get("dataset_id") else ""
+                ch_comment = f", channels={channels_list}" if channels_list else ""
+                layer_lines.append(f"    # Input Node {nid}{ds_comment}{ch_comment}")
                 layer_lines.append(f"    {var_name} = layers.Input(shape={shape_tuple}, name='{var_name}')")
                 continue
 
@@ -996,6 +1182,9 @@ class KerasModelBuilder:
                 continue
 
             p_in = parent_vars[0]
+            if clean_ntype in ("output", "modeloutput"):
+                ds_comment = f" (target dataset: '{props.get('dataset_id')}', source: '{props.get('target_source', 'auto')}')" if props.get("dataset_id") or props.get("target_source") else ""
+                layer_lines.append(f"    # Output Node {nid}{ds_comment}")
 
             if clean_ntype == "dense":
                 units = int(props.get("units", 64))
@@ -1263,8 +1452,41 @@ from sklearn.cluster import KMeans
 {custom_layers_block}
 
 # =====================================================================
-# 1. DATA PREPROCESSING PIPELINE
+# 1. DATA PREPROCESSING & MULTI-CHANNEL DERIVATION PIPELINE
 # =====================================================================
+def build_signal_channels(base_signal, channels=None, normalize_channels=False):
+    \"\"\"
+    Builds multi-channel derived signal representations:
+    - 'raw': Original signal waveform x(t)
+    - 'derivative_1': 1st derivative via np.gradient(x, axis=1)
+    - 'derivative_2': 2nd derivative via np.gradient(np.gradient(x, axis=1), axis=1)
+    - 'region_mask': Event mask where signal exceeds mean + threshold * std
+    \"\"\"
+    arr = np.asarray(base_signal, dtype=np.float32)
+    sig = arr[:, :, 0] if arr.ndim == 3 else (arr if arr.ndim == 2 else arr.reshape(1, -1))
+    if not channels:
+        channels = ["raw"]
+    ch_list = []
+    for c in channels:
+        c_low = str(c).lower()
+        if c_low in ("derivative_1", "d1"):
+            ch_data = np.gradient(sig, axis=1).astype(np.float32)
+        elif c_low in ("derivative_2", "d2"):
+            ch_data = np.gradient(np.gradient(sig, axis=1), axis=1).astype(np.float32)
+        elif c_low in ("region_mask", "regional_labels"):
+            th = np.mean(sig, axis=1, keepdims=True) + 2.0 * np.std(sig, axis=1, keepdims=True)
+            ch_data = (sig >= th).astype(np.float32)
+        else:
+            ch_data = sig.copy()
+        if normalize_channels and c_low not in ("region_mask", "regional_labels"):
+            m = np.mean(ch_data, axis=1, keepdims=True)
+            s = np.std(ch_data, axis=1, keepdims=True)
+            s = np.where(s < 1e-8, 1.0, s)
+            ch_data = (ch_data - m) / s
+        ch_list.append(ch_data)
+    return np.stack(ch_list, axis=-1)
+
+
 def load_and_preprocess_dataset(csv_path: str = "{dataset_filename}"):
     """
     Loads raw CSV dataset, extracts and preserves 'Input ID',

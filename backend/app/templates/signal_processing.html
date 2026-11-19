@@ -41,9 +41,16 @@
                     <option value="peak_window">Peak Symmetric Window</option>
                     <option value="slice">Slice (Start, Stop, Stride)</option>
                     <option value="reverse_signals">Reverse Filter (Invert Polarity / Time)</option>
+                    <option value="subtract_first_n_median">First N Median Baseline (x - median(x[:N]))</option>
+                    <option value="subtract_first_n_mean">First N Mean Baseline (x - mean(x[:N]))</option>
+                    <option value="subtract_last_n_median">Last N Tail Baseline (x - median/mean(x[-N:]))</option>
+                    <option value="subtract_mean">Mean (DC Offset) Baseline Subtraction (x - mean)</option>
                     <option value="subtract_median">Median Baseline Subtraction (x - median)</option>
                     <option value="subtract_mode">Mode Baseline Subtraction (Most Frequent Value)</option>
                     <option value="subtract_gaussian_peak">Histogram Gaussian Peak Baseline (x - mu_peak)</option>
+                    <option value="subtract_linear_baseline">Linear Baseline Detrend (Edge Ramp / OLS)</option>
+                    <option value="subtract_polynomial_baseline">Polynomial Baseline Fit (Peak-Excluded Poly)</option>
+                    <option value="subtract_rolling_baseline">Rolling Window Baseline Removal (Moving Median/Mean)</option>
                     <option value="scale_min">Min Scaler (x / |min| or x - min)</option>
                     <option value="scale_max">Max Scaler (x / max or x / |max|)</option>
                     <option value="normalize_zscore">Z-Score Normalization</option>
@@ -72,6 +79,16 @@
                 <option value="npy">NPY NumPy Binary</option>
                 <option value="npz">NPZ Archive</option>
             </select>
+        </div>
+        <div class="stack-xs mb-3">
+            <label class="inline-flex items-center gap-2 text-xs cursor-pointer">
+                <input type="checkbox" id="export-include-id">
+                <span>Include Input ID column</span>
+            </label>
+            <div id="export-extra-cols-container" class="is-hidden mt-1">
+                <div class="text-micro text-secondary font-medium mb-1">Include Main Table Columns:</div>
+                <div id="export-extra-cols-list" class="cluster gap-2"></div>
+            </div>
         </div>
         <button type="button" class="btn btn-secondary btn-sm btn-block justify-center" id="direct-export-btn">
             {{ icon('download') }} <span>Download exact N signals</span>
@@ -115,9 +132,16 @@
         peak_window: "Peak Symmetric Window",
         slice: "Slice (Start, Stop, Stride)",
         reverse_signals: "Reverse Filter",
+        subtract_first_n_median: "First N Median Baseline (x - median(x[:N]))",
+        subtract_first_n_mean: "First N Mean Baseline (x - mean(x[:N]))",
+        subtract_last_n_median: "Last N Tail Baseline (x - stat(x[-N:]))",
+        subtract_mean: "Mean (DC Offset) Baseline Subtraction (x - mean)",
         subtract_median: "Median Baseline Subtraction (x - median)",
         subtract_mode: "Mode Baseline Subtraction (Most Frequent Value)",
         subtract_gaussian_peak: "Histogram Gaussian Peak Baseline (x - mu_peak)",
+        subtract_linear_baseline: "Linear Baseline Detrend (Edge Ramp / OLS)",
+        subtract_polynomial_baseline: "Polynomial Baseline Fit (Peak-Excluded)",
+        subtract_rolling_baseline: "Rolling Window Baseline Removal",
         scale_min: "Min Scaler",
         scale_max: "Max Scaler",
         normalize_zscore: "Z-Score Normalization",
@@ -185,7 +209,7 @@
                 </div>
             `;
         }
-        if (step.name === "subtract_median" || step.name === "normalize_zscore") {
+        if (step.name === "subtract_median" || step.name === "subtract_mean" || step.name === "normalize_zscore") {
             const perSig = p.per_signal !== false;
             return `
                 <div class="row mt-1">
@@ -194,6 +218,105 @@
                         <option value="true" ${perSig ? "selected" : ""}>Per-waveform (baseline = 0 per signal)</option>
                         <option value="false" ${!perSig ? "selected" : ""}>Global dataset (across all samples)</option>
                     </select>
+                </div>
+            `;
+        }
+        if (step.name === "subtract_first_n_median" || step.name === "subtract_first_n_mean") {
+            const nVal = p.n ?? 50;
+            const perSig = p.per_signal !== false;
+            return `
+                <div class="stack-xs mt-1">
+                    <div class="row">
+                        <span class="text-xs text-muted">First N:</span>
+                        <input type="number" class="form-control form-control-sm mono text-xs" value="${nVal}" min="1" onchange="updateStepParam(${idx}, 'n', Number(this.value))">
+                        <span class="text-xs text-muted">Scope:</span>
+                        <select class="form-control form-control-sm text-xs" onchange="updateStepParam(${idx}, 'per_signal', this.value === 'true')">
+                            <option value="true" ${perSig ? "selected" : ""}>Per-waveform</option>
+                            <option value="false" ${!perSig ? "selected" : ""}>Global dataset</option>
+                        </select>
+                    </div>
+                </div>
+            `;
+        }
+        if (step.name === "subtract_last_n_median") {
+            const nVal = p.n ?? 50;
+            const stat = p.stat || "median";
+            const perSig = p.per_signal !== false;
+            return `
+                <div class="stack-xs mt-1">
+                    <div class="row">
+                        <span class="text-xs text-muted">Last N:</span>
+                        <input type="number" class="form-control form-control-sm mono text-xs" value="${nVal}" min="1" onchange="updateStepParam(${idx}, 'n', Number(this.value))">
+                        <span class="text-xs text-muted">Stat:</span>
+                        <select class="form-control form-control-sm text-xs" onchange="updateStepParam(${idx}, 'stat', this.value)">
+                            <option value="median" ${stat === "median" ? "selected" : ""}>Median</option>
+                            <option value="mean" ${stat === "mean" ? "selected" : ""}>Mean</option>
+                        </select>
+                    </div>
+                    <div class="row">
+                        <span class="text-xs text-muted">Scope:</span>
+                        <select class="form-control form-control-sm text-xs" onchange="updateStepParam(${idx}, 'per_signal', this.value === 'true')">
+                            <option value="true" ${perSig ? "selected" : ""}>Per-waveform</option>
+                            <option value="false" ${!perSig ? "selected" : ""}>Global dataset</option>
+                        </select>
+                    </div>
+                </div>
+            `;
+        }
+        if (step.name === "subtract_linear_baseline") {
+            const mode = p.mode || "edge";
+            const nEdge = p.n_edge ?? 50;
+            const stat = p.stat || "median";
+            return `
+                <div class="stack-xs mt-1">
+                    <div class="row">
+                        <span class="text-xs text-muted">Mode:</span>
+                        <select class="form-control form-control-sm text-xs" onchange="updateStepParam(${idx}, 'mode', this.value)">
+                            <option value="edge" ${mode === "edge" ? "selected" : ""}>Two-Edge Ramp (Start N to End N)</option>
+                            <option value="ols" ${mode === "ols" ? "selected" : ""}>Full-Signal OLS Linear Fit</option>
+                        </select>
+                    </div>
+                    <div class="row">
+                        <span class="text-xs text-muted">Edge N:</span>
+                        <input type="number" class="form-control form-control-sm mono text-xs" value="${nEdge}" min="1" onchange="updateStepParam(${idx}, 'n_edge', Number(this.value))">
+                        <span class="text-xs text-muted">Stat:</span>
+                        <select class="form-control form-control-sm text-xs" onchange="updateStepParam(${idx}, 'stat', this.value)">
+                            <option value="median" ${stat === "median" ? "selected" : ""}>Median</option>
+                            <option value="mean" ${stat === "mean" ? "selected" : ""}>Mean</option>
+                        </select>
+                    </div>
+                </div>
+            `;
+        }
+        if (step.name === "subtract_polynomial_baseline") {
+            const degree = p.degree ?? 2;
+            const excludePeakSigma = p.exclude_peak_sigma ?? 2.0;
+            return `
+                <div class="stack-xs mt-1">
+                    <div class="row">
+                        <span class="text-xs text-muted">Poly Degree:</span>
+                        <input type="number" class="form-control form-control-sm mono text-xs" value="${degree}" min="1" max="8" onchange="updateStepParam(${idx}, 'degree', Number(this.value))">
+                        <span class="text-xs text-muted">Peak Clip Sigma:</span>
+                        <input type="number" class="form-control form-control-sm mono text-xs" value="${excludePeakSigma}" step="0.5" min="0" onchange="updateStepParam(${idx}, 'exclude_peak_sigma', Number(this.value))">
+                    </div>
+                </div>
+            `;
+        }
+        if (step.name === "subtract_rolling_baseline") {
+            const windowSize = p.window_size ?? 101;
+            const method = p.method || "median";
+            return `
+                <div class="stack-xs mt-1">
+                    <div class="row">
+                        <span class="text-xs text-muted">Window Size:</span>
+                        <input type="number" class="form-control form-control-sm mono text-xs" value="${windowSize}" min="3" step="2" onchange="updateStepParam(${idx}, 'window_size', Number(this.value))">
+                        <span class="text-xs text-muted">Method:</span>
+                        <select class="form-control form-control-sm text-xs" onchange="updateStepParam(${idx}, 'method', this.value)">
+                            <option value="median" ${method === "median" ? "selected" : ""}>Moving Median</option>
+                            <option value="mean" ${method === "mean" ? "selected" : ""}>Moving Mean</option>
+                            <option value="min_opening" ${method === "min_opening" ? "selected" : ""}>Morphological Opening</option>
+                        </select>
+                    </div>
                 </div>
             `;
         }
@@ -275,9 +398,16 @@
         else if (type === "peak_window") defaultParams = { window_size: 256, mode: "max_abs" };
         else if (type === "slice") defaultParams = { start: 0, stop: null, stride: 1 };
         else if (type === "reverse_signals") defaultParams = { mode: "polarity" };
+        else if (type === "subtract_first_n_median") defaultParams = { n: 50, per_signal: true };
+        else if (type === "subtract_first_n_mean") defaultParams = { n: 50, per_signal: true };
+        else if (type === "subtract_last_n_median") defaultParams = { n: 50, stat: "median", per_signal: true };
+        else if (type === "subtract_mean") defaultParams = { per_signal: true };
         else if (type === "subtract_median") defaultParams = { per_signal: true };
         else if (type === "subtract_mode") defaultParams = { bins: 100, per_signal: true };
         else if (type === "subtract_gaussian_peak") defaultParams = { bins: 100, fit_window_bins: 5, per_signal: true };
+        else if (type === "subtract_linear_baseline") defaultParams = { mode: "edge", n_edge: 50, stat: "median" };
+        else if (type === "subtract_polynomial_baseline") defaultParams = { degree: 2, exclude_peak_sigma: 2.0 };
+        else if (type === "subtract_rolling_baseline") defaultParams = { window_size: 101, method: "median" };
         else if (type === "scale_min") defaultParams = { mode: "divide_abs_min", per_signal: true };
         else if (type === "scale_max") defaultParams = { mode: "divide_max", per_signal: true };
         else if (type === "normalize_zscore") defaultParams = { per_signal: true };
@@ -344,21 +474,77 @@
         }
     };
 
+    function escapeHtml(str) {
+        if (str === null || str === undefined) return "";
+        return String(str)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+
+    async function updateExportExtraColumns(datasetId) {
+        const container = document.getElementById("export-extra-cols-container");
+        const list = document.getElementById("export-extra-cols-list");
+        if (!container || !list) return;
+
+        if (!datasetId) {
+            container.classList.add("is-hidden");
+            list.innerHTML = "";
+            return;
+        }
+
+        try {
+            const res = await fetch(`/api/data/${datasetId}/extra_columns`);
+            if (res.ok) {
+                const data = await SignalML.safeJson(res);
+                const cols = data.extra_columns || [];
+                if (Array.isArray(cols) && cols.length > 0) {
+                    list.innerHTML = cols.map(c => `
+                        <label class="inline-flex items-center gap-1 text-xs cursor-pointer">
+                            <input type="checkbox" class="export-extra-col" value="${escapeHtml(c)}">
+                            <span>${escapeHtml(c)}</span>
+                        </label>
+                    `).join("");
+                    container.classList.remove("is-hidden");
+                } else {
+                    container.classList.add("is-hidden");
+                    list.innerHTML = "";
+                }
+            } else {
+                container.classList.add("is-hidden");
+                list.innerHTML = "";
+            }
+        } catch (e) {
+            container.classList.add("is-hidden");
+            list.innerHTML = "";
+        }
+    }
+
     document.getElementById("direct-export-btn").onclick = async () => {
         const datasetId = document.getElementById("proc-dataset-select").value;
         const targetLen = Number(document.getElementById("export-target-len").value);
         const fmt = document.getElementById("export-format").value;
+        const includeId = document.getElementById("export-include-id")?.checked || false;
+        const extraCols = Array.from(document.querySelectorAll(".export-extra-col:checked")).map(cb => cb.value);
 
         try {
+            const bodyPayload = {
+                dataset_id: datasetId,
+                target_length: targetLen,
+                output_format: fmt,
+                pipeline: pipelineSteps,
+                include_id: includeId
+            };
+            if (extraCols.length > 0) {
+                bodyPayload.extra_columns = extraCols;
+            }
+
             const res = await fetch("/api/signals/export", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    dataset_id: datasetId,
-                    target_length: targetLen,
-                    output_format: fmt,
-                    pipeline: pipelineSteps
-                })
+                body: JSON.stringify(bodyPayload)
             });
 
             if (res.ok) {
@@ -385,12 +571,20 @@
                 const datasets = await SignalML.safeJson(res);
                 const dList = Array.isArray(datasets) ? datasets : [];
                 sel.innerHTML = dList.map(d => `<option value="${d.id}">${d.name} (${d.row_count} x ${d.col_count})</option>`).join("");
-                if (dList.length > 0) previewPipeline();
+                if (dList.length > 0) {
+                    previewPipeline();
+                    updateExportExtraColumns(sel.value);
+                }
             }
         } catch (e) {
             console.error(e);
         }
     }
+
+    document.getElementById("proc-dataset-select").onchange = (e) => {
+        previewPipeline();
+        updateExportExtraColumns(e.target.value);
+    };
 
     document.addEventListener("DOMContentLoaded", () => {
         initChart();

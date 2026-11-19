@@ -1,5 +1,5 @@
 from typing import Optional, List, Dict, Any, Union
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from enum import Enum
 
 
@@ -17,14 +17,13 @@ class PortType(str, Enum):
 
 
 class NodePort(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     name: str
     type: str = "Any"
     label: Optional[str] = None
     link: Optional[Union[int, str]] = None
     links: Optional[List[Union[int, str]]] = None
-
-    class Config:
-        extra = "ignore"
 
 
 class NodeDefinition(BaseModel):

@@ -1,204 +1,179 @@
-# SignalML — Python Tabanlı Node-Based No-Code / Low-Code Machine Learning Platform
+# SignalML — Visual Node-Based Machine Learning & Signal Processing Platform
 
-SignalML, modern web tarayıcısı üzerinde çalışan sürükle-bırak **node-based** (Blender Geometry Nodes / Unreal Engine Blueprint tarzı) görsel programlama arayüzüne sahip; analog ve zaman serisi sinyalleri işlemek, derin öğrenme (Keras Functional API) modelleri tasarlamak, eğitmek, ara katman çıktısı çıkarmak ve kümeleme/PCA analizleri yapmak için geliştirilmiş genel amaçlı bir makine öğrenimi platformudur.
-
----
-
-## 🚀 Önemli Mimari Özellikler
-
-- **%100 Python Backend**: FastAPI, Uvicorn, TensorFlow/Keras, NumPy, Pandas, SciPy, scikit-learn ve SQLite.
-- **Sıfır Node.js Bağımlılığı**: Node.js runtime, `npm`, `npx`, `vite` veya `webpack` kesinlikle **kullanılmaz**.
-- **İnternetsiz / Offline Çalışma**: LiteGraph, Highcharts ve PapaParse gibi frontend kütüphaneleri `static/vendor` altında yerel olarak sunulur; harici CDN zorunluluğu yoktur.
-- **Gerçek Keras Functional API**: Görsel editörde çizilen düğüm grafikleri yalnızca bir çizim olarak kalmaz; backend'de gerçek `keras.Model` nesnelerine dönüştürülür, katman tensör şekilleri (shape inference) hesaplanır ve doğrulanır.
-- **Asenkron Eğitim Yönetimi**: Eğitim işleri arka plan iş parçacığında çalışır; HTTP isteklerini bloke etmez, canlı metrik grafikleri (loss, accuracy) anlık olarak takip edilir ve istenildiğinde iptal edilebilir.
-- **Güvenlik Koruması**: Güvenli ZIP çıkarma (Zip Slip ve Zip Bomb koruması), kontrollü `/data` klasör erişimi ve güvenli dosya sınırları.
-- **Kalıcı Depolama**: Docker volume üzerinden projeler, veri setleri, modeller ve kontrol noktaları SQLite ve diskte kalıcıdır.
+SignalML is a browser-based, drag-and-drop **node-based** (Blender Geometry Nodes / Unreal Blueprint style) machine learning and 1D time-series signal processing platform. It compiles visual node graphs into genuine **TensorFlow / Keras Functional API** models, supports multi-channel signal workflows, asynchronous training, intermediate layer feature extraction, and deep/classical clustering with interactive 3D PCA visualization.
 
 ---
 
-## 🐳 Docker ile Başlatma
+## Key Architectural Highlights
 
-SignalML, Docker ve Docker Compose ile tek komutla ayağa kalkar:
+- **100% Python Backend**: FastAPI, Uvicorn, TensorFlow / Keras, NumPy, Pandas, SciPy, scikit-learn, HDBSCAN/OPTICS, and SQLite.
+- **Zero Production Node.js Runtime Dependency**: No `npm`, `vite`, or `webpack` build step required to run the platform.
+- **100% Offline-Ready Frontend**: LiteGraph, Highcharts, and PapaParse are bundled locally under `backend/app/static/vendor/` with local Lucide SVG sprite icons and a dual Light/Dark technical theme.
+- **Genuine Keras Functional API Compilation**: Visual node graphs are validated with real-time tensor shape inference and compiled into `.keras` models, with support for multi-input/multi-output branches, dynamic `Concatenate` ports, custom Python `keras.layers.Layer` classes, and executable Python code export.
+- **Signal-First Data & Preprocessing Architecture**:
+  - **Data Manager (`/data-manager`)**: Focused strictly on raw signal dataset ingestion, column role assignment (`ID`, `Input`, `Output`, `Ignore`), missing-value handling, train/val/test split configuration, and multi-prefix 1D-CNN channel tensor grouping `(N, T, C)` while preserving raw signal amplitudes (no One-Hot/Label encoding or scaling clutter in Data Manager).
+  - **Signal Processing (`/signal-processing`)**: Dedicated sequential signal pipeline for scaling/normalization (Z-Score, Min-Max, Min/Max Scalers), baseline subtraction (Median, Mode, Gaussian Peak), alignment, peak windowing, padding/truncation, and exact-length export.
+  - **Feature Extraction (`/feature-extraction`)**: Extracts intermediate neural network layer activations for any selected dataset, automatically synchronizes with the latest trained dataset and row counts, exports activation matrices with sample IDs to CSV, and allows saving extracted features directly as new project datasets.
+- **NaN / Inf Safe Serialization**: Custom `SafeJSONResponse` sanitizes floating-point `NaN` and `±Inf` values across all REST endpoints.
+- **Security & Isolation**: Built-in Zip Slip (path traversal) and Zip Bomb protection, sandboxed path resolution, and project-scoped workspaces.
 
-### 1. Varsayılan (CPU Modu)
+---
+
+## Quickstart with Docker
+
+### 1. Default (CPU Mode)
 
 ```bash
 cd SignalML
 docker compose up --build
 ```
 
-Uygulama hazır olduğunda tarayıcınızdan şu adrese erişebilirsiniz:
-👉 **[http://localhost:8080](http://localhost:8080)**
+- **Web UI**: [http://localhost:8080](http://localhost:8080)
+- **Swagger / OpenAPI Docs**: [http://localhost:8080/docs](http://localhost:8080/docs)
 
-API Dokümantasyonu (Swagger UI):
-👉 **[http://localhost:8080/docs](http://localhost:8080/docs)**
+### 2. NVIDIA GPU Mode (Optional)
 
-### 2. NVIDIA GPU Desteği ile Başlatma (Opsiyonel)
-
-Eğer makinenizde NVIDIA GPU ve NVIDIA Container Toolkit kuruluysa:
+If NVIDIA drivers and NVIDIA Container Toolkit are installed on the host:
 
 ```bash
 docker compose -f compose.yaml -f compose.gpu.yaml up --build
 ```
 
-### 3. Konteyneri Durdurma ve Log İnceleme
+### 3. Mounting Local Host Signal Data (`/data`)
 
-```bash
-# Arka planda çalıştırma
-docker compose up -d
+Place signal files directly in `./data` or mount any host directory in `compose.yaml`:
 
-# Canlı logları görüntüleme
-docker compose logs -f
-
-# Durdurma
-docker compose down
-```
-
-### 4. Host Veri Klasörünü Bağlama (`/data`)
-
-Host makinenizdeki veri dosyalarını doğrudan `SignalML/data` klasörüne kopyalayabilir veya `compose.yaml` içerisindeki volume satırını düzenleyebilirsiniz:
 ```yaml
 volumes:
   - ./storage:/app/storage
-  - /path/to/my/local/signals:/data:ro
+  - /path/to/local/signals:/data:ro
 ```
-Uygulama içindeki **Data Manager &rarr; Mounted Host Directory** bölümünden bu dosyalara kontrollü ve güvenli şekilde erişebilirsiniz.
 
----
+Access mounted files from **Data Manager &rarr; Mounted Host Directory (`/data`)**.
 
-## 📑 Platform Modülleri ve Özellikleri
-
-### 1. Dashboard (`/dashboard`)
-Platformun genel durumunu, aktif projeyi, kayıtlı veri seti ve model sayılarını, TensorFlow/GPU çalışma durumunu ve son eğitim geçmişini gösterir.
-
-### 2. Projects (`/projects`)
-Birden çok bağımsız çalışma alanı (workspace) oluşturma, projeler arasında geçiş yapma ve proje metadata'sını SQLite üzerinde kalıcı tutma.
-
-### 3. Data Manager (`/data-manager`)
-- **Güvenli ZIP Yükleme**: Zip Slip (dizin geçişi) ve Zip Bomb korumalı ZIP açma, içerik listeleme.
-- **Mounted `/data` Gezgini**: Host üzerindeki bağlı klasördeki CSV, TXT, TSV, JSON, NPY, NPZ dosyalarını keşfetme.
-- **Veri Doğrulama ve Önizleme**: Sinyal boyutları, eksik değerler (missing values), sayısal özet istatistikler (min, max, mean, std).
-
-### 4. Signal Tagger (`/signal-tagger`)
-- Yüksek çözünürlüklü etkileşimli dalga formu (Highcharts).
-- Sinyaller arasında gezinme (Previous, Next, direkt örnek seçimi).
-- **Multi-Signal Overlay**: Birden fazla sinyali aynı grafik üzerinde çakıştırarak karşılaştırma.
-- Yakınlaştırma (zoom) ve kaydırma (pan).
-
-### 5. Signal Processing (`/signal-processing`)
-Sıralı dönüşüm zinciri (pipeline) kurma ve öncesi/sonrası görsel karşılaştırması:
-- **To Fixed Length**: Tüm sinyalleri tam $N$ uzunluğuna getirme (pad/truncate kombinasyonu).
-- **First N / Last N**: İlk veya son $N$ örneği seçme.
-- **Align Starts / Align Ends**: Belirli enerji veya genlik eşiğine göre sinyal başlangıç ve bitişlerini hizalama.
-- **Peak Windowing**: Asimetrik tepe noktası pencereleme ($[Peak - M : Peak + K]$) veya simetrik pencereleme.
-- **Slice**: Belirlenen başlangıç, bitiş ve adım (stride) ile dilimleme.
-- **Normalize**: Z-Score (ortalama 0, standart sapma 1) ve Min-Max ölçekleme.
-- **Missing Value Handling**: Enterpolasyon veya sabit değer doldurma.
-- **Exact-Length Export**: CSV, TXT, NPY veya NPZ formatında her satırda tam $N$ örnek içeren, gereksiz indeks sütunu barındırmayan export.
-
-### 6. Visual Workflow Builder (`/workflow-builder`)
-Blender / Blueprint tarzı genel amaçlı DAG görsel iş akışı editörü:
-- Düğümler: `Data Source` &rarr; `CSV Parser` &rarr; `Preprocessing` &rarr; `Feature Extractor` &rarr; `Clustering` &rarr; `PCA` &rarr; `Export`.
-- Tip kontrollü portlar (`Signal`, `Dataset`, `Feature Matrix`, `Model`, `Cluster Results`, `PCA Coordinates`).
-- Döngü tespiti (Cycle detection) ve bağımlılık sırasına göre aşamalı çalıştırma.
-- Her adım için anlık süre ve çıktı önizlemesi.
-
-### 7. Neural Network Builder (`/nn-builder`)
-Gerçek TensorFlow/Keras Functional API modelleri tasarlamak için özel node editörü:
-- **Desteklenen Katmanlar**:
-  - *Core*: Input, Dense, Activation, Flatten, Reshape, Dropout, BatchNormalization, LayerNormalization.
-  - *CNN (1D & 2D)*: Conv1D, SeparableConv1D, Conv2D, MaxPooling1D/2D, AveragePooling1D/2D, GlobalMaxPooling, GlobalAveragePooling.
-  - *Recurrent*: LSTM, GRU, SimpleRNN, Bidirectional.
-  - *Attention & Transformer*: MultiHeadAttention, PositionalEncoding.
-  - *Birleştirme*: Concatenate, Add (Residual bağlantı), Multiply.
-- **Otomatik Şekil Çıkarımı (Shape Inference)**: Editördeki katmanların girdi/çıktı tensör boyutlarını ve toplam parametre sayılarını backend doğrular.
-- **Keras Modeline Derleme**: Derlenen model `.keras` formatında kaydedilir.
-
-### 8. Training (`/training`)
-- Arka planda asenkron eğitim işi (Job ID).
-- Adam, SGD, RMSprop, AdamW optimizer desteği.
-- Canlı metrik eğrileri (Training Loss, Validation Loss, Accuracy).
-- Erken durdurma (Early Stopping) ve kullanıcı tarafından iptal (Stop Training).
-- Değerlendirme raporu: Confusion Matrix ve sınıflandırma metrikleri.
-
-### 9. Feature Extraction (`/feature-extraction`)
-- Eğitilmiş Keras modelindeki herhangi bir gizli katmanı (örn. LSTM veya Conv1D) seçme.
-- Keras alt modeli (`keras.Model(inputs=model.inputs, outputs=selected_layer.output)`) oluşturma.
-- Tüm veri seti üzerinde toplu (batch) tensör çıktısı alma ve öznitelik matrisi olarak saklama.
-
-### 10. Clustering & PCA (`/clustering`)
-- **Algoritmalar**: K-Means ($k$, $n\_init$) ve DBSCAN ($eps$, $min\_samples$).
-- **Veri Kaynakları**: Ham sinyaller veya sinir ağından çıkarılan ara katman öznitelikleri.
-- **Etkileşimli 3D PCA**: Fare ile döndürülebilen, yakınlaştırılabilen 3D uzayda küme renklendirmeli saçılım grafiği, aykırı değer (outlier) tespiti ve örnek bazlı tooltip.
-
-### 11. Model Evaluation (`/model-evaluation`)
-Model performans karnesi, geçmiş eğitim deneylerinin karşılaştırmalı tablosu.
-
-### 12. Exports (`/exports`)
-Eğitilen Keras model dosyalarını (`.keras`), tam $N$ uzunluktaki sinyal dosyalarını ve öznitelik matrislerini tek tıkla indirme.
-
----
-
-## 🧪 Pytest Testleri
-
-Platformun tüm bileşenleri için kapsamlı 28 birim ve entegrasyon testi hazırlanmıştır:
+### 4. Local Development (Without Docker)
 
 ```bash
-# Testleri çalıştırmak için:
-python3 -m pytest backend/tests -v
+./run.sh
+# or manually:
+PYTHONPATH=backend uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 ```
-
-Test Kapsamı:
-1. `test_csv_and_txt_loading`: CSV/TXT yükleme ve satır bazlı sinyal ayrıştırma.
-2. `test_npy_npz_loading`: NumPy binary yükleme.
-3. `test_zip_safety_and_extraction`: Güvenli ZIP ve Zip Slip koruması.
-4. `test_first_n_and_last_n`: İlk N ve son N örnek seçimi.
-5. `test_pad_and_truncate`: Sabit, kenar ve yansıtmalı padding ile kırpma.
-6. `test_align_starts_and_ends`: Eşik tabanlı sinyal başlangıç/bitiş hizalama.
-7. `test_peak_windowing`: Asimetrik tepe noktası pencereleme.
-8. `test_exact_n_signals_export`: Tam N örnekli, indekssiz export doğrulama.
-9. `test_node_graph.py`: Node graph doğrulaması, port tipleri ve döngü tespiti.
-10. `test_keras_builder.py`: Gerçek Keras Functional API derlemesi ve tensör şekilleri.
-11. `test_training.py`: Gerçek veri üzerinde Keras model eğitimi ve metrik doğrulaması.
-12. `test_feature_extraction.py`: Katman ara çıktılarının alt modelle çıkarılması.
-13. `test_clustering_pca.py`: K-Means, DBSCAN, 2D ve 3D PCA hesaplamaları.
-14. `test_workflow_engine.py`: Uçtan uca DAG akışının işletilmesi ve kalıcı depolama.
-15. `test_api_integration.py`: FastAPI endpoint'leri ve 12 sayfa render testi.
 
 ---
 
-## 📂 Dizin Yapısı
+## Platform Modules (12 Core Screens)
+
+### 1. Dashboard (`/dashboard`)
+System health overview, active project telemetry, dataset/model counters, CPU/GPU runtime status, and recent training run summaries.
+
+### 2. Projects (`/projects`)
+Multi-workspace management: create, switch, duplicate, rename, and delete isolated project workspaces backed by SQLite and persistent storage directories.
+
+### 3. Data Manager (`/data-manager`)
+- **Raw Signal Ingestion**: Upload CSV, TXT, TSV, JSON, NPY, NPZ, or ZIP archives (with Zip Slip & Zip Bomb protection), or import from mounted `/data`.
+- **Raw Amplitude Preservation**: Preserves raw signal values without applying premature scaling or categorical one-hot encoding in Data Manager; scaling and filtering are handled in the dedicated **Signal Processing** module.
+- **Interactive Schema & Preview**: Assign column roles (`ID / Key`, `Input (X)`, `Target / Label (y)`, `Ignore / Drop`), configure missing-value strategies (`zero`, `mean`, `ffill`, `drop`), configure Train/Val/Test split ratios, transpose single-column signals, and auto-group multi-prefix sequence columns (`s*`, `a_*`, `dvdt_*`) into 3D `(N, T, C)` tensors for 1D-CNN models.
+- **Consistent Row & Column Tracking**: Synchronizes `row_count`, `num_rows`, and `total_rows` across registration, updates, previews, and downstream modules.
+
+### 4. Signal Tagger (`/signal-tagger`)
+- High-resolution interactive waveform inspection (Highcharts).
+- Sample navigation, multi-signal overlay comparison, zoom, and pan.
+
+### 5. Signal Processing (`/signal-processing`)
+Dedicated screen for signal scaling, filtering, and windowing with live before/after waveform comparison and group envelope statistics:
+- **Length Standardization**: `to_fixed_length` (pad/truncate), `first_n`, `last_n`, `slice`.
+- **Threshold Alignment & Windowing**: `align_starts`, `align_ends`, asymmetric/symmetric `peak_window`.
+- **Baseline & Polarity Filters**: Median subtraction (`x - median`), Mode subtraction, Histogram Gaussian Peak baseline subtraction, and signal reversal (`-x`).
+- **Scaling & Normalization**: Z-Score (`zscore`), Min-Max (`minmax`), Min Scaler (`min_scaler`), Max Scaler (`max_scaler`) with per-waveform (row-wise) or global scope.
+- **Save & Export**: Save processed waveforms as a new project dataset (preserving sample IDs and labels) or export exact-$N$ sample matrices (CSV, TXT, NPY, NPZ).
+
+### 6. Visual Workflow Builder (`/workflow-builder`)
+General-purpose DAG pipeline editor (`Data Source` &rarr; `CSV Parser` &rarr; `Preprocessing` &rarr; `Feature Extractor` &rarr; `Clustering` &rarr; `PCA` &rarr; `Export`) with type-checked ports, cycle detection, topological execution, and step timing metrics.
+
+### 7. Neural Network Builder (`/nn-builder`)
+Visual Keras Functional API architecture studio:
+- **Supported Layers**:
+  - *Input / Output*: Configurable shape, per-node dataset binding, derived signal channels (`raw`, `derivative_1`, `derivative_2`, `region_mask`, `envelope_rms`, `rolling_mean`, `fft_magnitude`), and target source (`auto`, `reconstruction`, `region_labels`, `label_class`, `regression`, `clustering`).
+  - *Core*: `Dense`, `Activation`, `Flatten`, `Reshape`, `Dropout`, `BatchNormalization`, `LayerNormalization`, `UnitNormalization`.
+  - *1D & 2D Convolution*: `Conv1D`, `Conv1DTranspose`, `UpSampling1D`, `SeparableConv1D`, `Conv2D`, `MaxPooling1D/2D`, `AveragePooling1D/2D`, `GlobalMaxPooling1D`, `GlobalAveragePooling1D`.
+  - *Recurrent & Attention*: `LSTM`, `GRU`, `SimpleRNN`, `Bidirectional`, `MultiHeadAttention`, `PositionalEncoding`.
+  - *Merge & Clustering*: Dynamic multi-port `Concatenate`, `Add` (residual), `Multiply`, and IDEC `ClusteringLayer`.
+- **Custom Keras Layers**: Write, validate, and persist custom Python `keras.layers.Layer` subclasses per project.
+- **4-Way Canvas Layout & Grid Snapping**: Supports `LR`, `RL`, `TB`, and `BT` flow orientations with 20px grid snapping and one-click Python Functional API code export.
+
+### 8. Training (`/training`)
+- Asynchronous background training jobs with real-time loss/accuracy curves.
+- Optimizers: `Adam`, `SGD`, `RMSprop`, `AdamW`.
+- **Resume & Transfer Learning**: Resume training from checkpoints and selectively freeze/unfreeze layers (`POST /api/models/{model_id}/freeze`).
+- **IDEC Deep Clustering Mode**: Jointly optimizes KL-divergence clustering loss and autoencoder reconstruction MSE loss.
+
+### 9. Feature Extraction (`/feature-extraction`)
+- Inspect all intermediate layers and output tensor shapes of any trained Keras model.
+- Automatically defaults to the dataset on which the selected model was most recently trained, displaying live dataset row/column counts and clearing stale results on dataset/model switch.
+- Extracts intermediate activations via `keras.Model(inputs=model.inputs, outputs=target_layer.output)` on any chosen dataset (always honoring the newly selected dataset's row count).
+- **Save as Dataset & CSV Export**: Register extracted feature matrices directly as a new project dataset (`POST /api/features/{feature_id}/save_dataset`) or download as CSV with original sample IDs.
+
+### 10. Clustering & PCA (`/clustering`)
+- **Algorithms**: `K-Means`, `DBSCAN`, `HDBSCAN`, `OPTICS`, and deep `IDEC` clustering.
+- **Metrics**: Silhouette Score, Davies-Bouldin Index, Calinski-Harabasz Index, cluster confidence, assignment entropy, and per-cluster waveform mean/std envelopes.
+- **Interactive 3D PCA Canvas**: Hardware-accelerated 3D/2D scatter plot with orbit/zoom controls, outlier highlighting, sample tooltips, and customizable CSV export.
+
+### 11. Model Evaluation (`/model-evaluation`)
+- Confusion matrix, precision/recall/F1 classification report, regression metrics ($R^2$, MSE, MAE), historical run comparison, and batch prediction CSV export (`GET /api/training/predict_csv/{model_id}/{dataset_id}`).
+
+### 12. Exports (`/exports`)
+Centralized download and model import hub for `.keras` weights, architecture JSON, Python scripts, preprocessed signals, and extracted feature sets.
+
+---
+
+## Testing
+
+The repository includes **98 Pytest unit/integration tests** and **18 Node.js visual editor tests**:
+
+```bash
+# Run full Python backend test suite
+PYTHONPATH=backend pytest backend/tests -v
+
+# Run NN Builder graph flow & snapping tests
+node backend/tests/test_nn_flow_and_snap.js
+```
+
+### Test Modules (`backend/tests/`)
+- `test_data_manager.py`: CSV/TXT/NPY/NPZ loading, Zip Slip/Bomb security, row-count (`row_count`/`num_rows`/`total_rows`) consistency, missing-value drop recalculation, raw signal preservation without unintended scaling, and multi-channel 3D tensor grouping.
+- `test_signal_processing.py`: Fixed-length padding/truncation, threshold alignment, asymmetric peak windowing, baseline subtraction, scaling, and exact-$N$ export.
+- `test_feature_extraction.py`: Submodel layer extraction, dataset switching row-count verification, saving extracted features as datasets, and full REST API lifecycle.
+- `test_keras_builder.py`: Keras Functional API compilation, multi-branch shape inference, auto-flattening, custom layers, and Python code generation.
+- `test_training.py`: Asynchronous training, NaN safety, multi-input hybrid training, layer freezing, checkpoint resumption, derived signal channels, and batch prediction CSV.
+- `test_clustering_pca.py`: K-Means, DBSCAN, HDBSCAN, OPTICS, IDEC soft probabilities, and 2D/3D PCA projections.
+- `test_node_graph.py` & `test_workflow_engine.py`: DAG topological sorting, port validation, cycle detection, and pipeline execution.
+- `test_safe_json_response.py` & `test_api_integration.py`: Strict JSON `NaN`/`Inf` sanitization and end-to-end route/template rendering.
+
+---
+
+## Directory Structure
 
 ```text
 SignalML/
 ├── backend/
 │   ├── app/
-│   │   ├── api/              # FastAPI REST router'ları
-│   │   ├── core/             # Konfigürasyon, SQLite veritabanı, güvenlik
-│   │   ├── schemas/          # Pydantic veri modelleri
-│   │   ├── services/         # Sinyal işleme, Keras derleyici, DAG motoru vb.
-│   │   ├── templates/        # 12 adet Jinja2 HTML sayfası
+│   │   ├── api/              # FastAPI REST routers (data, signals, models, training, features, clustering, workflow, projects, exports)
+│   │   ├── core/             # Config, SQLite database schema, path security, SafeJSONResponse
+│   │   ├── schemas/          # Pydantic request/response schemas
+│   │   ├── services/         # DataManager, SignalProcessing, KerasModelBuilder, TrainingService, FeatureExtractor, ClusteringService, WorkflowEngine
+│   │   ├── templates/        # 12 Jinja2 HTML application views
 │   │   ├── static/
-│   │   │   ├── css/          # Blueprint/Dark mod tasarım CSS dosyaları
-│   │   │   ├── js/           # Modül kontrolcüleri ve visualizer JS dosyaları
-│   │   │   └── vendor/       # Yerel kütüphaneler (litegraph, highcharts, papaparse)
-│   │   └── main.py           # FastAPI başlangıç dosyası
-│   ├── tests/                # 28 adet Pytest testi
-│   └── requirements.txt      # Sabitlenmiş Python bağımlılıkları
-├── data/                     # Host veri paylaşım klasörü (/data)
-├── storage/                  # Kalıcı Docker depolama alanı
-├── Dockerfile                # Python 3.12 tabanlı tek container imajı
-├── compose.yaml              # Docker Compose konfigürasyonu
-├── compose.gpu.yaml          # NVIDIA GPU override dosyası
-├── .dockerignore
-├── .env.example
+│   │   │   ├── css/          # Design system & node editor stylesheets
+│   │   │   ├── js/           # Frontend controllers (nn_editor.js, pca_visualizer.js, workflow_editor.js, etc.)
+│   │   │   └── vendor/       # Bundled offline libraries (LiteGraph, Highcharts, PapaParse)
+│   │   └── main.py           # FastAPI application entrypoint
+│   ├── tests/                # Pytest & JS test suites
+│   └── requirements.txt      # Python dependencies
+├── data/                     # Mounted host dataset directory (/data)
+├── docs/                     # Design system & UI architecture docs
+├── storage/                  # Persistent SQLite database, datasets, models, features, clusters, and exports
+├── Dockerfile                # Single-container Python 3.12 image
+├── compose.yaml              # Docker Compose configuration
+├── compose.gpu.yaml          # NVIDIA GPU override configuration
+├── run.sh                    # Local startup script
 └── README.md
 ```
-
----
-
-## 🔒 Güvenlik
-
-- **Path Traversal Koruması**: `resolve_safe_path` ve `extract_zip_safely` ile dizin dışına çıkma girişimleri engellenir.
-- **Zip Bomb Koruması**: Arşiv içi maksimum dosya sayısı ve toplam açılmış boyut sınırlandırılmıştır.
-- **Arbitrary Kod Çalıştırma Engeli**: Frontend'den gelen dinamik kodlar çalıştırılmaz; tüm işlemler backend'deki doğrulanmış Python servisleri üzerinden yönetilir.

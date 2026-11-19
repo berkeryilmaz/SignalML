@@ -187,13 +187,31 @@ def apply_and_save_pipeline(payload: SignalProcessRequest):
     save_dict = {"data": processed_data}
     if labels is not None:
         save_dict["labels"] = labels
+
+    sids = None
+    try:
+        sids = DataManager.load_sample_ids(payload.dataset_id, expected_count=processed_data.shape[0])
+        if sids:
+            save_dict["sample_ids"] = np.array(sids, dtype=str)
+    except Exception:
+        pass
+
+    extra_cols = {}
+    try:
+        extra_cols = DataManager.load_extra_columns(payload.dataset_id, expected_count=processed_data.shape[0])
+        if extra_cols:
+            save_dict["extra_columns_json"] = np.array(json.dumps(extra_cols))
+    except Exception:
+        pass
+
     np.savez_compressed(str(dest_path), **save_dict)
 
     now = datetime.now(timezone.utc).isoformat()
     meta = {
         "original_dataset_id": payload.dataset_id,
         "pipeline": steps,
-        "shape": list(processed_data.shape)
+        "shape": list(processed_data.shape),
+        "extra_columns": list(extra_cols.keys()) if extra_cols else []
     }
 
     with get_db_connection() as conn:
@@ -243,12 +261,35 @@ def export_signal_dataset(payload: SignalExportRequest):
     if payload.target_length is not None and payload.target_length > 0:
         data = to_fixed_length(data, payload.target_length)
 
+    num_rows = data.shape[0]
+
+    sample_ids = None
+    if payload.include_id:
+        try:
+            sample_ids = DataManager.load_sample_ids(payload.dataset_id, expected_count=num_rows)
+        except Exception:
+            sample_ids = [str(i) for i in range(num_rows)]
+
+    extra_cols_dict = None
+    if payload.extra_columns:
+        try:
+            extra_cols_dict = DataManager.load_extra_columns(
+                payload.dataset_id,
+                selected_columns=payload.extra_columns,
+                expected_count=num_rows
+            )
+        except Exception:
+            extra_cols_dict = None
+
     content_bytes, mime, verification = export_signals(
         signals=data,
         labels=labels,
         output_format=payload.output_format,
         target_length=payload.target_length,
-        separate_labels=payload.separate_labels
+        separate_labels=payload.separate_labels,
+        include_id=payload.include_id,
+        sample_ids=sample_ids,
+        extra_columns_dict=extra_cols_dict
     )
 
     filename = f"signals_export_{payload.target_length or data.shape[1]}_{uuid.uuid4().hex[:6]}.{payload.output_format}"

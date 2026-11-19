@@ -21,10 +21,14 @@
     <p class="text-secondary text-sm mb-4">
         Run batch inference with the selected model on a registered dataset, then download the CSV containing predictions, class probabilities, and ground truth labels.
     </p>
-    <div class="row items-end max-w-md">
-        <div class="form-group flex-1 mb-0">
+    <div class="row items-end gap-3 flex-wrap">
+        <div class="form-group mb-0" style="min-width: 240px;">
             <label class="form-label" for="batch-eval-dataset-select">Evaluation Dataset</label>
-            <select id="batch-eval-dataset-select" class="form-control"></select>
+            <select id="batch-eval-dataset-select" class="form-control" onchange="loadBatchExtraColumns(this.value)"></select>
+        </div>
+        <div id="batch-extra-cols-container" class="form-group mb-0" style="display: none;">
+            <label class="form-label">Extra Columns</label>
+            <div id="batch-extra-cols-list" class="row gap-2 align-items-center"></div>
         </div>
         <button type="button" id="download-predict-csv-btn" class="btn btn-primary nowrap">
             {{ icon('download') }} <span>Download CSV</span>
@@ -45,6 +49,42 @@
 
 {% block scripts %}
 <script>
+    async function loadBatchExtraColumns(datasetId) {
+        const container = document.getElementById("batch-extra-cols-container");
+        const list = document.getElementById("batch-extra-cols-list");
+        if (!container || !list) return;
+        if (!datasetId) {
+            container.style.display = "none";
+            list.innerHTML = "";
+            return;
+        }
+        try {
+            const res = await fetch(`/api/data/${datasetId}/extra_columns`);
+            if (res.ok) {
+                const data = await SignalML.safeJson(res);
+                const cols = Array.isArray(data.extra_columns) ? data.extra_columns : [];
+                if (cols.length > 0) {
+                    container.style.display = "block";
+                    list.innerHTML = cols.map(c => `
+                        <label class="check text-xs text-secondary mr-2" title="Include column '${c}' from main table in CSV export">
+                            <input type="checkbox" class="batch-extra-col-cb" value="${c}" checked>
+                            <span>${c}</span>
+                        </label>
+                    `).join("");
+                } else {
+                    container.style.display = "none";
+                    list.innerHTML = "";
+                }
+            } else {
+                container.style.display = "none";
+                list.innerHTML = "";
+            }
+        } catch (e) {
+            container.style.display = "none";
+            list.innerHTML = "";
+        }
+    }
+
     async function loadDatasets() {
         const dSel = document.getElementById("batch-eval-dataset-select");
         if (!dSel) return;
@@ -54,6 +94,9 @@
                 const data = await SignalML.safeJson(res);
                 const datasets = Array.isArray(data) ? data : [];
                 dSel.innerHTML = datasets.map(d => `<option value="${d.id}">${d.name} (${d.row_count} samples)</option>`).join("");
+                if (dSel.value) {
+                    await loadBatchExtraColumns(dSel.value);
+                }
             }
         } catch (e) {
             console.error("Failed to load datasets for batch predict", e);
@@ -232,8 +275,13 @@
                 SignalML.toast("Please select an evaluation dataset", "error");
                 return;
             }
+            const checkedCols = Array.from(document.querySelectorAll('.batch-extra-col-cb:checked')).map(cb => cb.value);
+            let url = `/api/training/predict_csv/${modelId}/${datasetId}`;
+            if (checkedCols.length > 0) {
+                url += `?extra_cols=${encodeURIComponent(checkedCols.join(','))}`;
+            }
             SignalML.toast("Generating batch prediction CSV export...", "info");
-            window.location.href = `/api/training/predict_csv/${modelId}/${datasetId}`;
+            window.location.href = url;
         };
     }
 

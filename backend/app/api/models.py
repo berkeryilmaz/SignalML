@@ -245,10 +245,43 @@ def delete_model(model_id: str):
 
 @router.get("/list/{project_id}")
 def list_project_models(project_id: str):
-    """Lists all trained or configured models for a project."""
+    """Lists all trained or configured models for a project, including their most recently trained dataset."""
     with get_db_connection() as conn:
-        rows = conn.execute("SELECT id, name, task_type, trainable_params, non_trainable_params, created_at FROM models WHERE project_id = ? ORDER BY created_at DESC", (project_id,)).fetchall()
-        return [dict(r) for r in rows]
+        proj_row = conn.execute("SELECT active_dataset_id FROM projects WHERE id = ?", (project_id,)).fetchone()
+        active_ds_id = proj_row["active_dataset_id"] if proj_row else None
+
+        rows = conn.execute(
+            """
+            SELECT m.id, m.name, m.task_type, m.trainable_params, m.non_trainable_params, m.created_at,
+                   (
+                       SELECT tr.dataset_id
+                       FROM training_runs tr
+                       WHERE tr.model_id = m.id
+                       ORDER BY tr.created_at DESC
+                       LIMIT 1
+                   ) AS last_dataset_id
+            FROM models m
+            WHERE m.project_id = ?
+            ORDER BY m.created_at DESC
+            """,
+            (project_id,)
+        ).fetchall()
+
+        ds_map = {}
+        ds_rows = conn.execute("SELECT id, name, row_count FROM datasets WHERE project_id = ?", (project_id,)).fetchall()
+        for dr in ds_rows:
+            ds_map[dr["id"]] = dict(dr)
+
+        result = []
+        for r in rows:
+            item = dict(r)
+            ds_id = item.get("last_dataset_id") or active_ds_id
+            if ds_id and ds_id in ds_map:
+                item["last_dataset_id"] = ds_id
+                item["last_dataset_name"] = ds_map[ds_id]["name"]
+                item["last_dataset_row_count"] = ds_map[ds_id]["row_count"]
+            result.append(item)
+        return result
 
 
 LAYER_TYPE_MAP = {
@@ -896,7 +929,7 @@ def _load_model_and_dataset_inputs(model_id: str, dataset_id: str):
         pass
 
     try:
-        prep = TrainingService.prepare_model_inputs(model, dataset_id)
+        prep = TrainingService.prepare_model_inputs(model, dataset_id, model_record=model_record)
         X = prep.X
         input_ids = prep.sample_ids
     except Exception:
@@ -905,11 +938,25 @@ def _load_model_and_dataset_inputs(model_id: str, dataset_id: str):
             rec = dataset_record
         input_ids = dataset_record.get("sample_ids", [])
 
+    n_samples_calc = len(X) if isinstance(X, np.ndarray) else (len(X[0]) if isinstance(X, list) and X else 0)
+    if not input_ids or len(input_ids) != n_samples_calc or DataManager._is_default_zero_indexed(list(input_ids)):
+        try:
+            loaded_ids = DataManager.load_sample_ids(dataset_id, expected_count=n_samples_calc)
+            if loaded_ids and len(loaded_ids) == n_samples_calc:
+                input_ids = loaded_ids
+        except Exception:
+            pass
+
     in_shape = model.input_shape[0] if isinstance(model.input_shape, list) else model.input_shape
     if isinstance(X, np.ndarray):
         if len(in_shape) == 3:
             if X.ndim == 2:
-                X = np.expand_dims(X, axis=-1)
+                expected_len = in_shape[1]
+                expected_ch = in_shape[2]
+                if expected_len is not None and expected_ch is not None and expected_ch > 1 and X.shape[1] == expected_len * expected_ch:
+                    X = X.reshape(X.shape[0], expected_len, expected_ch)
+                else:
+                    X = np.expand_dims(X, axis=-1)
             elif X.ndim == 1:
                 X = X.reshape(-1, 1, 1)
             expected_len = in_shape[1]
@@ -918,6 +965,14 @@ def _load_model_and_dataset_inputs(model_id: str, dataset_id: str):
                     X = X[:, :expected_len, :]
                 else:
                     X = np.pad(X, ((0, 0), (0, expected_len - X.shape[1]), (0, 0)))
+            expected_ch = in_shape[2]
+            if expected_ch is not None and X.shape[2] != expected_ch:
+                if X.shape[2] > expected_ch:
+                    X = X[:, :, :expected_ch]
+                elif X.shape[2] == 1 and expected_ch > 1:
+                    X = np.repeat(X, expected_ch, axis=-1)
+                else:
+                    X = np.pad(X, ((0, 0), (0, 0), (0, expected_ch - X.shape[2])))
         elif len(in_shape) == 2:
             if X.ndim > 2:
                 X = X.reshape(len(X), -1)
@@ -1072,10 +1127,14 @@ def _extract_model_idec_probabilities(
             if actual_k_init == target_k_init:
                 clustering_layer.set_weights([km_init.cluster_centers_.astype(np.float32)])
 
-            target_recon = np.copy(X)
+            base_recon_x = X[0] if isinstance(X, list) else X
+            target_recon = np.copy(base_recon_x)
             recon_shape = recon_out.shape
-            if len(recon_shape) == 2 and target_recon.ndim == 3 and target_recon.shape[-1] == 1:
-                target_recon = target_recon.squeeze(-1)
+            if len(recon_shape) == 2 and target_recon.ndim == 3:
+                if target_recon.shape[-1] == 1:
+                    target_recon = target_recon.squeeze(-1)
+                else:
+                    target_recon = target_recon[:, :, 0]
             elif len(recon_shape) == 3 and target_recon.ndim == 2:
                 target_recon = np.expand_dims(target_recon, axis=-1)
 
@@ -1086,6 +1145,15 @@ def _extract_model_idec_probabilities(
                     target_recon = np.pad(target_recon, pad_cfg, mode="constant")
                 else:
                     target_recon = target_recon[:, :recon_shape[1]]
+
+            if len(recon_shape) == 3 and recon_shape[2] is not None and target_recon.ndim == 3 and target_recon.shape[2] != recon_shape[2]:
+                r_ch = recon_shape[2]
+                if target_recon.shape[2] > r_ch:
+                    target_recon = target_recon[:, :, :r_ch]
+                elif target_recon.shape[2] == 1 and r_ch > 1:
+                    target_recon = np.repeat(target_recon, r_ch, axis=-1)
+                else:
+                    target_recon = np.pad(target_recon, ((0, 0), (0, 0), (0, r_ch - target_recon.shape[2])), mode="constant")
 
             loss_list = ["kld", "mse"] if clustering_out_idx == 0 else ["mse", "kld"]
             weights_list = [0.1, 1.0] if clustering_out_idx == 0 else [1.0, 0.1]
@@ -1448,7 +1516,8 @@ def export_idec_probabilities_csv(
     dataset_id: str,
     n_clusters: Optional[int] = Query(default=None, alias="n_clusters"),
     calibrate: bool = Query(default=True, description="Auto-calibrate uninitialized/degenerate cluster centers via KMeans on bottleneck Z"),
-    epochs: int = Query(default=0, ge=0, le=200, description="Optional quick IDEC training epochs before analysis")
+    epochs: int = Query(default=0, ge=0, le=200, description="Optional quick IDEC training epochs before analysis"),
+    extra_cols: Optional[str] = Query(default=None, description="Comma-separated list of extra columns from the main table to include in CSV")
 ):
     """Exports all IDEC cluster probabilities with Input ID as a downloadable CSV."""
     model, X, input_ids, model_record, rec, weights_path = _load_model_and_dataset_inputs(model_id, dataset_id)
@@ -1463,14 +1532,39 @@ def export_idec_probabilities_csv(
         return_details=False
     )
 
+    n_samples = len(Q)
+    if not input_ids or len(input_ids) != n_samples or DataManager._is_default_zero_indexed(list(input_ids)):
+        try:
+            loaded_ids = DataManager.load_sample_ids(dataset_id, expected_count=n_samples)
+            if loaded_ids and len(loaded_ids) == n_samples:
+                input_ids = loaded_ids
+        except Exception:
+            pass
+
+    if not input_ids or len(input_ids) != n_samples:
+        input_ids = [str(i) for i in range(n_samples)]
+
+    selected_extra_cols = [c.strip() for c in extra_cols.split(",") if c.strip()] if extra_cols else None
+    extra_dict = {}
+    extra_cols_to_use = []
+    if selected_extra_cols:
+        try:
+            extra_dict = DataManager.load_extra_columns(dataset_id, selected_columns=selected_extra_cols, expected_count=n_samples)
+            extra_cols_to_use = [c for c in selected_extra_cols if c in extra_dict]
+        except Exception:
+            extra_dict = {}
+            extra_cols_to_use = []
+
     assigned_clusters = np.argmax(Q, axis=1)
     confidences = np.max(Q, axis=1)
 
-    df_out = pd.DataFrame({
-        "Input_ID": input_ids,
-        "Assigned_Cluster": assigned_clusters,
-        "Confidence": np.round(confidences, 4)
-    })
+    df_dict: Dict[str, Any] = {"Input_ID": input_ids}
+    for c in extra_cols_to_use:
+        df_dict[c] = extra_dict[c]
+    df_dict["Assigned_Cluster"] = assigned_clusters
+    df_dict["Confidence"] = np.round(confidences, 4)
+
+    df_out = pd.DataFrame(df_dict)
     for c in range(Q.shape[1]):
         df_out[f"Cluster_{c}_Prob"] = np.round(Q[:, c], 4)
 

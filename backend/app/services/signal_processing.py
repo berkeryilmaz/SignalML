@@ -2,6 +2,8 @@ import io
 from typing import List, Dict, Any, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
+from scipy.ndimage import uniform_filter1d, binary_dilation, median_filter, grey_opening
+from scipy.signal import detrend as scipy_detrend
 
 
 def ensure_2d_array(signals: Union[np.ndarray, List[List[float]], List[float]]) -> np.ndarray:
@@ -433,6 +435,237 @@ def subtract_gaussian_peak(
         return (arr - peak_val).astype(np.float32)
 
 
+def subtract_mean(
+    signals: np.ndarray,
+    per_signal: bool = True
+) -> np.ndarray:
+    """
+    Subtracts the arithmetic mean (DC offset) from each signal (or across dataset)
+    to shift baseline to 0.
+    """
+    arr = np.nan_to_num(ensure_2d_array(signals), copy=True, nan=0.0, posinf=0.0, neginf=0.0)
+    if arr.shape[1] == 0:
+        return arr.astype(np.float32)
+    if per_signal:
+        means = np.mean(arr, axis=1, keepdims=True)
+        return (arr - means).astype(np.float32)
+    else:
+        mean_val = float(np.mean(arr))
+        return (arr - mean_val).astype(np.float32)
+
+
+def subtract_first_n_median(
+    signals: np.ndarray,
+    n: int = 50,
+    per_signal: bool = True
+) -> np.ndarray:
+    """
+    Computes the median of the first n samples and subtracts it from the entire signal.
+    Preserves the full signal length.
+    """
+    arr = np.nan_to_num(ensure_2d_array(signals), copy=True, nan=0.0, posinf=0.0, neginf=0.0)
+    if arr.shape[1] == 0:
+        return arr.astype(np.float32)
+    n_clamped = max(1, min(int(n), arr.shape[1]))
+    sub = arr[:, :n_clamped]
+    if per_signal:
+        base = np.median(sub, axis=1, keepdims=True)
+        return (arr - base).astype(np.float32)
+    else:
+        base_val = float(np.median(sub))
+        return (arr - base_val).astype(np.float32)
+
+
+def subtract_first_n_mean(
+    signals: np.ndarray,
+    n: int = 50,
+    per_signal: bool = True
+) -> np.ndarray:
+    """
+    Computes the arithmetic mean of the first n samples and subtracts it from the entire signal.
+    Preserves the full signal length.
+    """
+    arr = np.nan_to_num(ensure_2d_array(signals), copy=True, nan=0.0, posinf=0.0, neginf=0.0)
+    if arr.shape[1] == 0:
+        return arr.astype(np.float32)
+    n_clamped = max(1, min(int(n), arr.shape[1]))
+    sub = arr[:, :n_clamped]
+    if per_signal:
+        base = np.mean(sub, axis=1, keepdims=True)
+        return (arr - base).astype(np.float32)
+    else:
+        base_val = float(np.mean(sub))
+        return (arr - base_val).astype(np.float32)
+
+
+def subtract_last_n_median(
+    signals: np.ndarray,
+    n: int = 50,
+    stat: str = "median",
+    per_signal: bool = True
+) -> np.ndarray:
+    """
+    Computes baseline from the last n samples using median or mean,
+    and subtracts it from the entire signal. Preserves full signal length.
+    """
+    arr = np.nan_to_num(ensure_2d_array(signals), copy=True, nan=0.0, posinf=0.0, neginf=0.0)
+    if arr.shape[1] == 0:
+        return arr.astype(np.float32)
+    n_clamped = max(1, min(int(n), arr.shape[1]))
+    sub = arr[:, -n_clamped:]
+    use_mean = str(stat).strip().lower() == "mean"
+    if per_signal:
+        base = np.mean(sub, axis=1, keepdims=True) if use_mean else np.median(sub, axis=1, keepdims=True)
+        return (arr - base).astype(np.float32)
+    else:
+        base_val = float(np.mean(sub)) if use_mean else float(np.median(sub))
+        return (arr - base_val).astype(np.float32)
+
+
+def subtract_linear_baseline(
+    signals: np.ndarray,
+    mode: str = "edge",
+    n_edge: int = 50,
+    stat: str = "median"
+) -> np.ndarray:
+    """
+    Removes a linear baseline ramp/drift from each signal:
+    - mode in ('ols', 'detrend', 'linear_fit'): fits a least-squares linear trend across the full signal.
+    - mode == 'edge' (default): computes baseline at start and end edge windows and subtracts the connecting ramp.
+    """
+    arr = np.nan_to_num(ensure_2d_array(signals), copy=True, nan=0.0, posinf=0.0, neginf=0.0)
+    num_samples, seq_len = arr.shape
+    if seq_len == 0:
+        return arr.astype(np.float32)
+
+    m = (mode or "edge").lower()
+    if m in ("ols", "detrend", "linear_fit"):
+        if seq_len < 2:
+            return (arr - arr).astype(np.float32)
+        try:
+            return scipy_detrend(arr, axis=1, type="linear").astype(np.float32)
+        except Exception:
+            t = np.linspace(0.0, 1.0, seq_len, dtype=np.float32)
+            t_mean = 0.5
+            t_dev = t - t_mean
+            var_t = float(np.sum(t_dev ** 2))
+            if var_t <= 1e-12:
+                return (arr - arr).astype(np.float32)
+            slope = np.sum(arr * t_dev[None, :], axis=1, keepdims=True) / var_t
+            intercept = np.mean(arr, axis=1, keepdims=True) - slope * t_mean
+            trend = intercept + slope * t[None, :]
+            return (arr - trend).astype(np.float32)
+    else:
+        k = max(1, min(int(n_edge), seq_len))
+        use_mean = str(stat).strip().lower() == "mean"
+        if use_mean:
+            y_start = np.mean(arr[:, :k], axis=1, keepdims=True)
+            y_end = np.mean(arr[:, -k:], axis=1, keepdims=True)
+        else:
+            y_start = np.median(arr[:, :k], axis=1, keepdims=True)
+            y_end = np.median(arr[:, -k:], axis=1, keepdims=True)
+
+        if seq_len == 1:
+            return (arr - y_start).astype(np.float32)
+
+        t_ramp = np.linspace(0.0, 1.0, seq_len, dtype=np.float32)[None, :]
+        ramp = y_start + (y_end - y_start) * t_ramp
+        return (arr - ramp).astype(np.float32)
+
+
+def subtract_polynomial_baseline(
+    signals: np.ndarray,
+    degree: int = 2,
+    exclude_peak_sigma: float = 2.0
+) -> np.ndarray:
+    """
+    Fits and subtracts a polynomial baseline of degree `degree` per signal along
+    x = np.linspace(-1.0, 1.0, seq_len, dtype=np.float64).
+    Uses iterative sigma clipping when exclude_peak_sigma > 0 to prevent large peaks
+    from distorting the baseline fit.
+    """
+    arr = np.nan_to_num(ensure_2d_array(signals), copy=True, nan=0.0, posinf=0.0, neginf=0.0)
+    num_samples, seq_len = arr.shape
+    if seq_len <= 2:
+        return subtract_median(arr, per_signal=True)
+
+    deg = max(1, min(int(degree), 8, seq_len - 1))
+    x = np.linspace(-1.0, 1.0, seq_len, dtype=np.float64)
+    out = np.empty((num_samples, seq_len), dtype=np.float32)
+
+    for i in range(num_samples):
+        sig = arr[i].astype(np.float64)
+        mask = np.ones(seq_len, dtype=bool)
+
+        if exclude_peak_sigma > 0:
+            for _ in range(2):
+                try:
+                    coeffs = np.polyfit(x[mask], sig[mask], deg)
+                    baseline = np.polyval(coeffs, x)
+                except Exception:
+                    break
+                res = sig - baseline
+                res_med = float(np.median(res))
+                mad_std = 1.4826 * float(np.median(np.abs(res - res_med)))
+                sigma = mad_std if mad_std > 1e-8 else float(np.std(res))
+                if sigma <= 1e-8:
+                    break
+                new_mask = np.abs(res - res_med) <= float(exclude_peak_sigma) * sigma
+                if int(np.sum(new_mask)) >= deg + 2:
+                    mask = new_mask
+                else:
+                    break
+
+        try:
+            coeffs = np.polyfit(x[mask], sig[mask], deg)
+            baseline = np.polyval(coeffs, x)
+        except Exception:
+            try:
+                coeffs = np.polyfit(x, sig, deg)
+                baseline = np.polyval(coeffs, x)
+            except Exception:
+                baseline = float(np.median(sig))
+
+        out[i] = (sig - baseline).astype(np.float32)
+
+    return np.nan_to_num(out, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+
+
+def subtract_rolling_baseline(
+    signals: np.ndarray,
+    window_size: int = 101,
+    method: str = "median"
+) -> np.ndarray:
+    """
+    Estimates and subtracts a local moving baseline per signal using a rolling filter
+    (median, uniform mean, or morphological opening).
+    """
+    arr = np.nan_to_num(ensure_2d_array(signals), copy=True, nan=0.0, posinf=0.0, neginf=0.0)
+    seq_len = arr.shape[1]
+    if seq_len == 0:
+        return arr.astype(np.float32)
+    if seq_len <= 2:
+        return subtract_median(arr, per_signal=True)
+
+    win = max(3, min(int(window_size), max(3, seq_len)))
+    m = (method or "median").lower()
+
+    if m == "mean":
+        win = min(win, seq_len)
+        baseline = uniform_filter1d(arr, size=win, axis=1, mode="nearest")
+    elif m in ("min_opening", "opening", "tophat"):
+        win = min(win, seq_len)
+        baseline = grey_opening(arr, size=(1, win), mode="nearest")
+    else:
+        if win % 2 == 0:
+            win += 1
+        if win > seq_len:
+            win = seq_len if seq_len % 2 == 1 else max(1, seq_len - 1)
+        baseline = median_filter(arr, size=(1, win), mode="nearest")
+
+    return (arr - baseline).astype(np.float32)
+
+
 def reverse_signals(
     signals: np.ndarray,
     mode: str = "polarity"
@@ -644,6 +877,39 @@ def run_pipeline(signals: np.ndarray, steps: List[Dict[str, Any]]) -> np.ndarray
             per_sig_raw = params.get("per_signal", True)
             per_sig = per_sig_raw.lower() in ("true", "1", "yes") if isinstance(per_sig_raw, str) else bool(per_sig_raw)
             arr = subtract_gaussian_peak(arr, bins=bins, fit_window_bins=fit_win, per_signal=per_sig)
+        elif name in ("subtract_mean", "baseline_mean", "mean_baseline", "dc_offset"):
+            per_sig_raw = params.get("per_signal", True)
+            per_sig = per_sig_raw.lower() in ("true", "1", "yes") if isinstance(per_sig_raw, str) else bool(per_sig_raw)
+            arr = subtract_mean(arr, per_signal=per_sig)
+        elif name in ("subtract_first_n_median", "first_n_median", "baseline_first_n_median", "pretrigger_median"):
+            n = int(params.get("n", 50))
+            per_sig_raw = params.get("per_signal", True)
+            per_sig = per_sig_raw.lower() in ("true", "1", "yes") if isinstance(per_sig_raw, str) else bool(per_sig_raw)
+            arr = subtract_first_n_median(arr, n=n, per_signal=per_sig)
+        elif name in ("subtract_first_n_mean", "first_n_mean", "baseline_first_n_mean", "pretrigger_mean"):
+            n = int(params.get("n", 50))
+            per_sig_raw = params.get("per_signal", True)
+            per_sig = per_sig_raw.lower() in ("true", "1", "yes") if isinstance(per_sig_raw, str) else bool(per_sig_raw)
+            arr = subtract_first_n_mean(arr, n=n, per_signal=per_sig)
+        elif name in ("subtract_last_n_median", "last_n_median", "baseline_last_n_median", "subtract_last_n_baseline", "tail_baseline"):
+            n = int(params.get("n", 50))
+            stat = str(params.get("stat", "median"))
+            per_sig_raw = params.get("per_signal", True)
+            per_sig = per_sig_raw.lower() in ("true", "1", "yes") if isinstance(per_sig_raw, str) else bool(per_sig_raw)
+            arr = subtract_last_n_median(arr, n=n, stat=stat, per_signal=per_sig)
+        elif name in ("subtract_linear_baseline", "linear_baseline", "baseline_linear", "linear_detrend", "detrend_linear"):
+            mode = str(params.get("mode", "edge"))
+            n_edge = int(params.get("n_edge", 50))
+            stat = str(params.get("stat", "median"))
+            arr = subtract_linear_baseline(arr, mode=mode, n_edge=n_edge, stat=stat)
+        elif name in ("subtract_polynomial_baseline", "polynomial_baseline", "baseline_polynomial", "poly_baseline"):
+            degree = int(params.get("degree", 2))
+            exclude_peak_sigma = float(params.get("exclude_peak_sigma", 2.0))
+            arr = subtract_polynomial_baseline(arr, degree=degree, exclude_peak_sigma=exclude_peak_sigma)
+        elif name in ("subtract_rolling_baseline", "rolling_baseline", "baseline_rolling", "moving_median_baseline"):
+            window_size = int(params.get("window_size", 101))
+            method = str(params.get("method", "median"))
+            arr = subtract_rolling_baseline(arr, window_size=window_size, method=method)
         elif name in ("reverse", "reverse_signal", "reverse_signals", "invert"):
             mode = str(params.get("mode", "polarity"))
             arr = reverse_signals(arr, mode=mode)
@@ -670,11 +936,15 @@ def export_signals(
     labels: Optional[np.ndarray] = None,
     output_format: str = "csv",
     target_length: Optional[int] = None,
-    separate_labels: bool = False
+    separate_labels: bool = False,
+    include_id: bool = False,
+    sample_ids: Optional[List[str]] = None,
+    extra_columns_dict: Optional[Dict[str, List[str]]] = None
 ) -> Tuple[bytes, str, Dict[str, Any]]:
     """
     Exports signals verifying exact row count and exact N column count.
     No extraneous index columns are added.
+    When include_id=True or extra_columns_dict is provided, prepends id and extra columns with a header row.
     Returns:
         (file_bytes, mime_type, verification_metadata)
     """
@@ -688,23 +958,53 @@ def export_signals(
         "num_cols": num_cols,
         "format": output_format.lower(),
         "has_labels": labels is not None,
-        "separate_labels": separate_labels
+        "separate_labels": separate_labels,
+        "include_id": include_id,
+        "extra_columns": list(extra_columns_dict.keys()) if extra_columns_dict else []
     }
 
     fmt = output_format.lower()
     if fmt in ("csv", "txt", "tsv"):
         sep = "\t" if fmt in ("txt", "tsv") else ","
-        df = pd.DataFrame(arr)
 
-        if labels is not None and not separate_labels:
-            df["label"] = labels
+        if include_id or (extra_columns_dict and len(extra_columns_dict) > 0):
+            df_dict: Dict[str, Any] = {}
+            if include_id:
+                if sample_ids is not None and len(sample_ids) >= num_rows:
+                    df_dict["id"] = sample_ids[:num_rows]
+                else:
+                    df_dict["id"] = [str(i) for i in range(num_rows)]
 
-        buf = io.StringIO()
-        # header=False, index=False ensures pure data rows with no index column
-        df.to_csv(buf, sep=sep, header=False, index=False)
-        content_bytes = buf.getvalue().encode("utf-8")
-        mime = "text/csv" if fmt == "csv" else "text/plain"
-        return content_bytes, mime, verification
+            if extra_columns_dict:
+                for col_name, col_vals in extra_columns_dict.items():
+                    if len(col_vals) >= num_rows:
+                        df_dict[col_name] = col_vals[:num_rows]
+                    else:
+                        df_dict[col_name] = col_vals + [""] * (num_rows - len(col_vals))
+
+            for j in range(num_cols):
+                df_dict[f"s{j}"] = arr[:, j]
+
+            if labels is not None and not separate_labels:
+                df_dict["label"] = labels
+
+            df = pd.DataFrame(df_dict)
+            buf = io.StringIO()
+            df.to_csv(buf, sep=sep, header=True, index=False)
+            content_bytes = buf.getvalue().encode("utf-8")
+            mime = "text/csv" if fmt == "csv" else "text/plain"
+            return content_bytes, mime, verification
+        else:
+            df = pd.DataFrame(arr)
+            if labels is not None and not separate_labels:
+                df["label"] = labels
+
+            buf = io.StringIO()
+            # header=False, index=False ensures pure data rows with no index column
+            df.to_csv(buf, sep=sep, header=False, index=False)
+            content_bytes = buf.getvalue().encode("utf-8")
+            mime = "text/csv" if fmt == "csv" else "text/plain"
+            return content_bytes, mime, verification
 
     elif fmt == "npy":
         buf = io.BytesIO()
@@ -717,9 +1017,196 @@ def export_signals(
         save_dict = {"signals": arr}
         if labels is not None:
             save_dict["labels"] = labels
+        if include_id and sample_ids is not None:
+            save_dict["sample_ids"] = np.array(sample_ids[:num_rows], dtype=str)
+        if extra_columns_dict:
+            import json
+            save_dict["extra_columns_json"] = np.array(json.dumps(extra_columns_dict))
         np.savez_compressed(buf, **save_dict)
         content_bytes = buf.getvalue()
         return content_bytes, "application/octet-stream", verification
 
     else:
         raise ValueError(f"Unsupported export format: {output_format}")
+
+
+def compute_regional_labels(
+    base_signal: np.ndarray,
+    threshold_sigma: float = 1.5,
+    existing_region_labels: Optional[np.ndarray] = None
+) -> np.ndarray:
+    """
+    Computes or formats a pointwise regional event mask of shape (N, seq_len, 1).
+    
+    If existing_region_labels is provided, it is adapted to shape (N, seq_len, 1).
+    Otherwise, computes an automatic regional event mask per signal where amplitude
+    exceeds mean + threshold_sigma * std, with morphological dilation so contiguous
+    events form solid regions marked 1.0, and background 0.0.
+    """
+    arr = np.asarray(base_signal, dtype=np.float32)
+    if arr.ndim == 1:
+        arr = arr.reshape(1, -1)
+    if arr.ndim == 3:
+        sig = arr[:, :, 0]
+    else:
+        sig = arr
+
+    N, seq_len = sig.shape
+
+    if existing_region_labels is not None:
+        reg = np.asarray(existing_region_labels, dtype=np.float32)
+        if reg.ndim == 1:
+            reg = reg.reshape(1, -1)
+        if reg.ndim == 3:
+            reg = reg[:, :, 0]
+        # Align rows and seq_len
+        if reg.shape[0] != N or reg.shape[1] != seq_len:
+            out_reg = np.zeros((N, seq_len), dtype=np.float32)
+            n_copy = min(N, reg.shape[0])
+            l_copy = min(seq_len, reg.shape[1])
+            out_reg[:n_copy, :l_copy] = reg[:n_copy, :l_copy]
+            reg = out_reg
+        return np.expand_dims(reg, axis=-1).astype(np.float32)
+
+    # Automatic event detection
+    means = np.mean(sig, axis=1, keepdims=True)
+    stds = np.std(sig, axis=1, keepdims=True)
+    stds = np.where(stds < 1e-8, 1.0, stds)
+
+    # Active points exceeding mean + threshold_sigma * std
+    threshold = means + float(threshold_sigma) * stds
+    raw_mask = (sig >= threshold)
+
+    # Baseline expansion / dilation window (radius ~ seq_len // 64, min 2)
+    radius = max(2, seq_len // 64)
+    structure = np.ones((1, 2 * radius + 1), dtype=bool)
+    dilated_mask = binary_dilation(raw_mask, structure=structure)
+
+    mask_float = dilated_mask.astype(np.float32)
+    return np.expand_dims(mask_float, axis=-1)
+
+
+def build_signal_channels(
+    base_signal: np.ndarray,
+    channels: Optional[List[str]] = None,
+    normalize_channels: bool = False,
+    region_threshold: float = 2.0,
+    existing_region_labels: Optional[np.ndarray] = None
+) -> np.ndarray:
+    """
+    Constructs multi-channel 1D signal array from a base 1D/3D signal.
+
+    Parameters:
+        base_signal: shape (N, seq_len) or (N, seq_len, C).
+        channels: list of requested channel IDs. Supported:
+            - 'raw': Raw primary 1D signal x(t)
+            - 'raw_all': All channels from base_signal
+            - 'derivative_1' ('d1', 'dx_dt', 'first_derivative'): 1st derivative along axis 1 (np.gradient)
+            - 'derivative_2' ('d2', 'd2x_dt2', 'second_derivative'): 2nd derivative along axis 1 (np.gradient twice)
+            - 'region_mask' ('regional_labels', 'region_labels'): Binary event mask (N, seq_len)
+            - 'envelope_rms' ('rms'): Moving RMS envelope along axis 1
+            - 'rolling_mean' ('smooth'): Moving average along axis 1
+            - 'fft_magnitude' ('fft'): Real FFT magnitude profile interpolated to seq_len
+        normalize_channels: If True, z-score normalize derived channels (except binary region_mask).
+        region_threshold: Sigma threshold for automatic regional event mask.
+        existing_region_labels: Optional pre-computed regional labels (N, seq_len) or (N, seq_len, 1).
+
+    Returns:
+        float32 numpy array of shape (N, seq_len, len(channels)).
+    """
+    arr = np.asarray(base_signal, dtype=np.float32)
+    if arr.ndim == 1:
+        arr = arr.reshape(1, -1)
+    if arr.ndim == 2:
+        sig = arr
+        N, seq_len = sig.shape
+    elif arr.ndim == 3:
+        N, seq_len, C = arr.shape
+        sig = arr[:, :, 0]
+    else:
+        sig = arr.reshape(arr.shape[0], -1)
+        N, seq_len = sig.shape
+
+    sig = np.nan_to_num(sig, nan=0.0, posinf=0.0, neginf=0.0)
+
+    if not channels:
+        channels = ["raw"]
+
+    def _canonical_ch(ch: str) -> str:
+        c = str(ch).strip().lower().replace("-", "_")
+        if c in ("raw", "original", "sig", "signal", "x"):
+            return "raw"
+        if c in ("raw_all", "all_raw"):
+            return "raw_all"
+        if c in ("derivative_1", "d1", "dx_dt", "first_derivative", "diff1", "deriv1"):
+            return "derivative_1"
+        if c in ("derivative_2", "d2", "d2x_dt2", "second_derivative", "diff2", "deriv2"):
+            return "derivative_2"
+        if c in ("region_mask", "regional_labels", "region_labels", "mask", "segmentation", "regions"):
+            return "region_mask"
+        if c in ("envelope_rms", "rms", "envelope"):
+            return "envelope_rms"
+        if c in ("rolling_mean", "smooth", "moving_average", "mean"):
+            return "rolling_mean"
+        if c in ("fft_magnitude", "fft", "spectrum", "rfft"):
+            return "fft_magnitude"
+        return c
+
+    channel_arrays: List[np.ndarray] = []
+    w = max(3, seq_len // 32)
+
+    for raw_key in channels:
+        key = _canonical_ch(raw_key)
+
+        if key == "raw":
+            ch_data = sig.copy()
+        elif key == "raw_all":
+            if arr.ndim == 3:
+                for c in range(arr.shape[2]):
+                    channel_arrays.append(arr[:, :, c].copy())
+                continue
+            else:
+                ch_data = sig.copy()
+        elif key == "derivative_1":
+            ch_data = np.gradient(sig, axis=1).astype(np.float32)
+        elif key == "derivative_2":
+            ch_data = np.gradient(np.gradient(sig, axis=1), axis=1).astype(np.float32)
+        elif key == "region_mask":
+            ch_data = compute_regional_labels(
+                base_signal=sig,
+                threshold_sigma=region_threshold,
+                existing_region_labels=existing_region_labels
+            )[:, :, 0]
+        elif key == "envelope_rms":
+            sig_sq = sig ** 2
+            mean_sq = uniform_filter1d(sig_sq, size=w, axis=1, mode="reflect")
+            ch_data = np.sqrt(np.maximum(0.0, mean_sq)).astype(np.float32)
+        elif key == "rolling_mean":
+            ch_data = uniform_filter1d(sig, size=w, axis=1, mode="reflect").astype(np.float32)
+        elif key == "fft_magnitude":
+            rfft = np.abs(np.fft.rfft(sig, axis=1))
+            rfft_len = rfft.shape[1]
+            if rfft_len == seq_len:
+                ch_data = rfft.astype(np.float32)
+            else:
+                x_in = np.linspace(0.0, 1.0, rfft_len, endpoint=True)
+                x_out = np.linspace(0.0, 1.0, seq_len, endpoint=True)
+                ch_data = np.empty((N, seq_len), dtype=np.float32)
+                for i in range(N):
+                    ch_data[i] = np.interp(x_out, x_in, rfft[i])
+        else:
+            ch_data = sig.copy()
+
+        ch_data = np.nan_to_num(ch_data, nan=0.0, posinf=0.0, neginf=0.0)
+
+        if normalize_channels and key != "region_mask":
+            m = np.mean(ch_data, axis=1, keepdims=True)
+            s = np.std(ch_data, axis=1, keepdims=True)
+            s = np.where(s < 1e-8, 1.0, s)
+            ch_data = (ch_data - m) / s
+
+        channel_arrays.append(ch_data)
+
+    stacked = np.stack(channel_arrays, axis=-1).astype(np.float32)
+    return np.nan_to_num(stacked, nan=0.0, posinf=0.0, neginf=0.0)
+

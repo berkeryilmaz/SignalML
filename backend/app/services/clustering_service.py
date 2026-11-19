@@ -3,7 +3,7 @@ import json
 import uuid
 import warnings
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, Union
 import numpy as np
 from sklearn.cluster import KMeans, DBSCAN, HDBSCAN, OPTICS
 from sklearn.decomposition import PCA
@@ -49,6 +49,28 @@ def safe_explained_variance(pca_model: Optional[PCA], target_dim: int) -> List[f
 
 class ClusteringService:
     @staticmethod
+    def _resolve_dataset_id(source_type: str, source_id: str) -> Optional[str]:
+        """
+        Resolves the underlying dataset_id from source_type and source_id.
+        Returns source_id if source_type in ('dataset', 'processed'),
+        or queries features table if source_type in ('features', 'feature').
+        """
+        if not source_id:
+            return None
+        st = (source_type or "").lower().strip()
+        if st in ("dataset", "processed"):
+            return str(source_id)
+        elif st in ("features", "feature"):
+            try:
+                with get_db_connection() as conn:
+                    row = conn.execute("SELECT dataset_id FROM features WHERE id = ?", (str(source_id),)).fetchone()
+                    if row and row["dataset_id"]:
+                        return str(row["dataset_id"])
+            except Exception:
+                pass
+        return None
+
+    @staticmethod
     def load_source_matrix(
         source_type: str,
         source_id: str
@@ -80,7 +102,19 @@ class ClusteringService:
             except Exception:
                 pass
 
+            dataset_id = ClusteringService._resolve_dataset_id(source_type, source_id)
+            if sample_ids is None or DataManager._is_default_zero_indexed(sample_ids):
+                if dataset_id:
+                    try:
+                        loaded_sids = DataManager.load_sample_ids(dataset_id, expected_count=len(data))
+                        if loaded_sids and len(loaded_sids) == len(data):
+                            sample_ids = loaded_sids
+                    except Exception:
+                        pass
+
             record["sample_ids"] = sample_ids
+            record["dataset_id"] = dataset_id
+            record["available_extra_columns"] = DataManager.get_available_extra_columns(dataset_id) if dataset_id else []
             return data, labels, record
         elif source_type in ("features", "feature"):
             data, labels, record = FeatureExtractor.load_feature_matrix(source_id)
@@ -106,10 +140,64 @@ class ClusteringService:
             except Exception:
                 pass
 
+            dataset_id = record.get("dataset_id") or ClusteringService._resolve_dataset_id(source_type, source_id)
+            if sample_ids is None or DataManager._is_default_zero_indexed(sample_ids):
+                if dataset_id:
+                    try:
+                        loaded_sids = DataManager.load_sample_ids(dataset_id, expected_count=len(data))
+                        if loaded_sids and len(loaded_sids) == len(data):
+                            sample_ids = loaded_sids
+                    except Exception:
+                        pass
+
             record["sample_ids"] = sample_ids
+            record["dataset_id"] = dataset_id
+            record["available_extra_columns"] = DataManager.get_available_extra_columns(dataset_id) if dataset_id else []
             return data, labels, record
         else:
             raise ValueError(f"Unknown source type: {source_type}")
+
+    @staticmethod
+    def _sanitize_ground_truth(
+        gt: Optional[Any],
+        num_samples: int,
+        include_ground_truth: bool = True
+    ) -> Optional[np.ndarray]:
+        """
+        Sanitizes ground-truth labels:
+        - If not include_ground_truth or gt is None: return None.
+        - Converts gt to numpy array.
+        - If 2D with shape (N, 1): squeezes to 1D.
+        - If not 1D or len != num_samples: return None.
+        """
+        if not include_ground_truth or gt is None:
+            return None
+        try:
+            gt_arr = np.asarray(gt)
+            if gt_arr.ndim == 2 and gt_arr.shape[1] == 1:
+                gt_arr = gt_arr.squeeze(1)
+            if gt_arr.ndim != 1 or len(gt_arr) != num_samples:
+                return None
+            return gt_arr
+        except Exception:
+            return None
+
+    @staticmethod
+    def _format_gt_scalar(gt_val: Any) -> Optional[Union[int, float, str]]:
+        """Formats a single ground truth value as a clean scalar (int, float, or str)."""
+        if isinstance(gt_val, np.ndarray):
+            if gt_val.size == 1:
+                gt_val = gt_val.item()
+            else:
+                return None
+        if isinstance(gt_val, (np.integer, int)):
+            return int(gt_val)
+        elif isinstance(gt_val, (np.floating, float)):
+            return float(round(float(gt_val), 4)) if np.isfinite(gt_val) else 0.0
+        elif gt_val is not None:
+            s = str(gt_val).strip()
+            return s[:64]
+        return None
 
     @staticmethod
     def run_clustering(
@@ -136,6 +224,7 @@ class ClusteringService:
         standardize: bool = True,
         random_state: int = 42,
         compute_pca: bool = True,
+        include_ground_truth: bool = True,
         # IDEC parameters
         model_id: Optional[str] = None,
         epochs: int = 15,
@@ -150,6 +239,8 @@ class ClusteringService:
         Returns coordinates, cluster labels, soft probabilities, metrics, and saves persistently.
         """
         if params is not None:
+            if "include_ground_truth" in params:
+                include_ground_truth = bool(params["include_ground_truth"])
             if "model_id" in params and not model_id:
                 model_id = params["model_id"]
             if "n_clusters" in params:
@@ -184,12 +275,26 @@ class ClusteringService:
         if num_samples < 2:
             raise ValueError("Clustering requires at least 2 samples.")
 
+        ground_truth = ClusteringService._sanitize_ground_truth(
+            ground_truth, num_samples, include_ground_truth=include_ground_truth
+        )
+        has_ground_truth = ground_truth is not None
+        ground_truth_unique_count = int(len(np.unique(ground_truth))) if has_ground_truth else 0
+        is_discrete_ground_truth = bool(has_ground_truth and ground_truth_unique_count <= 50)
+
         # Input ID Traceability: load sample_ids if present or generate fallback indices
         sample_ids_raw = source_meta.get("sample_ids")
-        if sample_ids_raw and len(sample_ids_raw) == num_samples:
+        resolved_ds_id = ClusteringService._resolve_dataset_id(source_type, source_id)
+        if sample_ids_raw and len(sample_ids_raw) == num_samples and not DataManager._is_default_zero_indexed([str(s) for s in sample_ids_raw]):
             sample_ids = [str(s) for s in sample_ids_raw]
         else:
-            sample_ids = [str(i) for i in range(num_samples)]
+            if resolved_ds_id:
+                try:
+                    sample_ids = DataManager.load_sample_ids(resolved_ds_id, expected_count=num_samples)
+                except Exception:
+                    sample_ids = [str(s) for s in sample_ids_raw] if sample_ids_raw else [str(i) for i in range(num_samples)]
+            else:
+                sample_ids = [str(s) for s in sample_ids_raw] if sample_ids_raw else [str(i) for i in range(num_samples)]
 
         # Handle NaNs or Infs if any in raw inputs
         if np.isnan(X).any() or np.isinf(X).any():
@@ -318,38 +423,65 @@ class ClusteringService:
                 else:
                     raise ValueError(f"Could not load model '{model_id}': weights not found and graph_json missing.")
 
-            # 3. Prepare input array matching model.input_shape
+            # 3. Prepare input array matching model.input_shape (including multi-channel & multi-input support)
+            X_input = None
+            ds_id_for_idec = source_id if source_type in ("dataset", "processed") else source_meta.get("dataset_id")
+            if ds_id_for_idec:
+                try:
+                    from app.services.training_service import TrainingService
+                    prep_idec = TrainingService.prepare_model_inputs(model, ds_id_for_idec, model_record=model_record)
+                    X_input = prep_idec.X
+                except Exception:
+                    X_input = None
+
             model_in_shape = model.input_shape
-            if isinstance(model_in_shape, list):
+            is_multi_model_input = isinstance(model_in_shape, list) and len(model_in_shape) > 1
+            if isinstance(model_in_shape, list) and not is_multi_model_input:
                 model_in_shape = model_in_shape[0]
 
-            X_input = np.asarray(X, dtype=np.float32)
+            if X_input is None:
+                X_input = np.asarray(X, dtype=np.float32)
 
-            if len(model_in_shape) == 3:
-                # Shape is (batch_size, seq_len, channels)
-                target_seq = model_in_shape[1]
-                if X_input.ndim == 2:
-                    if target_seq is not None:
-                        if X_input.shape[1] < target_seq:
-                            X_input = np.pad(X_input, ((0, 0), (0, target_seq - X_input.shape[1])), mode="constant")
-                        elif X_input.shape[1] > target_seq:
-                            X_input = X_input[:, :target_seq]
-                    X_input = np.expand_dims(X_input, axis=-1)
-                elif X_input.ndim == 3:
-                    if target_seq is not None:
-                        if X_input.shape[1] < target_seq:
-                            X_input = np.pad(X_input, ((0, 0), (0, target_seq - X_input.shape[1]), (0, 0)), mode="constant")
-                        elif X_input.shape[1] > target_seq:
-                            X_input = X_input[:, :target_seq, :]
-            elif len(model_in_shape) == 2:
-                target_dim = model_in_shape[1]
-                if X_input.ndim > 2:
-                    X_input = X_input.reshape(X_input.shape[0], -1)
-                if target_dim is not None:
-                    if X_input.shape[1] < target_dim:
-                        X_input = np.pad(X_input, ((0, 0), (0, target_dim - X_input.shape[1])), mode="constant")
-                    elif X_input.shape[1] > target_dim:
-                        X_input = X_input[:, :target_dim]
+            if not isinstance(X_input, list):
+                X_input = np.asarray(X_input, dtype=np.float32)
+                if len(model_in_shape) == 3:
+                    # Shape is (batch_size, seq_len, channels)
+                    target_seq = model_in_shape[1]
+                    target_ch = model_in_shape[2]
+                    if X_input.ndim == 2:
+                        if target_seq is not None and target_ch is not None and target_ch > 1 and X_input.shape[1] == target_seq * target_ch:
+                            X_input = X_input.reshape(X_input.shape[0], target_seq, target_ch)
+                        else:
+                            if target_seq is not None:
+                                if X_input.shape[1] < target_seq:
+                                    X_input = np.pad(X_input, ((0, 0), (0, target_seq - X_input.shape[1])), mode="constant")
+                                elif X_input.shape[1] > target_seq:
+                                    X_input = X_input[:, :target_seq]
+                            X_input = np.expand_dims(X_input, axis=-1)
+                    elif X_input.ndim == 3:
+                        if target_seq is not None:
+                            if X_input.shape[1] < target_seq:
+                                X_input = np.pad(X_input, ((0, 0), (0, target_seq - X_input.shape[1]), (0, 0)), mode="constant")
+                            elif X_input.shape[1] > target_seq:
+                                X_input = X_input[:, :target_seq, :]
+
+                    # Ensure channel dimension (axis -1) matches target_ch (e.g., 4-channel 1D-CNN)
+                    if target_ch is not None and X_input.ndim == 3 and X_input.shape[2] != target_ch:
+                        if X_input.shape[2] > target_ch:
+                            X_input = X_input[:, :, :target_ch]
+                        elif X_input.shape[2] == 1 and target_ch > 1:
+                            X_input = np.repeat(X_input, target_ch, axis=-1)
+                        else:
+                            X_input = np.pad(X_input, ((0, 0), (0, 0), (0, target_ch - X_input.shape[2])), mode="constant")
+                elif len(model_in_shape) == 2:
+                    target_dim = model_in_shape[1]
+                    if X_input.ndim > 2:
+                        X_input = X_input.reshape(X_input.shape[0], -1)
+                    if target_dim is not None:
+                        if X_input.shape[1] < target_dim:
+                            X_input = np.pad(X_input, ((0, 0), (0, target_dim - X_input.shape[1])), mode="constant")
+                        elif X_input.shape[1] > target_dim:
+                            X_input = X_input[:, :target_dim]
 
             # 4. Locate or attach ClusteringLayer
             clustering_layer = None
@@ -421,10 +553,14 @@ class ClusteringService:
             encoder = keras.Model(inputs=model.inputs, outputs=bottleneck_tensor)
 
             # 6. Pre-train reconstruction branch if requested
-            target_recon = np.copy(X_input)
+            base_recon_src = X_input[0] if isinstance(X_input, list) else X_input
+            target_recon = np.copy(base_recon_src)
             recon_shape = recon_out.shape
-            if len(recon_shape) == 2 and target_recon.ndim == 3 and target_recon.shape[-1] == 1:
-                target_recon = target_recon.squeeze(-1)
+            if len(recon_shape) == 2 and target_recon.ndim == 3:
+                if target_recon.shape[-1] == 1:
+                    target_recon = target_recon.squeeze(-1)
+                else:
+                    target_recon = target_recon[:, :, 0]
             elif len(recon_shape) == 3 and target_recon.ndim == 2:
                 target_recon = np.expand_dims(target_recon, axis=-1)
 
@@ -435,6 +571,15 @@ class ClusteringService:
                     target_recon = np.pad(target_recon, pad_cfg, mode="constant")
                 else:
                     target_recon = target_recon[:, :recon_shape[1]]
+
+            if len(recon_shape) == 3 and recon_shape[2] is not None and target_recon.ndim == 3 and target_recon.shape[2] != recon_shape[2]:
+                r_ch = recon_shape[2]
+                if target_recon.shape[2] > r_ch:
+                    target_recon = target_recon[:, :, :r_ch]
+                elif target_recon.shape[2] == 1 and r_ch > 1:
+                    target_recon = np.repeat(target_recon, r_ch, axis=-1)
+                else:
+                    target_recon = np.pad(target_recon, ((0, 0), (0, 0), (0, r_ch - target_recon.shape[2])), mode="constant")
 
             if pretrain_epochs > 0:
                 try:
@@ -728,14 +873,10 @@ class ClusteringService:
                         "y": float(round(y_val, 4)) if np.isfinite(y_val) else 0.0,
                         "z": float(round(z_val, 4)) if np.isfinite(z_val) else 0.0,
                     }
-                    if ground_truth is not None:
-                        gt_val = ground_truth[i]
-                        if np.issubdtype(type(gt_val), np.integer):
-                            point["ground_truth"] = int(gt_val)
-                        elif np.issubdtype(type(gt_val), np.floating):
-                            point["ground_truth"] = float(round(float(gt_val), 4)) if np.isfinite(gt_val) else 0.0
-                        else:
-                            point["ground_truth"] = str(gt_val)
+                    if ground_truth is not None and i < len(ground_truth):
+                        gt_scalar = ClusteringService._format_gt_scalar(ground_truth[i])
+                        if gt_scalar is not None:
+                            point["ground_truth"] = gt_scalar
                     points.append(point)
         else:
             for i in range(num_samples):
@@ -761,14 +902,10 @@ class ClusteringService:
                     "y": 0.0,
                     "z": 0.0,
                 }
-                if ground_truth is not None:
-                    gt_val = ground_truth[i]
-                    if np.issubdtype(type(gt_val), np.integer):
-                        point["ground_truth"] = int(gt_val)
-                    elif np.issubdtype(type(gt_val), np.floating):
-                        point["ground_truth"] = float(round(float(gt_val), 4)) if np.isfinite(gt_val) else 0.0
-                    else:
-                        point["ground_truth"] = str(gt_val)
+                if ground_truth is not None and i < len(ground_truth):
+                    gt_scalar = ClusteringService._format_gt_scalar(ground_truth[i])
+                    if gt_scalar is not None:
+                        point["ground_truth"] = gt_scalar
                 points.append(point)
 
         # Save clustering results to persistent storage
@@ -823,9 +960,13 @@ class ClusteringService:
             "feature_dim": feature_dim,
             "cluster_distribution": distribution,
             "metrics": metrics,
+            "has_ground_truth": has_ground_truth,
+            "ground_truth_unique_count": ground_truth_unique_count,
+            "is_discrete_ground_truth": is_discrete_ground_truth,
             "explained_variance_2d": explained_variance_2d,
             "explained_variance_3d": explained_variance_3d,
-            "points": points
+            "points": points,
+            "available_extra_columns": DataManager.get_available_extra_columns(resolved_ds_id) if resolved_ds_id else []
         })
 
     @staticmethod
@@ -859,6 +1000,20 @@ class ClusteringService:
             explained_variance_3d = [float(v) for v in npz["explained_variance_3d"]] if "explained_variance_3d" in npz else []
 
         num_samples = len(cluster_labels)
+        dataset_id = ClusteringService._resolve_dataset_id(c_data.get("source_type", ""), c_data.get("source_id", ""))
+        if sample_ids is None or len(sample_ids) != num_samples or DataManager._is_default_zero_indexed(sample_ids):
+            if dataset_id:
+                try:
+                    loaded_sids = DataManager.load_sample_ids(dataset_id, expected_count=num_samples)
+                    if loaded_sids and len(loaded_sids) == num_samples:
+                        sample_ids = loaded_sids
+                except Exception:
+                    pass
+        ground_truth = ClusteringService._sanitize_ground_truth(ground_truth, num_samples, include_ground_truth=True)
+        has_ground_truth = ground_truth is not None
+        ground_truth_unique_count = int(len(np.unique(ground_truth))) if has_ground_truth else 0
+        is_discrete_ground_truth = bool(has_ground_truth and ground_truth_unique_count <= 50)
+
         if distribution_arr is not None:
             distribution = {int(k): int(v) for k, v in distribution_arr}
         else:
@@ -892,13 +1047,9 @@ class ClusteringService:
                 "z": float(round(z_val, 4)) if np.isfinite(z_val) else 0.0,
             }
             if ground_truth is not None and i < len(ground_truth):
-                gt_val = ground_truth[i]
-                if np.issubdtype(type(gt_val), np.integer):
-                    pt["ground_truth"] = int(gt_val)
-                elif np.issubdtype(type(gt_val), np.floating):
-                    pt["ground_truth"] = float(round(float(gt_val), 4)) if np.isfinite(gt_val) else 0.0
-                else:
-                    pt["ground_truth"] = str(gt_val)
+                gt_scalar = ClusteringService._format_gt_scalar(ground_truth[i])
+                if gt_scalar is not None:
+                    pt["ground_truth"] = gt_scalar
             points.append(pt)
 
         params = {}
@@ -921,18 +1072,28 @@ class ClusteringService:
             "algorithm": c_data.get("algorithm"),
             "params": params,
             "metrics": metrics,
+            "has_ground_truth": has_ground_truth,
+            "ground_truth_unique_count": ground_truth_unique_count,
+            "is_discrete_ground_truth": is_discrete_ground_truth,
             "num_samples": num_samples,
             "cluster_distribution": distribution,
             "explained_variance_2d": explained_variance_2d,
             "explained_variance_3d": explained_variance_3d,
-            "points": points
+            "points": points,
+            "available_extra_columns": DataManager.get_available_extra_columns(dataset_id) if dataset_id else []
         })
 
     @staticmethod
-    def export_clustering_csv(clustering_id: str) -> str:
+    def export_clustering_csv(
+        clustering_id: str,
+        include_ground_truth: Optional[bool] = None,
+        include_probabilities: bool = True,
+        include_pca: bool = True,
+        extra_columns: Optional[List[str]] = None
+    ) -> str:
         """
         Exports a CSV string with format:
-        input_id,cluster_label,confidence,uncertainty,prob_cluster_0,...,pca_x,pca_y,pca_z,ground_truth
+        input_id,[extra_cols...],cluster_label,confidence,uncertainty,[prob_cluster_0,...],[pca_x,pca_y,pca_z],[ground_truth]
         """
         import io
         import csv
@@ -945,7 +1106,11 @@ class ClusteringService:
 
         result_path = resolve_storage_path(c_data["result_path"])
         if not result_path or not result_path.exists():
-            raise FileNotFoundError(f"Clustering result file not found: {c_data['result_path']}")
+            cand = CLUSTERS_DIR / c_data.get("project_id", "") / f"{clustering_id}.npz"
+            if cand.exists():
+                result_path = cand
+            else:
+                raise FileNotFoundError(f"Clustering result file not found: {c_data['result_path']}")
 
         with np.load(str(result_path), allow_pickle=False) as npz:
             cluster_labels = npz["cluster_labels"]
@@ -957,16 +1122,43 @@ class ClusteringService:
             explained_variance_2d = [float(v) for v in npz["explained_variance_2d"]] if "explained_variance_2d" in npz else []
             explained_variance_3d = [float(v) for v in npz["explained_variance_3d"]] if "explained_variance_3d" in npz else []
             pca_3d = npz["pca_3d"] if "pca_3d" in npz else None
-            ground_truth = npz["ground_truth"] if "ground_truth" in npz else None
+            raw_gt = npz["ground_truth"] if "ground_truth" in npz else None
 
         num_samples = len(cluster_labels)
+        dataset_id = ClusteringService._resolve_dataset_id(c_data.get("source_type", ""), c_data.get("source_id", ""))
+        if sample_ids is None or len(sample_ids) != num_samples or DataManager._is_default_zero_indexed(sample_ids):
+            if dataset_id:
+                try:
+                    loaded_sids = DataManager.load_sample_ids(dataset_id, expected_count=num_samples)
+                    if loaded_sids and len(loaded_sids) == num_samples:
+                        sample_ids = loaded_sids
+                except Exception:
+                    pass
+
+        extra_dict = {}
+        extra_cols_to_use = []
+        if extra_columns and dataset_id:
+            try:
+                extra_dict = DataManager.load_extra_columns(dataset_id, selected_columns=extra_columns, expected_count=num_samples)
+                extra_cols_to_use = [c for c in extra_columns if c in extra_dict]
+            except Exception:
+                extra_dict = {}
+                extra_cols_to_use = []
+
+        inc_gt = True if include_ground_truth is None else bool(include_ground_truth)
+        ground_truth = ClusteringService._sanitize_ground_truth(raw_gt, num_samples, include_ground_truth=inc_gt)
+
         output = io.StringIO()
         writer = csv.writer(output, lineterminator="\n")
 
-        headers = ["input_id", "cluster_label", "confidence", "uncertainty"]
-        for c in cluster_ids:
-            headers.append(f"prob_cluster_{c}")
-        headers.extend(["pca_x", "pca_y", "pca_z", "ground_truth"])
+        headers = ["input_id"] + extra_cols_to_use + ["cluster_label", "confidence", "uncertainty"]
+        if include_probabilities:
+            for c in cluster_ids:
+                headers.append(f"prob_cluster_{c}")
+        if include_pca:
+            headers.extend(["pca_x", "pca_y", "pca_z"])
+        if inc_gt:
+            headers.append("ground_truth")
         writer.writerow(headers)
 
         for i in range(num_samples):
@@ -975,25 +1167,34 @@ class ClusteringService:
             conf_val = f"{float(confidence[i]):.4f}" if (confidence is not None and i < len(confidence)) else "1.0000"
             unc_val = f"{float(uncertainty[i]):.4f}" if (uncertainty is not None and i < len(uncertainty)) else "0.0000"
 
-            row = [s_id, c_lbl, conf_val, unc_val]
+            row = [s_id]
+            for col in extra_cols_to_use:
+                col_vals = extra_dict.get(col, [])
+                row.append(str(col_vals[i]) if i < len(col_vals) else "")
 
-            for idx, c in enumerate(cluster_ids):
-                if probabilities is not None and i < len(probabilities) and idx < probabilities.shape[1]:
-                    row.append(f"{float(probabilities[i, idx]):.4f}")
+            row.extend([c_lbl, conf_val, unc_val])
+
+            if include_probabilities:
+                for idx, c in enumerate(cluster_ids):
+                    if probabilities is not None and i < len(probabilities) and idx < probabilities.shape[1]:
+                        row.append(f"{float(probabilities[i, idx]):.4f}")
+                    else:
+                        row.append("0.0000")
+
+            if include_pca:
+                if pca_3d is not None and i < len(pca_3d):
+                    row.append(f"{float(pca_3d[i, 0]):.4f}")
+                    row.append(f"{float(pca_3d[i, 1]):.4f}")
+                    row.append(f"{float(pca_3d[i, 2]):.4f}")
                 else:
-                    row.append("0.0000")
+                    row.extend(["0.0000", "0.0000", "0.0000"])
 
-            if pca_3d is not None and i < len(pca_3d):
-                row.append(f"{float(pca_3d[i, 0]):.4f}")
-                row.append(f"{float(pca_3d[i, 1]):.4f}")
-                row.append(f"{float(pca_3d[i, 2]):.4f}")
-            else:
-                row.extend(["0.0000", "0.0000", "0.0000"])
-
-            if ground_truth is not None and i < len(ground_truth):
-                row.append(str(ground_truth[i]))
-            else:
-                row.append("")
+            if inc_gt:
+                if ground_truth is not None and i < len(ground_truth):
+                    gt_scalar = ClusteringService._format_gt_scalar(ground_truth[i])
+                    row.append(str(gt_scalar) if gt_scalar is not None else "")
+                else:
+                    row.append("")
 
             writer.writerow(row)
 

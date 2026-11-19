@@ -380,3 +380,101 @@ def test_generate_functional_python_code_hybrid():
     assert isinstance(built_model, keras.Model)
     assert len(built_model.inputs) == 2
 
+
+def test_multichannel_1d_cnn_derived_channels_building():
+    # Input with 3 derived channels: raw, derivative_1, derivative_2
+    graph = {
+        "nodes": [
+            {
+                "id": "1",
+                "type": "input",
+                "properties": {
+                    "shape": "512, 1",
+                    "channels": ["raw", "derivative_1", "derivative_2"],
+                    "custom_name": "MultiChannel_Input"
+                }
+            },
+            {
+                "id": "2",
+                "type": "conv1d",
+                "properties": {"filters": 16, "kernel_size": 5, "activation": "relu"}
+            },
+            {
+                "id": "3",
+                "type": "global_maxpooling1d",
+                "properties": {}
+            },
+            {
+                "id": "4",
+                "type": "dense",
+                "properties": {"units": 4, "activation": "softmax"}
+            },
+            {
+                "id": "5",
+                "type": "output",
+                "properties": {"activation": "softmax", "target_source": "label_class"}
+            }
+        ],
+        "links": [
+            ["l1", "1", 0, "2", 0],
+            ["l2", "2", 0, "3", 0],
+            ["l3", "3", 0, "4", 0],
+            ["l4", "4", 0, "5", 0]
+        ]
+    }
+
+    model, summary = KerasModelBuilder.build_model(graph)
+    assert isinstance(model, keras.Model)
+    # Shape synchronized to (None, 512, 3)
+    assert summary["input_shapes"][0] == [None, 512, 3]
+    assert len(summary["input_configs"]) == 1
+    assert summary["input_configs"][0]["channels"] == ["raw", "derivative_1", "derivative_2"]
+
+    # Verify build_signal_channels produces exact (N, 512, 3)
+    from app.services.signal_processing import build_signal_channels
+    dummy_signal = np.random.randn(8, 512).astype(np.float32)
+    ch_array = build_signal_channels(dummy_signal, channels=["raw", "derivative_1", "derivative_2"])
+    assert ch_array.shape == (8, 512, 3)
+    # Verify 1st and 2nd derivatives mathematically differ from raw
+    assert not np.allclose(ch_array[:, :, 0], ch_array[:, :, 1])
+    assert not np.allclose(ch_array[:, :, 1], ch_array[:, :, 2])
+
+    pred = model(ch_array)
+    assert pred.shape == (8, 4)
+
+
+def test_separate_datasets_per_input_concatenate_graph():
+    # 3 Separate Inputs (each bound to separate dataset_id) -> Concatenate(axis=-1) -> Conv1D -> Output
+    graph = {
+        "nodes": [
+            {"id": "in_raw", "type": "input", "properties": {"shape": "256, 1", "dataset_id": "ds_raw", "custom_name": "Raw_Input"}},
+            {"id": "in_d1", "type": "input", "properties": {"shape": "256, 1", "dataset_id": "ds_d1", "custom_name": "D1_Input"}},
+            {"id": "in_d2", "type": "input", "properties": {"shape": "256, 1", "dataset_id": "ds_d2", "custom_name": "D2_Input"}},
+            {"id": "concat", "type": "concatenate", "properties": {"axis": -1, "custom_name": "Concat_Channels"}},
+            {"id": "conv", "type": "conv1d", "properties": {"filters": 16, "kernel_size": 3, "activation": "relu"}},
+            {"id": "out", "type": "output", "properties": {"activation": "linear", "target_source": "region_labels", "dataset_id": "ds_target"}}
+        ],
+        "links": [
+            ["l1", "in_raw", 0, "concat", 0],
+            ["l2", "in_d1", 0, "concat", 1],
+            ["l3", "in_d2", 0, "concat", 2],
+            ["l4", "concat", 0, "conv", 0],
+            ["l5", "conv", 0, "out", 0]
+        ]
+    }
+
+    model, summary = KerasModelBuilder.build_model(graph)
+    assert isinstance(model, keras.Model)
+    assert len(model.inputs) == 3
+    # Concatenation of three (None, 256, 1) along axis=-1 produces (None, 256, 3)
+    concat_layer = model.get_layer("Concat_Channels")
+    assert concat_layer.output.shape[2] == 3
+
+    # Check input and output configs
+    assert len(summary["input_configs"]) == 3
+    assert summary["input_configs"][0]["dataset_id"] == "ds_raw"
+    assert summary["input_configs"][1]["dataset_id"] == "ds_d1"
+    assert summary["input_configs"][2]["dataset_id"] == "ds_d2"
+    assert summary["output_configs"][0]["dataset_id"] == "ds_target"
+    assert summary["output_configs"][0]["target_source"] == "region_labels"
+

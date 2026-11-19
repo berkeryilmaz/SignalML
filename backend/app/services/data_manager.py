@@ -201,62 +201,61 @@ class DataManager:
     @staticmethod
     def detect_sequence_groups(all_columns: List[str]) -> List[Dict[str, Any]]:
         """
-        Auto-detects contiguous sequential columns in all_columns
-        (e.g. s1-s100, sample_0-sample_511, 0-511).
-        Returns a list of suggested sequence group dicts.
+        Auto-detects sequential prefix families in all_columns
+        (e.g. s0..s511, a_0..a_511, dvdt_0..dvdt_511, ch1_0..ch1_100, 0..511).
+        Supports interleaved columns and contiguous or monotonically increasing suffixes.
+        For each detected group with count >= 3, returns dict with name, channel_name, prefix, pattern, columns, count.
         """
         if not all_columns or len(all_columns) < 3:
             return []
 
+        rx_prefix = re.compile(r"^(([a-zA-Z_][a-zA-Z0-9_]*?)_?)(\d+)$")
+        rx_numeric = re.compile(r"^(\d+)$")
+
+        prefix_groups: Dict[Tuple[str, str], List[Tuple[str, int]]] = {}
+
+        for col in all_columns:
+            col_str = str(col)
+            m = rx_prefix.match(col_str)
+            if m:
+                raw_prefix = m.group(1)
+                clean_prefix = m.group(2).rstrip("_") or "seq"
+                num_suffix = int(m.group(3))
+                key = (raw_prefix, clean_prefix)
+                if key not in prefix_groups:
+                    prefix_groups[key] = []
+                prefix_groups[key].append((col_str, num_suffix))
+            else:
+                m_num = rx_numeric.match(col_str)
+                if m_num:
+                    raw_prefix = ""
+                    clean_prefix = "indexed"
+                    num_suffix = int(m_num.group(1))
+                    key = (raw_prefix, clean_prefix)
+                    if key not in prefix_groups:
+                        prefix_groups[key] = []
+                    prefix_groups[key].append((col_str, num_suffix))
+
         groups: List[Dict[str, Any]] = []
-        rx = re.compile(r"^([a-zA-Z_]*)(\d+)$")
-
-        i = 0
-        n = len(all_columns)
-        while i < n:
-            m = rx.match(str(all_columns[i]))
-            if not m:
-                i += 1
-                continue
-
-            prefix = m.group(1)
-            first_num = int(m.group(2))
-            prev_num = first_num
-            col_run = [str(all_columns[i])]
-            j = i + 1
-
-            while j < n:
-                m_next = rx.match(str(all_columns[j]))
-                if not m_next:
-                    break
-                pfx_next = m_next.group(1)
-                num_next = int(m_next.group(2))
-                if pfx_next == prefix and num_next == prev_num + 1:
-                    col_run.append(str(all_columns[j]))
-                    prev_num = num_next
-                    j += 1
-                else:
-                    break
+        for (raw_prefix, clean_prefix), items in prefix_groups.items():
+            items_sorted = sorted(items, key=lambda x: x[1])
+            seen = set()
+            col_run: List[str] = []
+            for col_name, _ in items_sorted:
+                if col_name not in seen:
+                    seen.add(col_name)
+                    col_run.append(col_name)
 
             if len(col_run) >= 3:
-                last_num = prev_num
-                if prefix:
-                    pattern = f"{prefix}{first_num}-{prefix}{last_num}"
-                    name = f"sequence_{prefix.strip('_') or 'group'}"
-                else:
-                    pattern = f"{first_num}-{last_num}"
-                    name = "sequence_indexed"
-
+                pattern = f"{col_run[0]}-{col_run[-1]}"
                 groups.append({
-                    "name": name,
-                    "prefix": prefix,
+                    "name": f"channel_{clean_prefix}",
+                    "channel_name": clean_prefix,
+                    "prefix": raw_prefix,
                     "pattern": pattern,
                     "columns": col_run,
                     "count": len(col_run)
                 })
-                i = j
-            else:
-                i += 1
 
         return groups
 
@@ -311,7 +310,8 @@ class DataManager:
         encoding: str = "utf-8",
         label_col: Optional[str] = None,
         exclude_cols: Optional[Union[List[str], str]] = None,
-        transpose: bool = False
+        transpose: bool = False,
+        missing_strategy: Optional[str] = "zero"
     ) -> Tuple[np.ndarray, Optional[np.ndarray], List[str]]:
         """
         Loads data from CSV, TXT, TSV, JSON, JSONL, NPY, or NPZ into numpy arrays.
@@ -444,6 +444,18 @@ class DataManager:
         # Convert remaining data to numeric
         numeric_df = df.apply(pd.to_numeric, errors="coerce")
 
+        # Handle missing values according to strategy
+        if missing_strategy == "drop":
+            valid_mask = ~numeric_df.isna().any(axis=1)
+            if labels is not None:
+                labels = labels[valid_mask.to_numpy()]
+            numeric_df = numeric_df.dropna().reset_index(drop=True)
+            df = df.iloc[valid_mask.to_numpy()].reset_index(drop=True)
+        elif missing_strategy == "mean":
+            numeric_df = numeric_df.fillna(numeric_df.mean())
+        elif missing_strategy == "ffill":
+            numeric_df = numeric_df.ffill().bfill()
+
         cols = [str(c) for c in df.columns]
         # Auto-detect if row 0 was accidentally read as data instead of column headers
         if len(numeric_df) > 1:
@@ -453,6 +465,8 @@ class DataManager:
                 cols = [str(c) for c in df.iloc[0]]
                 df = df.iloc[1:].reset_index(drop=True)
                 numeric_df = df.apply(pd.to_numeric, errors="coerce")
+                if missing_strategy == "drop":
+                    numeric_df = numeric_df.dropna().reset_index(drop=True)
 
         data = numeric_df.to_numpy(dtype=np.float32)
 
@@ -483,11 +497,13 @@ class DataManager:
         label_col: Optional[str] = None,
         exclude_cols: Optional[Union[List[str], str]] = None,
         transpose: bool = False,
-        schema_config: Optional[Union[str, Dict[str, Any]]] = None
+        schema_config: Optional[Union[str, Dict[str, Any]]] = None,
+        missing_strategy: Optional[str] = "zero",
+        split_config: Optional[Union[str, Dict[str, Any]]] = None
     ) -> Dict[str, Any]:
         """
         Parses source data, saves it persistently in storage/datasets, computes metadata,
-        performs automated preprocessing and reshaping if schema_config is provided,
+        handles missing value strategy and train/val/test split configuration,
         tracks Input ID traceability, and saves it in the SQLite database.
         """
         parsed_schema_config = None
@@ -500,6 +516,25 @@ class DataManager:
             elif isinstance(schema_config, dict):
                 parsed_schema_config = schema_config
 
+        parsed_split_config = None
+        if split_config:
+            if isinstance(split_config, str):
+                try:
+                    parsed_split_config = json.loads(split_config)
+                except Exception:
+                    if split_config == "70_15_15":
+                        parsed_split_config = {"train": 0.70, "val": 0.15, "test": 0.15}
+                    elif split_config == "80_10_10":
+                        parsed_split_config = {"train": 0.80, "val": 0.10, "test": 0.10}
+                    elif split_config == "80_20_0":
+                        parsed_split_config = {"train": 0.80, "val": 0.20, "test": 0.0}
+                    elif split_config == "100_0_0":
+                        parsed_split_config = {"train": 1.0, "val": 0.0, "test": 0.0}
+                    else:
+                        parsed_split_config = {"preset": split_config}
+            elif isinstance(split_config, dict):
+                parsed_split_config = split_config
+
         dataset_id = str(uuid.uuid4())
         dest_dir = DATASETS_DIR / project_id
         dest_dir.mkdir(parents=True, exist_ok=True)
@@ -507,25 +542,92 @@ class DataManager:
         now = datetime.now(timezone.utc).isoformat()
 
         if parsed_schema_config is None:
-            # Backward-compatible loading
+            # Backward-compatible loading: first inspect tabular file for ID and extra columns if has_header
+            extracted_sample_ids = None
+            extra_columns_dict: Dict[str, List[str]] = {}
+            auto_exclude_for_raw = []
+            if exclude_cols is not None:
+                if isinstance(exclude_cols, str):
+                    try:
+                        auto_exclude_for_raw = json.loads(exclude_cols)
+                    except Exception:
+                        auto_exclude_for_raw = [c.strip() for c in exclude_cols.split(",") if c.strip()]
+                else:
+                    auto_exclude_for_raw = [str(c) for c in exclude_cols]
+
+            ext_check = source_path.suffix.lower()
+            if has_header and not transpose and ext_check not in (".npy", ".npz"):
+                try:
+                    delim_use = DataManager.detect_delimiter(source_path) if (delimiter == "auto" or not delimiter) else delimiter
+                    sep_use = delim_use if delim_use != "\\t" else "\t"
+                    df_head = pd.read_csv(str(source_path), sep=sep_use, header=0, encoding=encoding)
+                    df_head.columns = [str(c) for c in df_head.columns]
+                    seq_groups_detected = DataManager.detect_sequence_groups(list(df_head.columns))
+                    seq_col_set = {c for g in seq_groups_detected for c in g.get("columns", [])}
+                    id_col_cand = None
+                    for col in df_head.columns:
+                        if col.lower().strip() in ("id", "_id", "input_id", "input id", "uid", "sample_id", "sampleid", "patient_id", "record_id", "signal_id"):
+                            id_col_cand = col
+                            break
+                    if id_col_cand and id_col_cand in df_head.columns and len(df_head.columns) > 1:
+                        extracted_sample_ids = np.array([str(v) for v in df_head[id_col_cand].tolist()], dtype=str)
+                        if id_col_cand not in auto_exclude_for_raw and id_col_cand != label_col:
+                            auto_exclude_for_raw.append(id_col_cand)
+                    for col in df_head.columns:
+                        if col == id_col_cand:
+                            continue
+                        if (seq_col_set and col not in seq_col_set) or (col in auto_exclude_for_raw):
+                            extra_columns_dict[col] = ["" if pd.isna(v) else str(v) for v in df_head[col].tolist()]
+                except Exception:
+                    pass
+
             data, labels, cols = DataManager.load_raw_data(
                 source_path,
                 delimiter=delimiter,
                 has_header=has_header,
                 encoding=encoding,
                 label_col=label_col,
-                exclude_cols=exclude_cols,
-                transpose=transpose
+                exclude_cols=auto_exclude_for_raw if auto_exclude_for_raw else exclude_cols,
+                transpose=transpose,
+                missing_strategy=missing_strategy
             )
 
-            num_rows, num_cols = data.shape
-            # Input ID Traceability: default sample_ids
-            sample_ids = np.array([str(i) for i in range(num_rows)], dtype=str)
+            # Missing value handling
+            if missing_strategy == "drop":
+                valid_mask = np.all(np.isfinite(data), axis=1)
+                data = data[valid_mask]
+                if labels is not None:
+                    labels = labels[valid_mask]
+                if extracted_sample_ids is not None and len(extracted_sample_ids) == len(valid_mask):
+                    extracted_sample_ids = extracted_sample_ids[valid_mask]
+                for k_col in list(extra_columns_dict.keys()):
+                    if len(extra_columns_dict[k_col]) == len(valid_mask):
+                        extra_columns_dict[k_col] = [v for v, m in zip(extra_columns_dict[k_col], valid_mask) if m]
+            elif missing_strategy == "mean":
+                col_means = np.nanmean(data, axis=0)
+                col_means = np.nan_to_num(col_means, nan=0.0)
+                inds = np.where(~np.isfinite(data))
+                data[inds] = np.take(col_means, inds[1])
+            data = np.nan_to_num(data, copy=True, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+
+            if data.ndim == 1:
+                data = data.reshape(1, -1)
+            elif data.ndim == 0:
+                data = data.reshape(1, 1)
+
+            num_rows, num_cols = int(data.shape[0]), int(data.shape[1])
+            # Input ID Traceability: use extracted_sample_ids if matching row count, else default sample_ids
+            if extracted_sample_ids is not None and len(extracted_sample_ids) == num_rows:
+                sample_ids = extracted_sample_ids.astype(str)
+            else:
+                sample_ids = np.array([str(i) for i in range(num_rows)], dtype=str)
 
             save_dict = {
                 "data": data,
                 "sample_ids": sample_ids
             }
+            if extra_columns_dict:
+                save_dict["extra_columns_json"] = np.array(json.dumps(extra_columns_dict))
             if labels is not None:
                 save_dict["labels"] = labels
             np.savez_compressed(str(dest_path), **save_dict)
@@ -555,7 +657,9 @@ class DataManager:
             metadata = {
                 "columns": cols,
                 "excluded_columns": parsed_excluded,
+                "extra_columns": list(extra_columns_dict.keys()),
                 "missing_values": missing_count,
+                "missing_strategy": missing_strategy or "zero",
                 "has_labels": labels is not None,
                 "stats": summary_stats,
                 "original_filename": source_path.name,
@@ -563,6 +667,8 @@ class DataManager:
                 "has_header": has_header,
                 "sample_ids_count": len(sample_ids)
             }
+            if parsed_split_config:
+                metadata["split_config"] = parsed_split_config
 
         else:
             # Multi-Modal Automated Preprocessing pipeline
@@ -639,6 +745,8 @@ class DataManager:
 
                 num_rows = len(df)
                 raw_columns = list(df.columns)
+                df_full_for_extra = df.copy()
+                extra_columns_dict: Dict[str, List[str]] = {}
 
                 col_configs = parsed_schema_config.get("columns", {})
                 if isinstance(col_configs, list):
@@ -665,7 +773,7 @@ class DataManager:
                 if id_col_name is None:
                     for col in df.columns:
                         c_low = str(col).lower().strip()
-                        if c_low in ("id", "_id", "uid", "sample_id", "patient_id", "record_id", "signal_id"):
+                        if c_low in ("id", "_id", "input_id", "input id", "uid", "sample_id", "sampleid", "patient_id", "record_id", "signal_id"):
                             id_col_name = col
                             break
 
@@ -716,80 +824,155 @@ class DataManager:
                     df = df.drop(columns=cols_to_drop)
 
                 # 4. Sequential / 1D-Signal Inputs
-                seq_cols_ordered: List[str] = []
-                for sg in seq_groups:
-                    sg_cols = sg.get("columns", [])
-                    if not sg_cols and sg.get("pattern"):
-                        sg_cols = DataManager.resolve_sequence_columns(list(df.columns), sg["pattern"])
-                    for sc in sg_cols:
-                        if sc in df.columns and sc not in seq_cols_ordered:
-                            seq_cols_ordered.append(sc)
+                stack_mode = (parsed_schema_config.get("sequence_stack_mode") or "multichannel").lower()
+                is_multichannel = len(seq_groups) > 1 and stack_mode in ("multichannel", "multi_channel", "stack", "channels")
 
-                for col_name, c_cfg in col_configs.items():
-                    if c_cfg.get("type") == "sequence" and c_cfg.get("role", "input") == "input":
-                        if col_name in df.columns and col_name not in seq_cols_ordered:
-                            seq_cols_ordered.append(col_name)
-
-                X_seq = None
-                if seq_cols_ordered:
-                    seq_data_list = []
-                    for sc in seq_cols_ordered:
-                        col_s = df[sc]
+                def _extract_cols_matrix(df_source: pd.DataFrame, col_names: List[str]) -> np.ndarray:
+                    parts = []
+                    for c in col_names:
+                        col_s = df_source[c]
                         if not pd.api.types.is_numeric_dtype(col_s):
                             col_s = col_s.astype(str).str.replace(",", ".").str.strip()
                         num_s = pd.to_numeric(col_s, errors="coerce").fillna(0.0)
-                        seq_data_list.append(num_s.to_numpy(dtype=np.float32))
-                    seq_matrix = np.column_stack(seq_data_list).astype(np.float32)
-                    df = df.drop(columns=seq_cols_ordered)
+                        parts.append(num_s.to_numpy(dtype=np.float32))
+                    return np.column_stack(parts).astype(np.float32)
 
-                    # Determine sequence normalization
-                    norm_to_apply = (seq_groups[0].get("normalization") if seq_groups else None) or seq_norm_method or "row_zscore"
-                    norm_to_apply = norm_to_apply.lower()
-
+                def _apply_sequence_norm(matrix: np.ndarray, norm_method: Optional[str]) -> np.ndarray:
+                    norm = (norm_method or "row_zscore").lower()
                     eps = 1e-7
-                    if norm_to_apply == "row_zscore":
-                        row_means = np.mean(seq_matrix, axis=1, keepdims=True)
-                        row_stds = np.std(seq_matrix, axis=1, keepdims=True)
-                        seq_matrix = (seq_matrix - row_means) / np.where(row_stds == 0, eps, row_stds)
-                    elif norm_to_apply == "row_minmax":
-                        row_mins = np.min(seq_matrix, axis=1, keepdims=True)
-                        row_maxs = np.max(seq_matrix, axis=1, keepdims=True)
+                    mat = matrix.copy()
+                    if norm == "row_zscore":
+                        row_means = np.mean(mat, axis=1, keepdims=True)
+                        row_stds = np.std(mat, axis=1, keepdims=True)
+                        mat = (mat - row_means) / np.where(row_stds == 0, eps, row_stds)
+                    elif norm == "row_minmax":
+                        row_mins = np.min(mat, axis=1, keepdims=True)
+                        row_maxs = np.max(mat, axis=1, keepdims=True)
                         diff = row_maxs - row_mins
-                        seq_matrix = (seq_matrix - row_mins) / np.where(diff == 0, eps, diff)
-                    elif norm_to_apply in ("row_median", "subtract_median"):
-                        row_medians = np.median(seq_matrix, axis=1, keepdims=True)
-                        seq_matrix = seq_matrix - row_medians
-                    elif norm_to_apply in ("row_mode", "subtract_mode"):
+                        mat = (mat - row_mins) / np.where(diff == 0, eps, diff)
+                    elif norm in ("row_median", "subtract_median"):
+                        row_medians = np.median(mat, axis=1, keepdims=True)
+                        mat = mat - row_medians
+                    elif norm in ("row_mode", "subtract_mode"):
                         from app.services.signal_processing import subtract_mode
-                        seq_matrix = subtract_mode(seq_matrix, per_signal=True)
-                    elif norm_to_apply in ("row_gaussian_peak", "subtract_gaussian_peak"):
+                        mat = subtract_mode(mat, per_signal=True)
+                    elif norm in ("row_gaussian_peak", "subtract_gaussian_peak"):
                         from app.services.signal_processing import subtract_gaussian_peak
-                        seq_matrix = subtract_gaussian_peak(seq_matrix, per_signal=True)
-                    elif norm_to_apply in ("row_scale_min", "scale_min"):
+                        mat = subtract_gaussian_peak(mat, per_signal=True)
+                    elif norm in ("row_mean", "subtract_mean"):
+                        from app.services.signal_processing import subtract_mean
+                        mat = subtract_mean(mat, per_signal=True)
+                    elif norm in ("row_first_n_median", "subtract_first_n_median", "first_n_median"):
+                        from app.services.signal_processing import subtract_first_n_median
+                        mat = subtract_first_n_median(mat, n=50, per_signal=True)
+                    elif norm in ("row_first_n_mean", "subtract_first_n_mean", "first_n_mean"):
+                        from app.services.signal_processing import subtract_first_n_mean
+                        mat = subtract_first_n_mean(mat, n=50, per_signal=True)
+                    elif norm in ("row_last_n_median", "subtract_last_n_median", "last_n_median"):
+                        from app.services.signal_processing import subtract_last_n_median
+                        mat = subtract_last_n_median(mat, n=50, per_signal=True)
+                    elif norm in ("row_linear_baseline", "subtract_linear_baseline"):
+                        from app.services.signal_processing import subtract_linear_baseline
+                        mat = subtract_linear_baseline(mat)
+                    elif norm in ("row_polynomial_baseline", "subtract_polynomial_baseline"):
+                        from app.services.signal_processing import subtract_polynomial_baseline
+                        mat = subtract_polynomial_baseline(mat)
+                    elif norm in ("row_rolling_baseline", "subtract_rolling_baseline"):
+                        from app.services.signal_processing import subtract_rolling_baseline
+                        mat = subtract_rolling_baseline(mat)
+                    elif norm in ("row_scale_min", "scale_min"):
                         from app.services.signal_processing import scale_min
-                        seq_matrix = scale_min(seq_matrix, per_signal=True)
-                    elif norm_to_apply in ("row_scale_max", "scale_max"):
+                        mat = scale_min(mat, per_signal=True)
+                    elif norm in ("row_scale_max", "scale_max"):
                         from app.services.signal_processing import scale_max
-                        seq_matrix = scale_max(seq_matrix, per_signal=True)
-                    elif norm_to_apply == "global_standard":
-                        g_mean = float(np.mean(seq_matrix))
-                        g_std = float(np.std(seq_matrix))
+                        mat = scale_max(mat, per_signal=True)
+                    elif norm == "global_standard":
+                        g_mean = float(np.mean(mat))
+                        g_std = float(np.std(mat))
                         pipeline_state["sequence_global_mean"] = g_mean
                         pipeline_state["sequence_global_std"] = g_std
-                        seq_matrix = (seq_matrix - g_mean) / (g_std if g_std != 0 else eps)
-                    elif norm_to_apply == "global_minmax":
-                        g_min = float(np.min(seq_matrix))
-                        g_max = float(np.max(seq_matrix))
+                        mat = (mat - g_mean) / (g_std if g_std != 0 else eps)
+                    elif norm == "global_minmax":
+                        g_min = float(np.min(mat))
+                        g_max = float(np.max(mat))
                         diff = g_max - g_min
                         pipeline_state["sequence_global_min"] = g_min
                         pipeline_state["sequence_global_max"] = g_max
-                        seq_matrix = (seq_matrix - g_min) / (diff if diff != 0 else eps)
+                        mat = (mat - g_min) / (diff if diff != 0 else eps)
+                    elif norm in ("none", "raw", "identity"):
+                        pass
+                    return np.nan_to_num(mat, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
 
-                    seq_matrix = np.nan_to_num(seq_matrix, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
-                    X_seq = np.expand_dims(seq_matrix, axis=-1)
-                    pipeline_state["sequence_normalization"] = norm_to_apply
-                    pipeline_state["seq_len"] = int(seq_matrix.shape[1])
-                    pipeline_state["sequence_columns"] = seq_cols_ordered
+                X_seq = None
+                if is_multichannel:
+                    channel_matrices = []
+                    all_seq_cols = []
+                    for sg in seq_groups:
+                        sg_cols = sg.get("columns", [])
+                        if not sg_cols and sg.get("pattern"):
+                            sg_cols = DataManager.resolve_sequence_columns(list(df.columns), sg["pattern"])
+                        valid_cols = [c for c in sg_cols if c in df.columns]
+                        if not valid_cols:
+                            continue
+                        all_seq_cols.extend(valid_cols)
+                        raw_mat = _extract_cols_matrix(df, valid_cols)
+                        norm_to_apply = sg.get("normalization") or seq_norm_method or "row_zscore"
+                        norm_mat = _apply_sequence_norm(raw_mat, norm_to_apply)
+                        channel_matrices.append(norm_mat)
+
+                    if channel_matrices:
+                        max_seq_len = max(m.shape[1] for m in channel_matrices)
+                        padded_matrices = []
+                        for m in channel_matrices:
+                            if m.shape[1] < max_seq_len:
+                                m = np.pad(m, ((0, 0), (0, max_seq_len - m.shape[1])), mode="constant")
+                            padded_matrices.append(m)
+
+                        X_seq = np.stack(padded_matrices, axis=-1).astype(np.float32)
+                        df = df.drop(columns=[c for c in set(all_seq_cols) if c in df.columns])
+
+                        pipeline_state["seq_len"] = int(X_seq.shape[1])
+                        pipeline_state["seq_channels"] = int(X_seq.shape[2])
+                        pipeline_state["sequence_group_names"] = [
+                            sg.get("channel_name") or sg.get("name", f"ch_{i}")
+                            for i, sg in enumerate(seq_groups)
+                        ]
+                        pipeline_state["sequence_groups"] = seq_groups
+                        pipeline_state["sequence_columns"] = all_seq_cols
+                        pipeline_state["sequence_normalization"] = seq_norm_method or "per_group"
+
+                else:
+                    seq_cols_ordered: List[str] = []
+                    for sg in seq_groups:
+                        sg_cols = sg.get("columns", [])
+                        if not sg_cols and sg.get("pattern"):
+                            sg_cols = DataManager.resolve_sequence_columns(list(df.columns), sg["pattern"])
+                        for sc in sg_cols:
+                            if sc in df.columns and sc not in seq_cols_ordered:
+                                seq_cols_ordered.append(sc)
+
+                    for col_name, c_cfg in col_configs.items():
+                        if c_cfg.get("type") == "sequence" and c_cfg.get("role", "input") == "input":
+                            if col_name in df.columns and col_name not in seq_cols_ordered:
+                                seq_cols_ordered.append(col_name)
+
+                    if seq_cols_ordered:
+                        seq_matrix = _extract_cols_matrix(df, seq_cols_ordered)
+                        df = df.drop(columns=seq_cols_ordered)
+
+                        norm_to_apply = (seq_groups[0].get("normalization") if seq_groups else None) or seq_norm_method or "row_zscore"
+                        seq_matrix = _apply_sequence_norm(seq_matrix, norm_to_apply)
+
+                        X_seq = np.expand_dims(seq_matrix, axis=-1)
+                        pipeline_state["sequence_normalization"] = norm_to_apply
+                        pipeline_state["seq_len"] = int(seq_matrix.shape[1])
+                        pipeline_state["seq_channels"] = 1
+                        pipeline_state["sequence_columns"] = seq_cols_ordered
+                        if seq_groups:
+                            pipeline_state["sequence_group_names"] = [
+                                seq_groups[0].get("channel_name") or seq_groups[0].get("name", "ch_0")
+                            ]
+                            pipeline_state["sequence_groups"] = seq_groups
 
                 # 5. Tabular Inputs (Numeric + Categorical)
                 numeric_parts = []
@@ -894,13 +1077,31 @@ class DataManager:
 
                 # 7. Backward-compatible 2D data representation
                 if X_seq is not None:
-                    data = X_seq.squeeze(-1)
+                    if X_seq.shape[2] == 1:
+                        data = X_seq.squeeze(-1)
+                    else:
+                        data = X_seq[:, :, 0]
                 elif X_tabular is not None:
                     data = X_tabular
                 else:
                     data = np.zeros((len(sample_ids), 1), dtype=np.float32)
 
                 cols = raw_columns
+
+                # Collect non-sequence extra columns from the main table (e.g., Source, excluded/ignored columns, metadata, target)
+                seq_used_set = set(pipeline_state.get("sequence_columns", []))
+                if not seq_used_set:
+                    detected_grps = DataManager.detect_sequence_groups(raw_columns)
+                    seq_used_set = {c for g in detected_grps for c in g.get("columns", [])}
+                for col_c in raw_columns:
+                    if col_c == id_col_name:
+                        continue
+                    if (seq_used_set and col_c not in seq_used_set) or (col_c in ignore_cols) or (col_c == out_col_name):
+                        if col_c in df_full_for_extra.columns:
+                            extra_columns_dict[col_c] = [
+                                "" if pd.isna(v) else str(v)
+                                for v in df_full_for_extra[col_c].tolist()
+                            ]
 
             pipeline_state["task_type"] = task_type
             pipeline_state["recommended_activation"] = recommended_activation
@@ -911,6 +1112,8 @@ class DataManager:
                 "data": data,
                 "sample_ids": sample_ids.astype(str)
             }
+            if 'extra_columns_dict' in locals() and extra_columns_dict:
+                save_dict["extra_columns_json"] = np.array(json.dumps(extra_columns_dict))
             if X_seq is not None:
                 save_dict["X_seq"] = X_seq
             if X_tabular is not None:
@@ -936,6 +1139,7 @@ class DataManager:
             metadata = {
                 "columns": cols,
                 "excluded_columns": cols_to_drop if 'cols_to_drop' in locals() else [],
+                "extra_columns": list(extra_columns_dict.keys()) if ('extra_columns_dict' in locals() and extra_columns_dict) else [],
                 "missing_values": missing_count,
                 "has_labels": labels is not None,
                 "stats": summary_stats,
@@ -952,12 +1156,26 @@ class DataManager:
                 "has_sequence": X_seq is not None,
                 "has_tabular": X_tabular is not None,
             }
+            metadata["missing_strategy"] = missing_strategy or "zero"
+            if parsed_split_config:
+                metadata["split_config"] = parsed_split_config
             if X_seq is not None:
                 metadata["seq_shape"] = list(X_seq.shape)
             if X_tabular is not None:
                 metadata["tabular_shape"] = list(X_tabular.shape)
 
-        num_rows, num_cols = data.shape
+        if data.ndim == 1:
+            data = data.reshape(1, -1)
+        elif data.ndim == 0:
+            data = data.reshape(1, 1)
+
+        num_rows = int(data.shape[0])
+        num_cols = int(data.shape[1])
+        metadata["num_rows"] = num_rows
+        metadata["row_count"] = num_rows
+        metadata["col_count"] = num_cols
+        metadata["num_cols"] = num_cols
+
         with get_db_connection() as conn:
             proj_row = conn.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone()
             if not proj_row:
@@ -990,36 +1208,243 @@ class DataManager:
             "id": dataset_id,
             "name": name,
             "row_count": num_rows,
+            "num_rows": num_rows,
+            "total_rows": num_rows,
             "col_count": num_cols,
+            "num_cols": num_cols,
+            "total_cols": num_cols,
             "has_header": has_header,
             "label_col": label_col,
             "metadata": metadata
         }
 
     @staticmethod
-    def load_sample_ids(dataset_id: str) -> List[str]:
+    def _is_default_zero_indexed(sids: List[str]) -> bool:
+        """Returns True if sids is strictly the default ['0', '1', ..., str(N-1)] fallback."""
+        if not sids:
+            return True
+        if sids[0] != "0":
+            return False
+        return sids == [str(i) for i in range(len(sids))]
+
+    @staticmethod
+    def resolve_dataset_chain(dataset_id: str) -> List[str]:
         """
-        Retrieves the exact Input ID list for any registered dataset.
-        If sample_ids was saved in .npz, returns it. Otherwise defaults to row index strings.
+        Traces dataset_id back through original_dataset_id and source_feature_id
+        to return the lineage chain [dataset_id, parent_id, ..., root_dataset_id].
+        """
+        chain: List[str] = []
+        visited = set()
+        curr = str(dataset_id).strip() if dataset_id else ""
+        while curr and curr not in visited:
+            visited.add(curr)
+            chain.append(curr)
+            rec = DataManager.get_dataset(curr)
+            if not rec:
+                break
+            meta = rec.get("metadata") or {}
+            if isinstance(meta, str):
+                try:
+                    meta = json.loads(meta)
+                except Exception:
+                    meta = {}
+            next_ds = meta.get("original_dataset_id") or meta.get("parent_dataset_id")
+            if not next_ds and meta.get("source_feature_id"):
+                try:
+                    with get_db_connection() as conn:
+                        f_row = conn.execute(
+                            "SELECT dataset_id FROM features WHERE id = ?",
+                            (meta["source_feature_id"],)
+                        ).fetchone()
+                        if f_row and f_row["dataset_id"]:
+                            next_ds = f_row["dataset_id"]
+                except Exception:
+                    pass
+            curr = str(next_ds).strip() if next_ds else ""
+        return chain
+
+    @staticmethod
+    def load_sample_ids(dataset_id: str, expected_count: Optional[int] = None) -> List[str]:
+        """
+        Retrieves the exact Input ID list for any registered dataset (or derived/processed dataset).
+        Walks the dataset lineage chain (original_dataset_id / source_feature_id) so that
+        processed datasets and extracted feature datasets always preserve real sample IDs
+        (e.g. starting at 1 instead of falling back to 0..N-1).
         """
         record = DataManager.get_dataset(dataset_id)
         if not record:
             raise ValueError(f"Dataset {dataset_id} not found")
 
-        file_path = resolve_storage_path(record["file_path"])
-        if not file_path or not file_path.exists():
-            cand = DATASETS_DIR / record.get("project_id", "") / f"{dataset_id}.npz"
-            if cand.exists():
-                file_path = cand
-            else:
-                raise FileNotFoundError(f"Dataset file missing on disk: {record['file_path']}")
+        chain = DataManager.resolve_dataset_chain(dataset_id)
+        fallback_sids: Optional[List[str]] = None
+        target_len = expected_count
 
-        with np.load(str(file_path), allow_pickle=False) as npz:
-            if "sample_ids" in npz:
-                return [str(x) for x in npz["sample_ids"]]
-            elif "data" in npz:
-                return [str(i) for i in range(len(npz["data"]))]
-            return []
+        for ds_id in chain:
+            rec = DataManager.get_dataset(ds_id) if ds_id != dataset_id else record
+            if not rec:
+                continue
+            file_path = resolve_storage_path(rec["file_path"])
+            if not file_path or not file_path.exists():
+                cand = DATASETS_DIR / rec.get("project_id", "") / f"{ds_id}.npz"
+                if cand.exists():
+                    file_path = cand
+                else:
+                    continue
+            try:
+                with np.load(str(file_path), allow_pickle=False) as npz:
+                    if target_len is None and "data" in npz:
+                        target_len = len(npz["data"])
+                    if "sample_ids" in npz:
+                        sids = [s.decode("utf-8") if isinstance(s, bytes) else str(s) for s in npz["sample_ids"]]
+                        if target_len is not None and len(sids) >= target_len:
+                            sids = sids[:target_len]
+                        if fallback_sids is None and sids:
+                            fallback_sids = sids
+                        if sids and not DataManager._is_default_zero_indexed(sids):
+                            return sids
+            except Exception:
+                continue
+
+        if fallback_sids is not None:
+            return fallback_sids
+        if target_len is not None and target_len > 0:
+            return [str(i) for i in range(target_len)]
+        raise FileNotFoundError(f"Dataset file missing on disk: {record['file_path']}")
+
+    @staticmethod
+    def _extract_extra_columns_from_source_csv(rec: Dict[str, Any]) -> Dict[str, List[str]]:
+        """
+        Fallback for older datasets registered before extra_columns_json was stored in .npz:
+        locates original_filename in storage/temp or DATA_DIR and extracts non-sequence columns.
+        """
+        meta = rec.get("metadata") or {}
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except Exception:
+                meta = {}
+        orig_name = meta.get("original_filename")
+        if not orig_name or str(orig_name).lower().endswith((".npy", ".npz")):
+            return {}
+
+        candidates: List[Path] = []
+        proj_id = rec.get("project_id", "")
+        if proj_id:
+            temp_proj = STORAGE_DIR / "temp" / proj_id / orig_name
+            if temp_proj.exists():
+                candidates.append(temp_proj)
+        temp_root = STORAGE_DIR / "temp"
+        if temp_root.exists():
+            for p in temp_root.rglob(orig_name):
+                if p.is_file():
+                    candidates.append(p)
+        data_cand = DATA_DIR / orig_name
+        if data_cand.exists():
+            candidates.append(data_cand)
+
+        if not candidates:
+            return {}
+
+        csv_path = candidates[0]
+        try:
+            delim = meta.get("delimiter") or ","
+            if delim == "auto" or not delim:
+                delim = DataManager.detect_delimiter(csv_path)
+            sep = delim if delim != "\\t" else "\t"
+            has_hdr = meta.get("has_header", bool(rec.get("has_header", 1)))
+            if not has_hdr:
+                return {}
+            df = pd.read_csv(str(csv_path), sep=sep, header=0)
+            df.columns = [str(c) for c in df.columns]
+            all_cols = list(df.columns)
+            seq_groups = DataManager.detect_sequence_groups(all_cols)
+            seq_col_set = {c for g in seq_groups for c in g.get("columns", [])}
+            excluded_set = set(str(c) for c in (meta.get("excluded_columns") or []))
+            sc_cols = (meta.get("schema_config") or {}).get("columns") or {}
+
+            id_col = None
+            for c_name, c_cfg in sc_cols.items():
+                if isinstance(c_cfg, dict) and c_cfg.get("role") == "id":
+                    id_col = c_name
+                    break
+            if not id_col:
+                for col in all_cols:
+                    if col.lower().strip() in ("id", "_id", "input_id", "input id", "uid", "sample_id", "sampleid", "patient_id", "record_id", "signal_id"):
+                        id_col = col
+                        break
+
+            extra_dict: Dict[str, List[str]] = {}
+            for col in all_cols:
+                if col == id_col:
+                    continue
+                if (seq_col_set and col not in seq_col_set) or (col in excluded_set):
+                    extra_dict[col] = ["" if pd.isna(v) else str(v) for v in df[col].tolist()]
+            return extra_dict
+        except Exception:
+            return {}
+
+    @staticmethod
+    def load_extra_columns(
+        dataset_id: str,
+        selected_columns: Optional[List[str]] = None,
+        expected_count: Optional[int] = None
+    ) -> Dict[str, List[str]]:
+        """
+        Loads non-signal / metadata columns from the main table (e.g. 'Source', category, batch, etc.)
+        by walking the dataset lineage chain (original_dataset_id / source_feature_id).
+        """
+        chain = DataManager.resolve_dataset_chain(dataset_id)
+        extra_dict: Dict[str, List[str]] = {}
+
+        for ds_id in chain:
+            rec = DataManager.get_dataset(ds_id)
+            if not rec:
+                continue
+            file_path = resolve_storage_path(rec["file_path"])
+            if not file_path or not file_path.exists():
+                cand = DATASETS_DIR / rec.get("project_id", "") / f"{ds_id}.npz"
+                if cand.exists():
+                    file_path = cand
+            if file_path and file_path.exists():
+                try:
+                    with np.load(str(file_path), allow_pickle=False) as npz:
+                        if "extra_columns_json" in npz:
+                            raw_json = str(npz["extra_columns_json"].item())
+                            loaded = json.loads(raw_json)
+                            if isinstance(loaded, dict) and loaded:
+                                extra_dict = {str(k): [str(v) for v in vals] for k, vals in loaded.items()}
+                                break
+                except Exception:
+                    pass
+            # Fallback to source CSV if available
+            csv_extra = DataManager._extract_extra_columns_from_source_csv(rec)
+            if csv_extra:
+                extra_dict = csv_extra
+                break
+
+        if not extra_dict:
+            return {}
+
+        if selected_columns is not None:
+            sel_set = [str(c).strip() for c in selected_columns if str(c).strip()]
+            extra_dict = {k: extra_dict[k] for k in sel_set if k in extra_dict}
+
+        if expected_count is not None and expected_count > 0:
+            aligned: Dict[str, List[str]] = {}
+            for k, vals in extra_dict.items():
+                if len(vals) >= expected_count:
+                    aligned[k] = vals[:expected_count]
+                else:
+                    aligned[k] = vals + [""] * (expected_count - len(vals))
+            return aligned
+
+        return extra_dict
+
+    @staticmethod
+    def get_available_extra_columns(dataset_id: str) -> List[str]:
+        """Returns the list of available extra column names from the main table for a dataset or its root ancestor."""
+        extra = DataManager.load_extra_columns(dataset_id)
+        return list(extra.keys())
 
     @staticmethod
     def load_dataset_tensors(dataset_id: str) -> Dict[str, Any]:
@@ -1057,9 +1482,11 @@ class DataManager:
         dataset_id: str,
         name: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        schema_config: Optional[Union[str, Dict[str, Any]]] = None
+        schema_config: Optional[Union[str, Dict[str, Any]]] = None,
+        row_count: Optional[int] = None,
+        col_count: Optional[int] = None
     ) -> Dict[str, Any]:
-        """Renames a dataset or updates schema_config and metadata."""
+        """Renames a dataset or updates schema_config, metadata, row_count, col_count."""
         record = DataManager.get_dataset(dataset_id)
         if not record:
             raise ValueError(f"Dataset {dataset_id} not found")
@@ -1072,12 +1499,18 @@ class DataManager:
             meta["schema_config"] = parsed_cfg
 
         new_name = name.strip() if name and name.strip() else record["name"]
+        new_row_count = int(row_count) if row_count is not None else record.get("row_count", 0)
+        new_col_count = int(col_count) if col_count is not None else record.get("col_count", 0)
+        meta["row_count"] = new_row_count
+        meta["num_rows"] = new_row_count
+        meta["col_count"] = new_col_count
+        meta["num_cols"] = new_col_count
         now = datetime.now(timezone.utc).isoformat()
 
         with get_db_connection() as conn:
             conn.execute(
-                "UPDATE datasets SET name = ?, metadata_json = ? WHERE id = ?",
-                (new_name, json.dumps(meta), dataset_id)
+                "UPDATE datasets SET name = ?, metadata_json = ?, row_count = ?, col_count = ? WHERE id = ?",
+                (new_name, json.dumps(meta), new_row_count, new_col_count, dataset_id)
             )
             conn.execute(
                 "UPDATE projects SET updated_at = ? WHERE id = ?",
@@ -1125,6 +1558,10 @@ class DataManager:
             if row:
                 d = dict(row)
                 d["metadata"] = json.loads(d.get("metadata_json", "{}"))
+                d["num_rows"] = d.get("row_count", 0)
+                d["total_rows"] = d.get("row_count", 0)
+                d["num_cols"] = d.get("col_count", 0)
+                d["total_cols"] = d.get("col_count", 0)
                 return d
         return None
 
@@ -1216,7 +1653,11 @@ class DataManager:
             "dataset_id": dataset_id,
             "name": record["name"],
             "row_count": total_rows,
+            "num_rows": total_rows,
+            "total_rows": total_rows,
             "col_count": total_cols,
+            "num_cols": total_cols,
+            "total_cols": total_cols,
             "offset": offset,
             "max_rows": max_rows,
             "columns": cols,
@@ -1362,7 +1803,11 @@ class DataManager:
             return {
                 "file_name": p.name,
                 "total_rows": total_rows,
+                "row_count": total_rows,
+                "num_rows": total_rows,
                 "total_cols": total_cols,
+                "col_count": total_cols,
+                "num_cols": total_cols,
                 "columns": cols,
                 "all_columns": cols,
                 "active_columns": cols,
@@ -1541,7 +1986,11 @@ class DataManager:
         return {
             "file_name": p.name,
             "total_rows": total_rows,
+            "row_count": total_rows,
+            "num_rows": total_rows,
             "total_cols": len(active_columns),
+            "col_count": len(active_columns),
+            "num_cols": len(active_columns),
             "all_columns": all_columns,
             "active_columns": active_columns,
             "excluded_columns": parsed_exclude,
@@ -1554,4 +2003,150 @@ class DataManager:
             "summary_stats": stats,
             "missing_count": int(numeric_slice.isna().sum().sum()),
             "sample_waveforms": waveforms
+        }
+
+    @staticmethod
+    def get_dataset_io_schema(dataset_id: str) -> Dict[str, Any]:
+        """
+        Inspects dataset record and .npz file to report IO schema:
+        signal sequence length, channels, tabular dimensions, classification classes,
+        available derived signal channels, and target sources.
+        """
+        record = DataManager.get_dataset(dataset_id)
+        if not record:
+            raise ValueError(f"Dataset {dataset_id} not found")
+
+        file_path = resolve_storage_path(record["file_path"])
+        if not file_path or not file_path.exists():
+            cand = DATASETS_DIR / record.get("project_id", "") / f"{dataset_id}.npz"
+            if cand.exists():
+                file_path = cand
+            else:
+                raise FileNotFoundError(f"Dataset file missing on disk: {record.get('file_path')}")
+
+        with np.load(str(file_path), allow_pickle=False) as npz:
+            keys = list(npz.keys())
+            data = npz["data"] if "data" in npz else None
+            X_seq = npz["X_seq"] if "X_seq" in npz else None
+            X_tabular = npz["X_tabular"] if "X_tabular" in npz else None
+            labels = npz["labels"] if "labels" in npz else (npz["y"] if "y" in npz else None)
+            has_region_labels = "region_labels" in keys
+
+        n_samples = 0
+        for cand in (X_seq, data, X_tabular):
+            if cand is not None:
+                n_samples = int(cand.shape[0])
+                break
+
+        seq_len = 0
+        if X_seq is not None and X_seq.ndim >= 2:
+            seq_len = int(X_seq.shape[1])
+        elif data is not None and data.ndim >= 2:
+            seq_len = int(data.shape[1])
+
+        raw_channels = 1
+        if X_seq is not None and X_seq.ndim == 3:
+            raw_channels = int(X_seq.shape[2])
+
+        tabular_dim = 0
+        if X_tabular is not None and X_tabular.ndim >= 2:
+            tabular_dim = int(X_tabular.shape[1])
+
+        has_labels = labels is not None and len(labels) > 0
+        n_classes = 0
+        label_values = []
+        if has_labels:
+            unique_vals = np.unique(labels)
+            n_classes = int(len(unique_vals))
+            for v in unique_vals[:20]:
+                if isinstance(v, (np.integer, int)):
+                    label_values.append(int(v))
+                elif isinstance(v, (np.floating, float)):
+                    label_values.append(float(v))
+                else:
+                    label_values.append(str(v))
+
+        metadata = record.get("metadata", {})
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except Exception:
+                metadata = {}
+
+        pipeline_state = metadata.get("pipeline_state", {})
+        if isinstance(pipeline_state, str):
+            try:
+                pipeline_state = json.loads(pipeline_state)
+            except Exception:
+                pipeline_state = {}
+
+        seq_groups_raw = pipeline_state.get("sequence_groups") or metadata.get("sequence_groups")
+        if not seq_groups_raw and metadata.get("schema_config"):
+            seq_groups_raw = metadata["schema_config"].get("sequence_groups", [])
+
+        sequence_groups: List[Dict[str, Any]] = []
+        if seq_groups_raw and isinstance(seq_groups_raw, list):
+            for sg in seq_groups_raw:
+                c_name = sg.get("channel_name") or sg.get("name", "").replace("channel_", "").replace("sequence_", "")
+                raw_pfx = sg.get("prefix", "")
+                sequence_groups.append({
+                    "name": sg.get("name") or f"channel_{c_name}",
+                    "channel_name": c_name,
+                    "prefix": raw_pfx,
+                    "pattern": sg.get("pattern", ""),
+                    "count": sg.get("count", len(sg.get("columns", [])))
+                })
+
+        columns = metadata.get("columns", [f"col_{i}" for i in range(seq_len or tabular_dim or 1)])
+        tabular_columns = metadata.get("tabular_columns", [f"tab_{i}" for i in range(tabular_dim)]) if tabular_dim > 0 else []
+
+        available_signal_channels = [
+            {"id": "raw", "label": "Raw Signal x(t)", "description": "Original 1D waveform"},
+            {"id": "derivative_1", "label": "1st Derivative (dx/dt)", "description": "Central finite difference first derivative"},
+            {"id": "derivative_2", "label": "2nd Derivative (d²x/dt²)", "description": "Second derivative (curvature / inflection)"},
+            {"id": "region_mask", "label": "Regional Labels (Bölgesel Etiket)", "description": "Pointwise regional event / peak mask"},
+            {"id": "envelope_rms", "label": "RMS Envelope", "description": "Moving root-mean-square amplitude envelope"},
+            {"id": "rolling_mean", "label": "Rolling Mean", "description": "Smoothed baseline signal"},
+            {"id": "fft_magnitude", "label": "FFT Spectrum", "description": "Frequency domain magnitude profile"}
+        ]
+
+        # Add multi-channel group channels (e.g. group:s, group:a, group:dvdt)
+        for sg in sequence_groups:
+            c_name = sg.get("channel_name")
+            if c_name:
+                ch_id = f"group:{c_name}"
+                if not any(c.get("id") == ch_id for c in available_signal_channels):
+                    available_signal_channels.append({
+                        "id": ch_id,
+                        "label": f"Channel Group: {c_name} ({sg.get('pattern', '')})",
+                        "description": f"Pre-grouped channel '{c_name}' from dataset"
+                    })
+
+        available_target_sources = [
+            {"id": "reconstruction", "label": "Signal Reconstruction (Autoencoder)", "default_loss": "mse", "default_activation": "linear"},
+            {"id": "region_labels", "label": "Regional Labels / 1D Segmentation (Bölgesel Etiketler)", "default_loss": "binary_crossentropy", "default_activation": "sigmoid"},
+            {"id": "label_class", "label": "Class Label (Classification y)", "default_loss": "sparse_categorical_crossentropy", "default_activation": "softmax"},
+            {"id": "regression", "label": "Continuous Target (Regression)", "default_loss": "mse", "default_activation": "linear"},
+            {"id": "clustering", "label": "Cluster Probabilities (IDEC)", "default_loss": "kld", "default_activation": "softmax"}
+        ]
+
+        return {
+            "dataset_id": dataset_id,
+            "name": record.get("name", "Dataset"),
+            "row_count": n_samples,
+            "num_rows": n_samples,
+            "total_rows": n_samples,
+            "seq_len": seq_len,
+            "raw_channels": raw_channels,
+            "sequence_groups": sequence_groups,
+            "tabular_dim": tabular_dim,
+            "has_labels": has_labels,
+            "n_classes": n_classes,
+            "label_values": label_values,
+            "has_region_labels": has_region_labels,
+            "columns": columns,
+            "tabular_columns": tabular_columns,
+            "label_col": record.get("label_col"),
+            "available_signal_channels": available_signal_channels,
+            "available_target_sources": available_target_sources
         }

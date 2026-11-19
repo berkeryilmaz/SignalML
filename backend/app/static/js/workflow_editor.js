@@ -72,9 +72,16 @@ class WorkflowEditor {
         registerWfNode("signal_pad", "Signal Pad", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { target_length: 1024, mode: "constant", constant_value: 0.0 }, "Signal Preprocessing");
         registerWfNode("peak_window", "Peak Window", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { left_m: 100, right_k: 200, mode: "max_abs" }, "Signal Preprocessing");
         registerWfNode("reverse_signals", "Reverse Filter", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { mode: "polarity" }, "Signal Preprocessing");
+        registerWfNode("subtract_first_n_median", "First N Median Baseline", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { n: 50, per_signal: true }, "Signal Preprocessing");
+        registerWfNode("subtract_first_n_mean", "First N Mean Baseline", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { n: 50, per_signal: true }, "Signal Preprocessing");
+        registerWfNode("subtract_last_n_median", "Last N Tail Baseline", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { n: 50, stat: "median", per_signal: true }, "Signal Preprocessing");
+        registerWfNode("subtract_mean", "Mean (DC) Baseline", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { per_signal: true }, "Signal Preprocessing");
         registerWfNode("subtract_median", "Median Baseline", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { per_signal: true }, "Signal Preprocessing");
         registerWfNode("subtract_mode", "Mode Baseline", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { bins: 100, per_signal: true }, "Signal Preprocessing");
         registerWfNode("subtract_gaussian_peak", "Gaussian Peak Baseline", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { bins: 100, fit_window_bins: 5, per_signal: true }, "Signal Preprocessing");
+        registerWfNode("subtract_linear_baseline", "Linear Baseline Detrend", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { mode: "edge", n_edge: 50, stat: "median" }, "Signal Preprocessing");
+        registerWfNode("subtract_polynomial_baseline", "Polynomial Baseline", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { degree: 2, exclude_peak_sigma: 2.0 }, "Signal Preprocessing");
+        registerWfNode("subtract_rolling_baseline", "Rolling Baseline", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { window_size: 101, method: "median" }, "Signal Preprocessing");
         registerWfNode("scale_min", "Min Scaler", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { mode: "divide_abs_min", per_signal: true }, "Signal Preprocessing");
         registerWfNode("scale_max", "Max Scaler", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { mode: "divide_max", per_signal: true }, "Signal Preprocessing");
         registerWfNode("normalize", "Normalize", [{ name: "signals", type: "Signal" }], [{ name: "signals", type: "Signal" }], { method: "zscore", per_signal: true }, "Signal Preprocessing");
@@ -166,9 +173,16 @@ class WorkflowEditor {
                         <select class="form-control wf-prop-input" data-prop="method">
                             <option value="zscore" ${curMethod === 'zscore' ? 'selected' : ''}>Z-Score Standardization ((x - mu) / sigma)</option>
                             <option value="minmax" ${curMethod === 'minmax' ? 'selected' : ''}>Min-Max Scaling ([0, 1])</option>
+                            <option value="first_n_median" ${curMethod === 'first_n_median' ? 'selected' : ''}>First N Median Baseline (x - median(x[:N]))</option>
+                            <option value="first_n_mean" ${curMethod === 'first_n_mean' ? 'selected' : ''}>First N Mean Baseline (x - mean(x[:N]))</option>
+                            <option value="last_n_median" ${curMethod === 'last_n_median' ? 'selected' : ''}>Last N Tail Baseline (x - stat(x[-N:]))</option>
+                            <option value="mean" ${curMethod === 'mean' ? 'selected' : ''}>Mean (DC Offset) Baseline Subtraction (x - mean)</option>
                             <option value="median" ${curMethod === 'median' ? 'selected' : ''}>Median Baseline Subtraction (x - median)</option>
                             <option value="mode" ${curMethod === 'mode' ? 'selected' : ''}>Mode Baseline Subtraction (Most Frequent Value)</option>
                             <option value="gaussian_peak" ${curMethod === 'gaussian_peak' ? 'selected' : ''}>Histogram Gaussian Peak Baseline (x - mu_peak)</option>
+                            <option value="linear_baseline" ${curMethod === 'linear_baseline' ? 'selected' : ''}>Linear Baseline Detrend (Edge Ramp / OLS)</option>
+                            <option value="polynomial_baseline" ${curMethod === 'polynomial_baseline' ? 'selected' : ''}>Polynomial Baseline Fit (Peak-Excluded)</option>
+                            <option value="rolling_baseline" ${curMethod === 'rolling_baseline' ? 'selected' : ''}>Rolling Window Baseline Removal</option>
                             <option value="scale_min" ${curMethod === 'scale_min' ? 'selected' : ''}>Min Scaler (x / |min|)</option>
                             <option value="scale_max" ${curMethod === 'scale_max' ? 'selected' : ''}>Max Scaler (x / max)</option>
                         </select>
